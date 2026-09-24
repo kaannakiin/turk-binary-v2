@@ -1,0 +1,50 @@
+# Copy to config.toml and edit. See docs/configuration.md for every key.
+#
+# Endpoints and tokens are NOT read from this file. Set them in the environment:
+#   TB_RPC_URL       JSON-RPC endpoint (required)
+#   TB_GRPC_URL      Yellowstone gRPC endpoint (required)
+#   TB_GRPC_X_TOKEN  Yellowstone x-token (optional)
+
+stats_interval_secs = 10
+
+[universe]
+# Pools whose BOTH tokens are in this list are watched, on every enabled DEX.
+mints = [
+  "So11111111111111111111111111111111111111112",  # Wrapped SOL
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", # USDC
+]
+# Extra pools to watch by address, added on top of what `mints` finds.
+pools = []
+# Empty = every verified DEX. Names are listed in docs/dexes.md.
+allowed_dexes = []
+blocked_dexes = []
+
+[rpc]
+commitment = "processed"   # processed | confirmed | finalized
+timeout_ms = 10000
+max_in_flight = 8
+
+[rpc.retry]
+max_attempts = 5
+base_delay_ms = 100
+max_delay_ms = 5000
+
+[grpc]
+commitment = "processed"   # processed | confirmed | finalized
+streams = 12
+max_pubkeys_per_filter = 100
+compression = "gzip"       # none | gzip | zstd
+recv_timeout_ms = 10000
+max_message_delay_ms = 10000
+connect_timeout_ms = 10000
+recover_missed_data = true
+
+[grpc.reconnect]
+max_attempts = 10
+base_delay_ms = 500
+max_delay_ms = 30000
+
+[grpc.transport]
+http2_keep_alive_interval_ms = 15000
+keep_alive_timeout_ms = 5000
+tcp_nodelay = true

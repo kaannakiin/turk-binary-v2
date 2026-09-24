@@ -8,10 +8,15 @@ Solana ağında DEX'ler arası arbitraj yapan Rust binary. Rust workspace: binar
 
 ```text
 apps/turk-binary/   # bin: argüman, config, log, çıktı
-crates/tb-core/     # lib: temel tipler, hatalar
+crates/domain/      # lib: ortak tipler (Slot, DexKind, AccountUpdate, AccountFilter), iç bağımlılık yok
+crates/dex/         # lib: DEX kaydı (program ID, pool filtresi, mint offset'leri), I/O yok
+crates/rpc/         # lib: tüm JSON-RPC çağrıları
+crates/grpc/        # lib: tüm Yellowstone gRPC stream'leri (shard'lı hub)
+crates/market/      # lib: pool evreni çözümleme, account store, ingestion
+docs/               # kullanıcı dokümanı (İngilizce): mimari, config, DEX tablosu
 ```
 
-Yeni crate: `crates/tb-<ad>/`, paket adı `tb-` önekli (`core` gibi std ile çakışan ad yasak). Her `Cargo.toml`:
+Her crate'in `Cargo.toml`'u:
 
 ```toml
 version.workspace = true
@@ -30,7 +35,10 @@ Dependency sürümleri yalnızca kök `Cargo.toml` → `[workspace.dependencies]
 - `apps/*` ince kalır: argüman parse, config yükleme, log kurulumu, çıktı basma. İş mantığı yok.
 - `crates/*` mantığı taşır ve uygulama kavramı bilmez: `clap`, `println!`, `std::process::exit` yok.
 - Bağımlılık tek yönlü: `apps → crates`. Crate app'e bağımlı olmaz, app'ler birbirine bağımlı olmaz.
-- Crate'ler arası yön de tek ve döngüsüz: `tb-format → tb-core` olur, tersi olmaz. `tb-core` hiçbir iç crate'e bağımlı değil.
+- Crate'ler arası yön de tek ve döngüsüz: `dex, rpc, grpc → domain`, `market → dex, rpc, grpc, domain`. `domain` hiçbir iç crate'e bağımlı değil.
+- **Ağ erişimi tek kapıdan**: JSON-RPC yalnızca `rpc`, gRPC yalnızca `grpc` üzerinden. Başka crate `solana-rpc-client` veya `yellowstone-grpc-*` çekemez; `deny.toml` → `[bans]` bunu CI'da zorlar.
+- `dex` saf kalır: I/O yok, async yok. DEX bilgisi yalnızca burada durur; `market` DEX'e özel sabit tutmaz.
+- Config anahtarı, crate veya DEX eklenir/değişirse `docs/` aynı değişiklikte güncellenir.
 - Hatalar: lib'de `thiserror` ile tipli hata, app'te `anyhow` ile sarma.
 - `main.rs` 100 satırı geçiyorsa mantık yanlış yere sızmıştır, crate'e taşı.
 
@@ -62,7 +70,7 @@ Modelin eğitim hafızası kaynak **değildir**. Program ID, layout, fee oranı 
 | Orca Whirlpools | [orca-so/whirlpools](https://github.com/orca-so/whirlpools)                                                        | program + Rust/TS SDK                                    |
 | Meteora DLMM    | [MeteoraAg/dlmm-sdk](https://github.com/MeteoraAg/dlmm-sdk)                                                        | IDL (`idls/dlmm.json`), `commons/` Rust                  |
 | Meteora DAMM v2 | [MeteoraAg/damm-v2](https://github.com/MeteoraAg/damm-v2), [damm-v2-sdk](https://github.com/MeteoraAg/damm-v2-sdk) | program, SDK                                             |
-| Meteora DAMM v1 | [MeteoraAg/dynamic-amm-sdk](https://github.com/MeteoraAg/dynamic-amm-sdk)                                          | legacy                                                   |
+| Meteora DAMM v1 | [MeteoraAg/damm-v1-sdk](https://github.com/MeteoraAg/damm-v1-sdk)                                          | legacy                                                   |
 | Pump.fun        | [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs)                                          | IDL (`idl/`), `docs/` (bonding curve, PumpSwap, fee'ler) |
 
 Pump.fun için MCP veya llms.txt yok. Tek resmi kaynak bu repo: `idl/*.json` ve `docs/`. Özellikle `docs/BREAKING_*.md` dosyaları, buy/sell instruction'larına yeni account eklenen breaking upgrade'leri duyurur.
@@ -130,6 +138,7 @@ Doğrulanamayan bilgi `TODO(verify)` olarak işaretlenir ve o kod yolu mainnet'e
 ## Canlı işlem güvenliği
 
 - **Anahtarlar**: private key veya keypair dosyası asla repoya, loga, hata mesajına ya da agent context'ine girmez. Keypair yolu yalnızca env değişkeninden okunur.
+- **Endpoint secret'ları**: RPC/gRPC URL'leri ve `x-token` kökteki `.env` dosyasındadır (gitignore'da, şablon `.env.example`). `just` bu dosyayı kendisi yükler. Agent'lar `.env`'i okumaz, düzenlemez, içeriğini veya `TB_*` değişkenlerini yazdırmaz; `watch` gerekiyorsa `just watch` çalıştırır. `.claude/settings.json` bu okumaları engeller. Bu bir korkuluktur, sandbox değildir: kurala uymak zorunludur. Ağa giden hiçbir hata/log mesajı URL taşımaz (`rpc` crate'i reqwest hatalarından URL'i siler).
 - **Agent'lar mainnet'e işlem göndermez**, gerçek keypair ile hiçbir komut çalıştırmaz. Mainnet işlemini yalnızca insan başlatır.
 - **Varsayılan mod dry-run.** Gerçek gönderim açık bir flag ister (örn. `--live`), config'deki varsayılan asla live olmaz.
 - **Önce simülasyon.** Her işlem gönderilmeden önce `simulateTransaction` çalıştırılır. Simülasyon hatası veya beklenenden düşük çıktı işlemi iptal eder.
@@ -144,9 +153,10 @@ Doğrulanamayan bilgi `TODO(verify)` olarak işaretlenir ve o kod yolu mainnet'e
 just check                     # cargo check --workspace --all-targets
 just fmt                       # cargo fmt --all
 just lint                      # fmt --check + clippy -D warnings
-just test-crate tb-core        # tek crate test (nextest)
-just test -p tb-core <filtre>  # isim filtresiyle test
+just test-crate domain         # tek crate test (nextest)
+just test -p domain <filtre>   # isim filtresiyle test
 just deny                      # cargo-deny
+just watch                     # .env ile read-only watch (config.toml)
 just ci                        # CI'daki her şey
 ```
 

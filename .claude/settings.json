@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(**/.env)",
+      "Edit(./.env)",
+      "Bash(cat .env*)",
+      "Bash(less .env*)",
+      "Bash(more .env*)",
+      "Bash(head .env*)",
+      "Bash(tail .env*)",
+      "Bash(grep * .env)",
+      "Bash(source .env*)",
+      "Bash(. .env*)",
+      "Bash(printenv*)",
+      "Bash(env)",
+      "Bash(echo $TB_*)",
+      "Bash(just --dotenv-*)"
+    ]
+  }
+}

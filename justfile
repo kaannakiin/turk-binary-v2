@@ -1,3 +1,5 @@
+set dotenv-load := true
+
 default:
     @just --list
 
@@ -23,3 +25,6 @@ deny:
 ci: lint deny
     cargo nextest run --workspace --profile ci
     cargo test --workspace --doc
+
+watch config="config.toml":
+    cargo run -p turk-binary -- watch --config {{config}}

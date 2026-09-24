@@ -1,11 +1,13 @@
 [package]
-name = "tb-core"
+name = "dex"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+domain.workspace = true
+solana-pubkey = { workspace = true, features = ["curve25519"] }
 
 [lints]
 workspace = true

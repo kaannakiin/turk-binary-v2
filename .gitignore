@@ -3,5 +3,7 @@ junit.xml
 .DS_Store
 .env
 .env.*
+!.env.example
 *keypair*.json
 id.json
+/config.toml
