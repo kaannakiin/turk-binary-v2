@@ -1,0 +1,13 @@
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 4 }
+status-level = "fail"
+final-status-level = "slow"
+
+[profile.ci]
+fail-fast = false
+retries = 1
+status-level = "retry"
+failure-output = "immediate-final"
+
+[profile.ci.junit]
+path = "junit.xml"

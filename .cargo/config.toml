@@ -1,0 +1,3 @@
+[alias]
+t = "nextest run"
+lint = "clippy --workspace --all-targets --locked -- -D warnings"
