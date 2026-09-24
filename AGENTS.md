@@ -40,28 +40,30 @@ Dependency sürümleri yalnızca kök `Cargo.toml` → `[workspace.dependencies]
 
 1. **On-chain state (RPC)**: nihai gerçek. Program deploy edilmiş mi, account gerçekte hangi owner'da, hangi boyutta.
 2. **Program kaynak kodu ve IDL (GitHub, default branch)**: account layout, instruction account sırası, discriminator, fee ve fiyat matematiği, yuvarlama yönü.
-3. **MCP sunucuları** (`.mcp.json`): `solanaMcp` (Solana genel), `raydium-docs`, `meteora`, `orca-docs`.
+3. **MCP sunucuları** (`.mcp.json`):
+   - `solanaMcp`: Solana genel. Geniş konu için önce `list_sections`, sonra `get_documentation`. Dar soru veya hata mesajı için `Solana_Documentation_Search` ya da `Solana_Expert__Ask_For_Help`. On-chain program kodu yazılır veya değiştirilirse `program_autofixer` zorunludur.
+   - `raydium-docs`, `meteora`, `orca-docs`: protokol dokümanı. `search_*` ile ara, `query_docs_filesystem_*` ile sayfayı oku.
 4. **llms.txt**: dokümanın tam indeksi.
    - <https://docs.raydium.io/llms.txt>
    - <https://docs.meteora.ag/llms.txt>
    - <https://docs.orca.so/llms.txt>
-5. **Skill**: `solana-dev` (Solana geliştirme, test araçları: LiteSVM, Mollusk, Surfpool). `rust-best-practices` Rust stili için.
+5. **Skill'ler**: aşağıdaki "Skill'ler" bölümü. Skill metni yöntem öğretir, on-chain gerçeğin kaynağı değildir.
 
 Modelin eğitim hafızası kaynak **değildir**. Program ID, layout, fee oranı veya matematik "hatırlanarak" yazılmaz.
 
 ### Kaynak repolar
 
-| Protokol | Repo | Ne için |
-| --- | --- | --- |
-| Raydium CLMM | [raydium-io/raydium-clmm](https://github.com/raydium-io/raydium-clmm) | program, tick math |
-| Raydium AMM v4 | [raydium-io/raydium-amm](https://github.com/raydium-io/raydium-amm) | program |
-| Raydium CPMM | [raydium-io/raydium-cp-swap](https://github.com/raydium-io/raydium-cp-swap) | program, Token-2022 |
-| Raydium SDK | [raydium-io/raydium-sdk-V2](https://github.com/raydium-io/raydium-sdk-V2) | referans hesaplama |
-| Orca Whirlpools | [orca-so/whirlpools](https://github.com/orca-so/whirlpools) | program + Rust/TS SDK |
-| Meteora DLMM | [MeteoraAg/dlmm-sdk](https://github.com/MeteoraAg/dlmm-sdk) | IDL (`idls/dlmm.json`), `commons/` Rust |
-| Meteora DAMM v2 | [MeteoraAg/damm-v2](https://github.com/MeteoraAg/damm-v2), [damm-v2-sdk](https://github.com/MeteoraAg/damm-v2-sdk) | program, SDK |
-| Meteora DAMM v1 | [MeteoraAg/dynamic-amm-sdk](https://github.com/MeteoraAg/dynamic-amm-sdk) | legacy |
-| Pump.fun | [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs) | IDL (`idl/`), `docs/` (bonding curve, PumpSwap, fee'ler) |
+| Protokol        | Repo                                                                                                               | Ne için                                                  |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| Raydium CLMM    | [raydium-io/raydium-clmm](https://github.com/raydium-io/raydium-clmm)                                              | program, tick math                                       |
+| Raydium AMM v4  | [raydium-io/raydium-amm](https://github.com/raydium-io/raydium-amm)                                                | program                                                  |
+| Raydium CPMM    | [raydium-io/raydium-cp-swap](https://github.com/raydium-io/raydium-cp-swap)                                        | program, Token-2022                                      |
+| Raydium SDK     | [raydium-io/raydium-sdk-V2](https://github.com/raydium-io/raydium-sdk-V2)                                          | referans hesaplama                                       |
+| Orca Whirlpools | [orca-so/whirlpools](https://github.com/orca-so/whirlpools)                                                        | program + Rust/TS SDK                                    |
+| Meteora DLMM    | [MeteoraAg/dlmm-sdk](https://github.com/MeteoraAg/dlmm-sdk)                                                        | IDL (`idls/dlmm.json`), `commons/` Rust                  |
+| Meteora DAMM v2 | [MeteoraAg/damm-v2](https://github.com/MeteoraAg/damm-v2), [damm-v2-sdk](https://github.com/MeteoraAg/damm-v2-sdk) | program, SDK                                             |
+| Meteora DAMM v1 | [MeteoraAg/dynamic-amm-sdk](https://github.com/MeteoraAg/dynamic-amm-sdk)                                          | legacy                                                   |
+| Pump.fun        | [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs)                                          | IDL (`idl/`), `docs/` (bonding curve, PumpSwap, fee'ler) |
 
 Pump.fun için MCP veya llms.txt yok. Tek resmi kaynak bu repo: `idl/*.json` ve `docs/`. Özellikle `docs/BREAKING_*.md` dosyaları, buy/sell instruction'larına yeni account eklenen breaking upgrade'leri duyurur.
 
@@ -69,22 +71,46 @@ Pump.fun için MCP veya llms.txt yok. Tek resmi kaynak bu repo: `idl/*.json` ve 
 
 Doğrulandı: 2026-09-24. Kaynak kod veya IDL ile mainnet `getAccountInfo` karşılaştırıldı, hepsi `executable=true`, owner `BPFLoaderUpgradeab1e…`.
 
-| Program | Mainnet ID | Kaynak |
-| --- | --- | --- |
-| Raydium CLMM | `CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK` | `programs/amm/src/lib.rs` |
-| Raydium AMM v4 | `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8` | `program/src/lib.rs` |
-| Raydium CPMM | `CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C` | `programs/cp-swap/src/lib.rs` |
-| Orca Whirlpool | `whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc` | `programs/whirlpool/src/lib.rs` |
-| Meteora DLMM | `LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo` | `idls/dlmm.json`, `ts-client/src/dlmm/constants` |
-| Meteora DAMM v2 | `cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG` | `programs/cp-amm/src/lib.rs` |
-| Meteora DAMM v1 | `Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB` | `ts-client/src/amm/constants.ts` |
-| Pump bonding curve | `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P` | `idl/pump.json` |
-| PumpSwap AMM | `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA` | `idl/pump_amm.json` |
-| Pump fees | `pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ` | `idl/pump_fees.json` |
+| Program            | Mainnet ID                                     | Kaynak                                           |
+| ------------------ | ---------------------------------------------- | ------------------------------------------------ |
+| Raydium CLMM       | `CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK` | `programs/amm/src/lib.rs`                        |
+| Raydium AMM v4     | `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8` | `program/src/lib.rs`                             |
+| Raydium CPMM       | `CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C` | `programs/cp-swap/src/lib.rs`                    |
+| Orca Whirlpool     | `whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc`  | `programs/whirlpool/src/lib.rs`                  |
+| Meteora DLMM       | `LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo`  | `idls/dlmm.json`, `ts-client/src/dlmm/constants` |
+| Meteora DAMM v2    | `cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG`  | `programs/cp-amm/src/lib.rs`                     |
+| Meteora DAMM v1    | `Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB` | `ts-client/src/amm/constants.ts`                 |
+| Pump bonding curve | `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`  | `idl/pump.json`                                  |
+| PumpSwap AMM       | `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`  | `idl/pump_amm.json`                              |
+| Pump fees          | `pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ`  | `idl/pump_fees.json`                             |
 
 Raydium repolarında `#[cfg(feature = "devnet")]` ile ayrı devnet ID'leri var. Mainnet ID'si `not(feature = "devnet")` dalındakidir.
 
 Tüm programlar upgradeable: layout ve account listesi değişebilir. Bu tablo bir başlangıç noktasıdır, otorite değildir.
+
+## Skill'ler
+
+Repoda `.agents/skills/` altında kurulu, Claude Code için `.claude/skills/` symlink. Sürümleri `skills-lock.json`'da. Kurulum: `npx skills add <repo> --skill <ad>`.
+
+İş başlamadan ilgili skill yüklenir:
+
+| İş                                                                                 | Skill                                    |
+| ---------------------------------------------------------------------------------- | ---------------------------------------- |
+| Solana client, transaction kurma, RPC, PDA, Token-2022, test (LiteSVM, Surfpool)   | `solana-dev`                             |
+| Genel Rust stili, yeni kod veya review                                             | `rust-best-practices`                    |
+| Borrow ve lifetime hataları (E0382, E0597, E0499 …)                                | `m01-ownership`, `m03-mutability`        |
+| `Arc`, `Box`, `Rc`, `Drop`, RAII                                                   | `m02-resource`, `m12-lifecycle`          |
+| Generic, trait, `dyn` ve statik dispatch                                           | `m04-zero-cost`                          |
+| Newtype, typestate: geçersiz durumu temsil edilemez yapma (`Lamports`, `PoolId` …) | `m05-type-driven`                        |
+| `Result`, `thiserror`/`anyhow`, retry ve backoff, geçici ve kalıcı RPC hataları    | `m06-error-handling`, `m13-domain-error` |
+| tokio, kanallar, websocket stream'leri, paralel quote                              | `m07-concurrency`                        |
+| Pool, route, fırsat gibi domain modelleri                                          | `m09-domain`                             |
+| Hot path: quote hesabı, allocation, benchmark                                      | `m10-performance`                        |
+| Crate seçimi, feature flag, workspace                                              | `m11-ecosystem`                          |
+| Review'da anti-pattern avı                                                         | `m15-anti-pattern`                       |
+| Rename, fonksiyon taşıma, extract                                                  | `rust-refactor-helper`                   |
+
+Skill ile bu dosya çelişirse bu dosya geçerlidir.
 
 ## Doğrulama protokolü
 
