@@ -6,6 +6,12 @@
       "sourceType": "github",
       "skillPath": "skills/rust-best-practices/SKILL.md",
       "computedHash": "0ac6606adb27e64a31bdc8c1ed34e446ae0c14bff1c7648867c46e106adc048f"
+    },
+    "solana-dev": {
+      "source": "solana-foundation/solana-dev-skill",
+      "sourceType": "github",
+      "skillPath": "skills/solana-dev/SKILL.md",
+      "computedHash": "eb859fe9380cd31f044e9e5f5470703cea14740c1e99d59057bf532e4c82bdb8"
     }
   }
 }

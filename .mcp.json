@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "meteora": {
+      "type": "http",
+      "url": "https://docs.meteora.ag/mcp"
+    },
+    "raydium-docs": {
+      "type": "http",
+      "url": "https://docs.raydium.io/mcp"
+    },
+    "orca-docs": {
+      "type": "http",
+      "url": "https://docs.orca.so/mcp"
+    },
+    "solanaMcp": {
+      "type": "http",
+      "url": "https://mcp.solana.com/mcp"
+    }
+  }
+}
