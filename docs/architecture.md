@@ -10,14 +10,20 @@
 | `rpc`              | Every JSON-RPC call, rate-limited                                                           | Yes, JSON-RPC only         |
 | `grpc`             | Every Yellowstone gRPC stream: subscriptions, reconnects, replay, provider probes           | Yes, gRPC only             |
 | `market`           | Picks the pools, keeps every account they depend on subscribed and in sync, answers reads   | Through `rpc` and `grpc`   |
+| `quoter`           | Decodes a pool's accounts and computes swap quotes (DEX math and SDK binds); pure           | No                         |
+| `route`            | Route threads: decode each pool as the market changes it, publish state for quotes         | No (reads `market`)        |
 
 Dependencies point one way:
 
 ```text
-turk-binary ──▶ market ──▶ rpc ──┐
-                   │  └──▶ grpc ─┤
-                   └────▶ dex ───┴──▶ domain
+turk-binary ──▶ route ──▶ quoter ──▶ dex ──▶ domain
+     │            └─────▶ market
+     └──────────▶ market ──▶ rpc ──┐
+                     │  └──▶ grpc ─┤
+                     └────▶ dex ───┴──▶ domain
 ```
+
+`market` never depends on `quoter`: DEX SDKs, with their own Anchor and Solana versions, compile only where quotes are computed.
 
 ## One gate per protocol
 
@@ -106,8 +112,8 @@ An address the System program owns with no data counts as absent even when it ho
 `market::MarketReader` is the read side for the quote layer:
 
 - `pool_view(pool)`: the pool as the engine last published it: every dependency except the Clock, its readiness, and `cross_stream` when an account a swap writes rides the shared stream (DAMM v1, accounts two pools share), so the view may hold part of a transaction. Reads take no lock: the engine publishes an immutable view per pool (`arc-swap`) after each applied transaction group, seed, audit fix or readiness change.
-- `clock()`: the Clock sysvar, never the host clock. It has its own cell, so a Clock update rebuilds no pool view and sends no `PoolChanged`.
-- `subscribe()`: a `PoolChanged` for each published change to a pool, once per transaction group.
+- `clock()`: the Clock sysvar, never the host clock. It has its own cell, so a Clock update rebuilds no pool view and sends no `PoolChanged`. Every partition writes its own stream's Clock into that cell, so only a newer slot replaces it; a partition behind another, or a rolled-back fork, never moves the clock back.
+- `subscribe()`: a `PoolChanged` for each published change to a pool: once per transaction group, when a fork rollback or a dead slot moves an account back, and when the pool's readiness, dependencies or `cross_stream` change without any write (a stream drop, a closure change). A readiness event carries the partition's newest confirmed slot.
 
 ## Fork tracking
 
@@ -126,6 +132,7 @@ Resolution:
 
 - **When slot C is confirmed**: walk C's parents back to the previous confirmed slot. Pending versions on that chain are promoted to committed. Pending versions from other slots at or below C were on a losing fork and are dropped (`rolled_back`). Only accounts with pending versions at or below C are visited.
 - **When a slot is dead**: its pending versions are dropped (`dead_dropped`).
+- **A dropped version that was the head** (rolled back or dead) moves the account back to the next pending version or the committed one. That is published like a write: the pools depending on it get a new view and a `PoolChanged`, and a structural or existence change re-derives the closure or readiness.
 - **An update for a slot that is already confirmed**: this happens with replay after a reconnect, or when confirmations come over the separate slot-feed connection. The update is never put in pending, because the next confirmation would roll it back. If its slot is on the confirmed canonical chain (the last 512 slots are remembered), it goes straight to committed. Otherwise it is dropped and the account is read again (`late`).
 - **Readers**: `Head` returns the newest pending version, or the committed one. `Committed` returns only confirmed state.
 - **RPC reads** are taken at `confirmed`, so they go straight into the committed layer. An account that does not exist is stored as absent at that slot, which is state too.
@@ -133,6 +140,25 @@ Resolution:
 If a parent link is missing, slots below the hole are promoted as if canonical, `fork_gaps` is counted, and the promoted accounts are re-read. The chain starts at the first `processed` slot a stream sees, and again after every drop; the older statuses resent on connect fill in parents but do not move that start, so the hole below it is not a gap. A drop without replay leaves a hole that the stream's `Gap` re-reads anyway.
 
 **Alpenglow.** The design already follows the official recipe (buffer unconfirmed data, promote the confirmed bank, drop the rest). Once the Yellowstone proto ships `bank_id`, pending versions and the slot tree key on `(slot, bank_id)` instead of `slot`, because one slot may then carry more than one bank.
+
+## Route threads
+
+`route.route_threads` (default 4) sets the decode and quote threads, separate from the `pipeline_threads` writers. Each is one OS thread (`route-r{i}`) and owns the pools whose address hashes to it.
+
+- **Input.** Every thread subscribes to `MarketReader::subscribe()`, drains whatever `PoolChanged` events are queued into one set, and handles each of its pools once per batch. A thread that falls behind the feed (`Lagged`) rescans all its pools instead.
+- **Incremental decode.** Per pool the thread remembers, for every dependency, the update order, owner, lamports and data buffer it last decoded. Any difference counts as a change: a fork rollback moves the order back and RPC seeds share one write version, so "newer" would miss them. Only changed accounts go through `quoter::VenueState::apply`; a dependency that leaves the closure is applied as absent.
+- **Readiness.** Only `Ready` pools are decoded. `Closed` and `Invalid` pools drop their state.
+- **Output.** Each pool's state is published into a lock-free table together with the `PoolView` it was decoded from. `route::QuoteReader::quote` runs on the caller's thread and refuses when the market has published a newer view than the one decoded (`Stale`), the pool is not ready, a dependency failed to decode, or no Clock is known yet. Time-dependent inputs (fees by epoch, activation times) come from the Clock sysvar at quote time, so a Clock update needs no re-decode.
+- **Panics.** A venue panic while decoding or quoting is caught: the pool's state is discarded and rebuilt on its next change, and `panics` counts it.
+- **Probe.** `watch` exercises the quote path on live state: each stats tick it quotes `route.probe_amount` both ways through every decoded pool on a blocking thread (`QuoteReader::probe`) and logs, per DEX, how many quoted and why the rest refused (`quote probe`), with the sweep time and the slowest quote.
+
+## LiteSVM oracle
+
+`oracle/` is its own Cargo workspace, outside the bot's dependency graph and `cargo deny`: LiteSVM 0.16 and its Solana v4 stack cannot share a lockfile with `domain` (`solana-address` ~2.6 against ^2.8). It never links `quoter`.
+
+1. `just snapshot` (`turk-binary snapshot`) syncs the market like `watch`, then writes up to `--per-dex` ready pools per DEX with the accounts their views hold and the Clock.
+2. `just oracle` dumps the deployed bytecode of every program a swap touches (`scripts/dump_programs.py`, public endpoint; `oracle/programs/programs.tsv` records each program's deploy slot and hash), loads it into LiteSVM with mainnet's Rent sysvar and the snapshot's Clock, and runs each pool's swaps both ways at fractions of the input reserve and a fixed ladder of sizes. The instructions come from `oracle/arb-swap-ix`, the previous repo's builders. Accounts a swap passes but no quote reads come from the public endpoint. The user's token accounts are created by the ATA program, so Token-2022 accounts get their extensions. What the program paid, or why it refused, is written to `crates/quoter/src/tests/fixtures/svm/`.
+3. `quoter`'s `svm` tests rebuild each pool's closure from the snapshot bytes with `dex::closure`, decode it as the route threads do and require every quote to equal the program's payout, and every refusal to be a refusal.
 
 ## Provider probes
 

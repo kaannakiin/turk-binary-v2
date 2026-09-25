@@ -91,6 +91,14 @@ pub struct Resolved {
     pub rolled_back: usize,
     /// Promoted from below a hole in the parent chain, so never fork-checked.
     pub unchecked: Vec<Pubkey>,
+    /// Keys whose head changed, with the head they had before.
+    pub reverted: Vec<(Pubkey, StoredAccount)>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Dropped {
+    pub versions: usize,
+    pub reverted: Vec<(Pubkey, StoredAccount)>,
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +289,7 @@ impl AccountStore {
             let Some(entry) = entries.get_mut(&key) else {
                 continue;
             };
+            let previous = entry.head().cloned();
             let mut best: Option<Pending> = None;
             let mut unchecked = false;
             entry.pending.retain(|p| {
@@ -310,11 +319,16 @@ impl AccountStore {
             if unchecked {
                 resolved.unchecked.push(key);
             }
+            if let Some(previous) = previous
+                && entry.head() != Some(&previous)
+            {
+                resolved.reverted.push((key, previous));
+            }
         }
         resolved
     }
 
-    pub(crate) fn drop_slot(&mut self, scope: TreeScope, slot: Slot) -> usize {
+    pub(crate) fn drop_slot(&mut self, scope: TreeScope, slot: Slot) -> Dropped {
         let global_tree = self.global_tree;
         let Inner {
             entries,
@@ -322,16 +336,22 @@ impl AccountStore {
             ..
         } = &mut self.inner;
         let Some(keys) = pending_index.remove(&(scope, slot)) else {
-            return 0;
+            return Dropped::default();
         };
-        let mut dropped = 0;
+        let mut dropped = Dropped::default();
         for key in keys {
             if let Some(entry) = entries.get_mut(&key) {
                 let before = entry.pending.len();
+                let previous = entry.head().cloned();
                 entry.pending.retain(|p| {
                     scope_of(global_tree, p.source) != scope || p.account.order.slot != slot
                 });
-                dropped += before - entry.pending.len();
+                dropped.versions += before - entry.pending.len();
+                if let Some(previous) = previous
+                    && entry.head() != Some(&previous)
+                {
+                    dropped.reverted.push((key, previous));
+                }
             }
         }
         dropped

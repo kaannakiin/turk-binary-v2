@@ -12,11 +12,11 @@ use grpc::{
     GapReason, GroupChange, GroupKey, GrpcError, Placement, SlotStatus, StreamEvent, StreamId,
 };
 use rpc::RpcError;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::{
-    AccountSource, Engine, HubPort, MarketReader, PoolInfo, Readiness, Reason, SyncSettings,
-    Universe,
+    AccountSource, Engine, HubPort, MarketReader, PoolChanged, PoolInfo, Readiness, Reason,
+    SyncSettings, Universe,
 };
 
 const SHARD: StreamId = StreamId::Shard(0);
@@ -308,6 +308,24 @@ impl Rig {
         self.until("ready", |r| r.readiness() == Some(Readiness::Ready))
             .await;
     }
+
+    /// Waits for a `PoolChanged` on this pool after which `pred` holds.
+    async fn announced(
+        &self,
+        changes: &mut broadcast::Receiver<PoolChanged>,
+        what: &str,
+        pred: impl Fn(&Rig) -> bool,
+    ) {
+        let seen = tokio::time::timeout(WAIT, async {
+            loop {
+                if changes.recv().await.unwrap().pool == self.pool && pred(self) {
+                    return;
+                }
+            }
+        })
+        .await;
+        assert!(seen.is_ok(), "no PoolChanged announced {what}");
+    }
 }
 
 async fn subscribed(pool: &Pool) -> Rig {
@@ -423,6 +441,24 @@ async fn a_dropped_stream_makes_its_pools_not_ready() {
     })
     .await;
     rig.until("stream down", |r| {
+        r.readiness() == Some(Readiness::NotReady(Reason::StreamDown(SHARD)))
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_readiness_change_without_a_write_is_announced() {
+    let pool = cpmm_pool();
+    let rig = subscribed(&pool).await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    let mut changes = rig.reader.subscribe();
+    rig.send(StreamEvent::Down {
+        stream: SHARD,
+        generation: 1,
+    })
+    .await;
+    rig.announced(&mut changes, "for the dropped stream", |r| {
         r.readiness() == Some(Readiness::NotReady(Reason::StreamDown(SHARD)))
     })
     .await;
@@ -579,6 +615,41 @@ async fn a_shard_write_is_applied_only_once_its_transaction_status_arrives() {
     .await;
     rig.until("the committed write", |r| {
         r.head_data(&vault_a.0).as_deref() == Some(b"after swap".as_slice())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_dead_slot_write_is_withdrawn_from_the_view_and_announced() {
+    let pool = cpmm_pool();
+    let rig = subscribed(&pool).await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    let vault = pool.deps[2];
+    let seeded = rig.head_data(&vault.0);
+    rig.send(StreamEvent::Account {
+        stream: SHARD,
+        generation: 1,
+        update: AccountUpdate {
+            slot: Slot(200),
+            ..account(vault.0, vault.1, b"dead fork".to_vec())
+        },
+    })
+    .await;
+    rig.until("the dead fork's write", |r| {
+        r.head_data(&vault.0).as_deref() == Some(b"dead fork".as_slice())
+    })
+    .await;
+    let mut changes = rig.reader.subscribe();
+    rig.send(StreamEvent::Slot {
+        stream: SHARD,
+        slot: Slot(200),
+        parent: Some(Slot(199)),
+        status: SlotStatus::Dead,
+    })
+    .await;
+    rig.announced(&mut changes, "for the dead slot", |r| {
+        r.head_data(&vault.0) == seeded
     })
     .await;
 }

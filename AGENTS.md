@@ -13,7 +13,10 @@ crates/dex/         # lib: DEX registry (program IDs, pool filters, mint offsets
 crates/rpc/         # lib: all JSON-RPC calls
 crates/grpc/        # lib: all Yellowstone gRPC streams (sharded hub)
 crates/market/      # lib: pool universe resolution, account store, ingestion
+crates/quoter/      # lib: account decode and swap quotes per DEX (SDK binds), no I/O
+crates/route/       # lib: route threads: incremental decode, published quote state
 docs/               # user docs: architecture, config, DEX table
+oracle/             # separate workspace: LiteSVM replay of snapshot swaps on mainnet's deployed programs
 ```
 
 Every crate's `Cargo.toml`:
@@ -35,9 +38,10 @@ Dependency versions live only in the root `Cargo.toml` → `[workspace.dependenc
 - `apps/*` stay thin: argument parsing, config loading, logging setup, printing output. No business logic.
 - `crates/*` carry the logic and know nothing about the application: no `clap`, `println!`, or `std::process::exit`.
 - Dependencies flow one way: `apps → crates`. A crate never depends on an app; apps never depend on each other.
-- Crate-to-crate direction is also one-way and acyclic: `dex, rpc, grpc → domain`, `market → dex, rpc, grpc, domain`. `domain` depends on no internal crate.
+- Crate-to-crate direction is also one-way and acyclic: `dex, rpc, grpc → domain`, `market → dex, rpc, grpc, domain`, `quoter → dex, domain`, `route → quoter, market, dex, domain`. `domain` depends on no internal crate; `market` never depends on `quoter` or `route`.
 - **Network access through one door each**: JSON-RPC only via `rpc`, gRPC only via `grpc`. No other crate may pull in `solana-rpc-client` or `yellowstone-grpc-*`; `deny.toml` → `[bans]` enforces this in CI.
-- `dex` stays pure: no I/O, no async. DEX knowledge lives only here; `market` holds no DEX-specific constants.
+- `dex` and `quoter` stay pure: no I/O, no async. DEX knowledge lives only in them: `dex` holds what a pool looks like on chain (program IDs, filters, closures), `quoter` how its accounts decode and how a swap is priced. `market` and `route` hold no DEX-specific constants.
+- DEX SDK crates and token-program interfaces enter only through `quoter`; `deny.toml` → `[bans]` enforces this. No SDK type appears in `quoter`'s public API.
 - When a config key, crate, or DEX is added or changed, `docs/` is updated in the same change.
 - Errors: typed errors with `thiserror` in libs, wrapped with `anyhow` in apps.
 - If `main.rs` grows past 100 lines, logic has leaked into the wrong place; move it into a crate.
@@ -72,6 +76,8 @@ The model's training memory is **not** a source. Program IDs, layouts, fee rates
 | Meteora DAMM v2 | [MeteoraAg/damm-v2](https://github.com/MeteoraAg/damm-v2), [damm-v2-sdk](https://github.com/MeteoraAg/damm-v2-sdk) | program, SDK                                          |
 | Meteora DAMM v1 | [MeteoraAg/damm-v1-sdk](https://github.com/MeteoraAg/damm-v1-sdk)                                                  | legacy                                                |
 | Pump.fun        | [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs)                                          | IDL (`idl/`), `docs/` (bonding curve, PumpSwap, fees) |
+
+The DEX SDKs `quoter` binds are forks under `kaannakiin/*`, pinned by commit in the root `Cargo.toml` with the upstream commit each is based on; `docs/dexes.md` → Quotes records what each fork changes and when upstream was last compared.
 
 Pump.fun has no MCP server or llms.txt. The only official source is this repo: `idl/*.json` and `docs/`. In particular, `docs/BREAKING_*.md` files announce breaking upgrades that add new accounts to the buy/sell instructions.
 
@@ -158,6 +164,8 @@ just test-crate domain         # single-crate tests (nextest)
 just test -p domain <filter>   # tests filtered by name
 just deny                      # cargo-deny
 just watch                     # read-only watch with .env (config.toml)
+just snapshot                  # read-only: ready pools' views + Clock for the oracle
+just oracle                    # LiteSVM replay on mainnet's programs → quoter svm fixtures
 just ci                        # everything CI runs
 ```
 

@@ -127,6 +127,13 @@ When a reconnect cannot replay, only that stream's accounts are read again over 
 | `txn_wait_ms`                | `400`   | How long a shard's transaction writes wait for the transaction status before they are applied anyway |
 | `pipeline_threads`           | `2`     | Writer threads (partitions). Shard `i` feeds partition `i % pipeline_threads`; must be 1 to `grpc.streams` |
 
+## `[route]`
+
+| Key             | Default | Meaning                                                                                                             |
+| --------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| `route_threads` | `4`     | Decode and quote threads, separate from the writers. Each owns the pools its hash picks; must be at least 1 |
+| `probe_amount`  | `1000000` | `watch` quotes this raw input amount both ways through every decoded pool each stats tick and logs the outcomes per DEX (`quote probe`); `0` turns it off |
+
 ## Top level
 
 | Key                   | Default | Meaning                                |

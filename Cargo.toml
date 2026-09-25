@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["apps/*", "crates/*"]
+exclude = ["oracle"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,11 +14,17 @@ dex = { path = "crates/dex" }
 domain = { path = "crates/domain" }
 grpc = { path = "crates/grpc" }
 market = { path = "crates/market" }
+quoter = { path = "crates/quoter" }
+route = { path = "crates/route" }
 rpc = { path = "crates/rpc" }
 
 ahash = "0.8.12"
 anyhow = "1.0.104"
 arc-swap = "1.9.2"
+base64 = "0.22.1"
+flate2 = "1.1.10"
+bytemuck = "1.25.0"
+ethnum = "1.5.3"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 futures = "0.3.34"
@@ -29,13 +36,33 @@ solana-commitment-config = "3.1.1"
 solana-pubkey = "4.4.0"
 solana-rpc-client = "=4.3.0"
 solana-rpc-client-api = "=4.3.0"
+spl-token-2022-interface = "3.1.2"
 thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "1.1.6"
+uint = { version = "0.9.5", default-features = false }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 yellowstone-grpc-client = "13.5.1"
 yellowstone-grpc-proto = { version = "12.7.0", features = ["account-data-as-bytes"] }
+
+# DEX SDK forks, pinned by commit. Only `quoter` may depend on them.
+# src: kaannakiin/raydium-amm@e310ed8c438737f7c9bf7a56374ec53ae36d37c9 (raydium-io/raydium-amm@27f461d + Option in math.rs)
+# src: kaannakiin/raydium-cp-swap@8055493659a014b7b0d00ff8d1391edba6792779 (raydium-io/raydium-cp-swap@244e124 + Option in curve/)
+raydium-cp-swap = { git = "https://github.com/kaannakiin/raydium-cp-swap", rev = "8055493659a014b7b0d00ff8d1391edba6792779", default-features = false, features = ["no-entrypoint"] }
+# src: kaannakiin/raydium-clmm@1de19c560b751cb685dea31e1aeb18f2f2602525 (raydium-io/raydium-clmm@51fdba2 + swap_internal_with_key, TickArrayFeed)
+raydium-clmm = { git = "https://github.com/kaannakiin/raydium-clmm", rev = "1de19c560b751cb685dea31e1aeb18f2f2602525", default-features = false, features = ["no-entrypoint", "client"] }
+# src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052 (client@8.0.0 tag + compute_swap by reference, post-swap state in SwapResult)
+orca_whirlpools_client = { git = "https://github.com/kaannakiin/whirlpools", rev = "536d2dac6c53eb50da09b4534ac5113b5c5c7052" }
+orca_whirlpools_core = { git = "https://github.com/kaannakiin/whirlpools", rev = "536d2dac6c53eb50da09b4534ac5113b5c5c7052" }
+# src: kaannakiin/damm-v2@0506639d8137024301829854d545533c2b9d1ea5 (MeteoraAg/damm-v2@2565067 + curve errors instead of panics)
+damm-v2-sdk = { package = "rust-sdk", git = "https://github.com/kaannakiin/damm-v2", rev = "0506639d8137024301829854d545533c2b9d1ea5" }
+cp-amm = { git = "https://github.com/kaannakiin/damm-v2", rev = "0506639d8137024301829854d545533c2b9d1ea5", features = ["no-entrypoint", "no-custom-entrypoint"] }
+# src: kaannakiin/dlmm-sdk@28e1f83f053aa64a80e33b5a0c71d5f509e2384d (MeteoraAg/dlmm-sdk@4eaaeaa + BinArraySource quote, RPC helpers behind `rpc`)
+commons = { git = "https://github.com/kaannakiin/dlmm-sdk", rev = "28e1f83f053aa64a80e33b5a0c71d5f509e2384d", default-features = false }
+solana-sdk-2 = { package = "solana-sdk", version = "2" }
+anchor-lang-032 = { package = "anchor-lang", version = "=0.32.1" }
+raydium_amm = { git = "https://github.com/kaannakiin/raydium-amm", rev = "e310ed8c438737f7c9bf7a56374ec53ae36d37c9", features = ["no-entrypoint"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

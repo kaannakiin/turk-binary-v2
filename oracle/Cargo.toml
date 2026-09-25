@@ -1,0 +1,52 @@
+# Its own workspace: LiteSVM 0.16 pins solana-address ~2.6 while `domain`
+# needs ^2.8, and LiteSVM with the Solana v4 transaction stack stays out of
+# the bot's dependency graph and its `cargo deny` policy. It never links
+# `quoter`: it writes what the programs paid, and `quoter`'s tests compare.
+#
+# `arb-swap-ix` is turk-binary@5533fed5e69dbb61eb09a346a3abe6343f080be2
+# crates/arb-swap-ix, unchanged: the swap instruction builders the previous
+# repo checked against real mainnet swap instructions.
+[workspace]
+resolver = "3"
+members = [".", "arb-swap-ix"]
+
+[workspace.dependencies]
+ahash = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smallvec = "1"
+solana-instruction = "~3.4.0"
+solana-pubkey = "3"
+thiserror = "2"
+
+[package]
+name = "oracle"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[dependencies]
+arb-swap-ix = { path = "arb-swap-ix" }
+base64 = "0.22"
+flate2 = "1"
+litesvm = "0.16.0"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+solana-account = "4"
+solana-clock = "3"
+solana-instruction.workspace = true
+solana-keypair = "3"
+solana-message = "4"
+solana-pubkey.workspace = true
+solana-rent = "4"
+solana-signer = "3"
+solana-transaction = "4"
+ureq = { version = "3", features = ["json"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1

@@ -56,6 +56,10 @@ stream_swap_accounts = true
 txn_wait_ms = 400
 pipeline_threads = 2
 
+[route]
+route_threads = 4         # decode + quote threads, separate from the pipeline (writer) threads
+probe_amount = 1000000    # watch quotes this raw amount both ways through every pool each stats tick; 0 = off
+
 [grpc.transport]
 http2_keep_alive_interval_ms = 15000
 keep_alive_timeout_ms = 5000

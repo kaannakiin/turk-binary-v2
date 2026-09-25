@@ -44,3 +44,13 @@ txn-probe minutes="30" per_dex="20" config="config.toml":
 # Read-only: record one DEX's pool streams as a replay fixture for crates/market.
 txn-record dex minutes="1" per_dex="60" config="config.toml":
     cargo run --release -p turk-binary -- txn-probe --config {{config}} --minutes {{minutes}} --per-dex {{per_dex}} --only {{dex}} --record crates/market/src/tests/fixtures/streams/{{dex}}.tsv
+
+# Read-only: ready pools' account views and the Clock, the input of the LiteSVM oracle (oracle/).
+snapshot out="oracle/snapshots/latest.json.gz" per_dex="12" settle="90" config="config.toml":
+    cargo run -p turk-binary -- snapshot --config {{config}} --out {{out}} --per-dex {{per_dex}} --settle-secs {{settle}}
+
+# Read-only: dumps mainnet's deployed programs and runs the snapshot's swaps through them in LiteSVM.
+# Writes the expected payouts to crates/quoter/src/tests/fixtures/svm.
+oracle snapshot="oracle/snapshots/latest.json.gz":
+    python3 scripts/dump_programs.py oracle/programs
+    cargo run --manifest-path oracle/Cargo.toml -- {{snapshot}} oracle/programs crates/quoter/src/tests/fixtures/svm

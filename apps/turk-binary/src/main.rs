@@ -49,6 +49,8 @@ enum Command {
         #[arg(long)]
         record: Option<PathBuf>,
     },
+    /// Write ready pools' account views and the Clock, for the `LiteSVM` oracle (read-only).
+    Snapshot(run::SnapshotArgs),
 }
 
 #[tokio::main]
@@ -61,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Watch { config } => run::watch(&config).await,
         Command::Probe { config, kinds } => run::probe(&config, &kinds).await,
+        Command::Snapshot(args) => run::snapshot(&args).await,
         Command::TxnProbe {
             config,
             minutes,

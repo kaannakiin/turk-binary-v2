@@ -431,10 +431,12 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                         self.repair.want(key, slot, epoch, self.priority(&key));
                     }
                 }
+                self.reverted(resolved.reverted, slot);
             }
             SlotStatus::Dead => {
                 let dropped = self.store.drop_slot(scope, slot);
-                self.stats.add(Counter::DeadDropped, dropped);
+                self.stats.add(Counter::DeadDropped, dropped.versions);
+                self.reverted(dropped.reverted, slot);
             }
             SlotStatus::Other => {}
         }
@@ -733,6 +735,18 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         }
     }
 
+    /// A dropped fork version moves the head back without a stream write, so
+    /// it is published like one.
+    fn reverted(&mut self, reverted: Vec<(Pubkey, StoredAccount)>, slot: Slot) {
+        for (key, previous) in reverted {
+            let before = Before {
+                exists: Some(previous.exists()),
+                account: Some(previous),
+            };
+            self.after_change(&key, &before, slot);
+        }
+    }
+
     fn pool_changed(&mut self, pool: Pubkey, slot: Slot) {
         self.publish(&pool);
         let _ = self.changes.send(PoolChanged { pool, slot });
@@ -787,10 +801,18 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                 ))
             })
             .collect();
-        let pools: Vec<Pubkey> = evaluated.iter().map(|(pool, _)| *pool).collect();
-        self.table.extend(evaluated);
-        for pool in &pools {
-            self.publish(pool);
+        for (pool, meta) in evaluated {
+            let changed = self.table.get(&pool).is_none_or(|old| {
+                old.readiness != meta.readiness
+                    || old.cross_stream != meta.cross_stream
+                    || old.deps != meta.deps
+            });
+            self.table.insert(pool, meta);
+            if changed {
+                self.pool_changed(pool, self.confirmed);
+            } else {
+                self.publish(&pool);
+            }
         }
         let ready = self
             .table

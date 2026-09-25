@@ -1,81 +1,182 @@
+use std::collections::BTreeMap;
 use std::fs::File;
+use std::future::Future;
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use domain::{DexKind, Pubkey};
 use grpc::{GeyserHub, ProbeKind, SlotSource, TraceRow, TxnProbeOptions};
-use market::{Market, MarketError, Universe};
+use market::{Market, MarketError, MarketReader, Readiness, Universe};
+use route::{ProbeReport, Router};
 use rpc::RpcGateway;
+use tokio::task::JoinHandle;
 
 use crate::{config, output};
 
-pub async fn watch(path: &Path) -> anyhow::Result<()> {
-    let config = config::load(path)?;
-    let secrets = config::Secrets::from_env()?;
-    let rpc = Arc::new(RpcGateway::new(secrets.rpc_url, &config.rpc));
+struct Running {
+    hub: JoinHandle<Result<(), grpc::GrpcError>>,
+    market: Market,
+    router: Router<MarketReader>,
+    reader: MarketReader,
+    config: config::AppConfig,
+}
 
-    let universe = Universe::resolve(&config.universe, &rpc)
-        .await
-        .context("resolving pool universe")?;
-    for (dex, pools) in universe.count_by_dex() {
-        tracing::info!(%dex, pools, "universe");
+impl Running {
+    async fn start(path: &Path) -> anyhow::Result<Self> {
+        let config = config::load(path)?;
+        let secrets = config::Secrets::from_env()?;
+        let rpc = Arc::new(RpcGateway::new(secrets.rpc_url, &config.rpc));
+
+        let universe = Universe::resolve(&config.universe, &rpc)
+            .await
+            .context("resolving pool universe")?;
+        for (dex, pools) in universe.count_by_dex() {
+            tracing::info!(%dex, pools, "universe");
+        }
+        anyhow::ensure!(
+            !universe.pools.is_empty(),
+            "no pools matched the configured universe"
+        );
+
+        let slot_source = grpc::resolve_slot_source(
+            secrets.grpc_url.clone(),
+            secrets.grpc_x_token.clone(),
+            &config.grpc,
+        )
+        .await?;
+        tracing::info!(?slot_source, "slot statuses");
+        let partitions = config.sync.partitions(config.grpc.streams)?;
+        let hub = GeyserHub::spawn(
+            secrets.grpc_url,
+            secrets.grpc_x_token,
+            &config.grpc,
+            slot_source,
+            partitions,
+        )?;
+        let market = Market::start(
+            &universe,
+            &rpc,
+            hub.partitions,
+            &config.sync,
+            slot_source == SlotSource::BlocksMeta,
+        )?;
+        tracing::info!(partitions, "market partitions");
+        let reader = market.reader();
+        let router = Router::start(reader.clone(), &config.route)?;
+        tracing::info!(threads = config.route.route_threads, "route threads");
+        Ok(Self {
+            hub: hub.task,
+            market,
+            router,
+            reader,
+            config,
+        })
     }
-    anyhow::ensure!(
-        !universe.pools.is_empty(),
-        "no pools matched the configured universe"
-    );
 
-    let slot_source = grpc::resolve_slot_source(
-        secrets.grpc_url.clone(),
-        secrets.grpc_x_token.clone(),
-        &config.grpc,
-    )
-    .await?;
-    tracing::info!(?slot_source, "slot statuses");
-    let partitions = config.sync.partitions(config.grpc.streams)?;
-    let hub = GeyserHub::spawn(
-        secrets.grpc_url,
-        secrets.grpc_x_token,
-        &config.grpc,
-        slot_source,
-        partitions,
-    )?;
-    let mut market = Market::start(
-        &universe,
-        &rpc,
-        hub.partitions,
-        &config.sync,
-        slot_source == SlotSource::BlocksMeta,
-    )?;
-    tracing::info!(partitions, "market partitions");
-    let reader = market.reader();
-    let shutdown = tokio::signal::ctrl_c();
-    tokio::pin!(shutdown);
-    let period = Duration::from_secs(config.stats_interval_secs.max(1));
-    let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
-    loop {
-        tokio::select! {
-            result = market.stopped() => {
-                return match result {
-                    Err(MarketError::StreamClosed) => {
-                        hub.task.await.context("grpc hub panicked")??;
-                        anyhow::bail!("grpc hub stopped")
+    /// Logs stats every tick until ctrl-c, a failure, or `until` fires.
+    async fn run(&mut self, until: impl Future<Output = ()>) -> anyhow::Result<()> {
+        let shutdown = tokio::signal::ctrl_c();
+        tokio::pin!(shutdown, until);
+        let period = Duration::from_secs(self.config.stats_interval_secs.max(1));
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        let quotes = self.router.reader();
+        let probe_amount = self.config.route.probe_amount;
+        let mut probing: Option<JoinHandle<ProbeReport>> = None;
+        loop {
+            tokio::select! {
+                result = self.market.stopped() => {
+                    return match result {
+                        Err(MarketError::StreamClosed) => {
+                            (&mut self.hub).await.context("grpc hub panicked")??;
+                            anyhow::bail!("grpc hub stopped")
+                        }
+                        other => other.context("market sync failed"),
+                    };
+                }
+                result = self.router.stopped() => {
+                    return result.context("route thread stopped");
+                }
+                _ = ticker.tick() => {
+                    output::log_stats(&self.market.stats());
+                    output::log_route(&self.router.stats());
+                    output::log_not_ready(&self.reader.pools());
+                    if probe_amount > 0 && probing.as_ref().is_none_or(JoinHandle::is_finished) {
+                        if let Some(done) = probing.take() {
+                            output::log_probe(probe_amount, &done.await.context("quote probe panicked")?);
+                        }
+                        let quotes = quotes.clone();
+                        probing = Some(tokio::task::spawn_blocking(move || {
+                            quotes.probe(probe_amount, u8::MAX)
+                        }));
                     }
-                    other => other.context("market sync failed"),
-                };
-            }
-            _ = ticker.tick() => {
-                output::log_stats(&market.stats());
-                output::log_not_ready(&reader.pools());
-            }
-            _ = &mut shutdown => {
-                tracing::info!("shutting down");
-                return Ok(());
+                }
+                () = &mut until => return Ok(()),
+                _ = &mut shutdown => {
+                    tracing::info!("shutting down");
+                    return Ok(());
+                }
             }
         }
     }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.router.shutdown();
+    }
+}
+
+pub async fn watch(path: &Path) -> anyhow::Result<()> {
+    Running::start(path)
+        .await?
+        .run(std::future::pending())
+        .await
+}
+
+#[derive(clap::Args)]
+pub struct SnapshotArgs {
+    #[arg(long, default_value = "config.toml")]
+    config: PathBuf,
+    /// How long the market syncs before the views are taken.
+    #[arg(long, default_value_t = 90)]
+    settle_secs: u64,
+    #[arg(long, default_value_t = 12)]
+    per_dex: usize,
+    #[arg(long)]
+    out: PathBuf,
+}
+
+/// Lets the market settle, then writes `per_dex` ready pools of every DEX
+/// with the accounts their views hold and the Clock.
+pub async fn snapshot(args: &SnapshotArgs) -> anyhow::Result<()> {
+    let per_dex = args.per_dex;
+    let out = args.out.as_path();
+    let mut running = Running::start(&args.config).await?;
+    running
+        .run(tokio::time::sleep(Duration::from_secs(args.settle_secs)))
+        .await?;
+    let clock = running.reader.clock().context("no Clock sysvar yet")?;
+    let mut by_dex: BTreeMap<DexKind, Vec<Pubkey>> = BTreeMap::new();
+    for (pool, dex, readiness) in running.reader.pools() {
+        if readiness == Readiness::Ready {
+            by_dex.entry(dex).or_default().push(pool);
+        }
+    }
+    let views: Vec<_> = by_dex
+        .into_values()
+        .flat_map(|mut pools| {
+            pools.sort_unstable();
+            let step = pools.len().div_ceil(per_dex.max(1)).max(1);
+            pools.into_iter().step_by(step).collect::<Vec<_>>()
+        })
+        .filter_map(|pool| running.reader.pool_view(&pool))
+        .collect();
+    output::write_snapshot(out, &clock, &views).context("writing the snapshot")?;
+    tracing::info!(pools = views.len(), slot = clock.slot.0, out = %out.display(), "snapshot");
+    Ok(())
 }
 
 pub async fn probe(path: &Path, kinds: &[ProbeKind]) -> anyhow::Result<()> {

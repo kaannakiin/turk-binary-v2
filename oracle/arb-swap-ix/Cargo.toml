@@ -1,0 +1,35 @@
+# arb-swap-ix — the client-side window builder for the onchain arb-router.
+#
+# Port of the source repo's `rust/crates/arb-swap-ix` (+ the 8-venue subset of
+# `arb-pools` layouts and the tiny `arb-math`/`arb-types` pieces the builders
+# read), trimmed to the 8 target venues and moved onto the solana v3 split
+# family so `onchain/tools/router-conformance` can consume it as a path dep
+# without a Pubkey/Instruction major skew.
+#
+# This crate CONSTRUCTS instructions. It never signs, never sends, does no IO at
+# all, and depends on no other crate in this workspace, so it can be lifted into
+# the arb-router repo as an SDK unchanged. `tests/no_send_guard.rs` holds all
+# three. Wallet-side accounts it cannot derive arrive through `AccountResolver`;
+# the cache that implements it lives in `crates/ata`.
+
+[package]
+name = "arb-swap-ix"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ahash = { workspace = true }
+solana-pubkey = { workspace = true, features = ["curve25519", "sha2", "serde", "std"] }
+solana-instruction = { workspace = true }
+smallvec = { workspace = true }
+parking_lot = "0.12"
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+solana-sha256-hasher = "3"
+# The test resolver derives every ATA slot through the canonical SPL crate, so
+# each builder test doubles as a parity check on the addresses it emits.
+spl-associated-token-account-interface = "2"

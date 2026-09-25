@@ -107,6 +107,22 @@ pattern and are not deleted. New fixtures are captured only with
 `scripts/capture_accounts.py`, never hand-made. After a program upgrade,
 recapture the fixture; never loosen the decoder to fit it.
 
+**Imported simulation corpus.** `crates/quoter/src/tests/fixtures/sim/` holds
+the previous repo's `simulateTransaction` corpus, brought over with
+`scripts/import_sim_fixture.py` as gzipped JSON: account bytes dumped at a slot and the payout
+the simulation actually made (`onchainAmountOut`), which is the expected value.
+The importer drops the old port's own output and records the source file's
+sha256. Those states were dumped at a slot but simulated at the chain head, so
+a case may drift; drifted cases are pinned by name with the reason they drift,
+never by a count. The quote mints the corpus lacks are captured with
+`scripts/capture_accounts.py` into `crates/quoter/src/tests/fixtures/accounts/`.
+
+**Program replay corpus.** `crates/quoter/src/tests/fixtures/svm/` is written
+by `just oracle`: a live `just snapshot`'s account bytes, and what the
+deployed program bytecode paid for each swap in LiteSVM (or why it refused).
+Each file records the snapshot's sha256 and every program's deploy slot and
+ELF hash. Regenerate it after a program upgrade; never edit an expected value.
+
 Static or slow is not a deletion reason. A test that resembles implementation
 may still be the independent contract; prove otherwise before removing it. A
 retained test that fails on the baseline is a likely product bug: reproduce it

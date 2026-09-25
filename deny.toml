@@ -7,6 +7,12 @@ yanked = "deny"
 ignore = [
     # Unmaintained, not vulnerable; pulled in by solana-account-decoder via solana-rpc-client.
     { id = "RUSTSEC-2025-0141", reason = "transitive via solana-rpc-client 4.3.0, no maintained replacement upstream yet" },
+    { id = "RUSTSEC-2022-0093", reason = "ed25519-dalek 1.x via solana-sdk 2.x in the DLMM SDK (quoter); quoter never signs" },
+    { id = "RUSTSEC-2024-0344", reason = "curve25519-dalek 3.x via solana-sdk 2.x in the DLMM SDK (quoter); no secret-key arithmetic off-chain" },
+    { id = "RUSTSEC-2024-0375", reason = "atty via solana-sdk 2.x in the DLMM SDK (quoter); unmaintained only" },
+    { id = "RUSTSEC-2024-0388", reason = "derivative via solana-sdk 2.x in the DLMM SDK (quoter); unmaintained only" },
+    { id = "RUSTSEC-2024-0436", reason = "paste via solana-sdk 2.x and anchor in the DEX SDKs (quoter); unmaintained only" },
+    { id = "RUSTSEC-2025-0161", reason = "libsecp256k1 via solana-program 2.x in the DEX SDK forks (quoter); secp256k1 recovery is never called off-chain" },
 ]
 
 [licenses]
@@ -23,6 +29,71 @@ allow = [
     "Zlib",
 ]
 
+# Custom licenses in the DEX SDK chain, accepted by the owner for host-side
+# quoting. Each is reachable only through `quoter`.
+exceptions = [
+    { allow = ["LicenseRef-Metaplex-NFT"], crate = "mpl-token-metadata" },
+    { allow = ["LicenseRef-Orca"], crate = "orca_whirlpools_client" },
+    { allow = ["LicenseRef-Orca"], crate = "orca_whirlpools_core" },
+    { allow = ["LicenseRef-Orca"], crate = "orca_whirlpools_macros" },
+    { allow = ["LicenseRef-Meteora-Noncommercial"], crate = "cp-amm" },
+    { allow = ["LicenseRef-Meteora-Noncommercial"], crate = "rust-sdk" },
+    { allow = ["LicenseRef-Meteora-Noncommercial"], crate = "derive-variant-count" },
+    { allow = ["LicenseRef-Meteora-Unlicensed"], crate = "commons" },
+]
+
+[[licenses.clarify]]
+crate = "mpl-token-metadata"
+expression = "LicenseRef-Metaplex-NFT"
+license-files = [{ path = "LICENSE", hash = 0xd3dacb8e }]
+
+# Apache-2.0 LICENSE at the repository root, not in the crate's manifest.
+[[licenses.clarify]]
+crate = "raydium-clmm"
+expression = "Apache-2.0"
+license-files = []
+
+# Orca License (non-commercial terms since 2025-02-27) at the repository
+# root; the owner accepted the risk for host-side quoting.
+[[licenses.clarify]]
+crate = "orca_whirlpools_client"
+expression = "LicenseRef-Orca"
+license-files = []
+
+[[licenses.clarify]]
+crate = "orca_whirlpools_core"
+expression = "LicenseRef-Orca"
+license-files = []
+
+[[licenses.clarify]]
+crate = "orca_whirlpools_macros"
+expression = "LicenseRef-Orca"
+license-files = []
+
+# Meteora Noncommercial Licence (license.md at the repository root); the
+# owner accepted the risk for host-side quoting.
+[[licenses.clarify]]
+crate = "cp-amm"
+expression = "LicenseRef-Meteora-Noncommercial"
+license-files = []
+
+[[licenses.clarify]]
+crate = "rust-sdk"
+expression = "LicenseRef-Meteora-Noncommercial"
+license-files = []
+
+[[licenses.clarify]]
+crate = "derive-variant-count"
+expression = "LicenseRef-Meteora-Noncommercial"
+license-files = []
+
+# dlmm-sdk carries no license file or field at all; the owner accepted the
+# risk for host-side quoting.
+[[licenses.clarify]]
+crate = "commons"
+expression = "LicenseRef-Meteora-Unlicensed"
+license-files = []
+
 [licenses.private]
 ignore = true
 
@@ -35,8 +106,28 @@ deny = [
     { crate = "solana-rpc-client", wrappers = ["rpc"] },
     { crate = "yellowstone-grpc-client", wrappers = ["grpc"] },
     { crate = "yellowstone-grpc-proto", wrappers = ["grpc", "yellowstone-grpc-client"] },
+    # DEX SDKs only through `quoter`.
+    { crate = "raydium_amm", wrappers = ["quoter"] },
+    { crate = "raydium-cp-swap", wrappers = ["quoter"] },
+    { crate = "raydium-clmm", wrappers = ["quoter"] },
+    { crate = "orca_whirlpools_client", wrappers = ["quoter"] },
+    { crate = "rust-sdk", wrappers = ["quoter"] },
+    { crate = "cp-amm", wrappers = ["quoter", "rust-sdk"] },
+    { crate = "commons", wrappers = ["quoter"] },
 ]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# DEX SDK forks and the git crates they pull in, for `quoter` only.
+allow-git = [
+    "https://github.com/kaannakiin/raydium-amm",
+    "https://github.com/raydium-io/arrform",
+    "https://github.com/kaannakiin/raydium-cp-swap",
+    "https://github.com/kaannakiin/raydium-clmm",
+    "https://github.com/raydium-io/parity-common",
+    "https://github.com/kaannakiin/whirlpools",
+    "https://github.com/kaannakiin/damm-v2",
+    "https://github.com/anza-xyz/pinocchio",
+    "https://github.com/kaannakiin/dlmm-sdk",
+]

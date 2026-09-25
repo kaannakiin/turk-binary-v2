@@ -1,9 +1,20 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::fs::File;
+use std::io::{self, BufWriter, Write as _};
+use std::path::Path;
+use std::sync::Arc;
 
-use domain::{DexKind, Pubkey};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use serde::Serialize;
+
+use domain::{ChainClock, DexKind, Pubkey};
 use grpc::{Conn, Finding, TraceKind, TraceRow};
-use market::{Readiness, StatsSnapshot};
+use market::{PoolView, Readiness, StatsSnapshot};
+use route::{ProbeReport, RouteStatsSnapshot};
 
 pub fn log_stats(s: &StatsSnapshot) {
     let pools = s
@@ -40,6 +51,108 @@ pub fn log_stats(s: &StatsSnapshot) {
         pool_updates = %pools,
         "stats"
     );
+}
+
+pub fn log_route(s: &RouteStatsSnapshot) {
+    tracing::info!(
+        pools = s.pools,
+        quotable = s.quotable,
+        unsupported = s.unsupported,
+        decoded = s.decoded,
+        decode_errors = s.decode_errors,
+        panics = s.panics,
+        lagged = s.lagged,
+        "route"
+    );
+}
+
+pub fn log_probe(amount_in: u64, report: &ProbeReport) {
+    let mut summary = String::new();
+    for (dex, tally) in &report.by_dex {
+        let _ = write!(summary, " {dex}:quoted={}", tally.quoted);
+        for (label, n) in &tally.refused {
+            let _ = write!(summary, ",{label}={n}");
+        }
+    }
+    tracing::info!(
+        amount_in,
+        quotes = report.quotes,
+        elapsed_us = report.elapsed.as_micros(),
+        slowest_us = report.slowest.as_micros(),
+        summary = summary.trim_start(),
+        "quote probe"
+    );
+}
+
+#[derive(Serialize)]
+struct Snapshot<'a> {
+    clock: SnapshotClock,
+    pools: Vec<SnapshotPool<'a>>,
+}
+
+#[derive(Serialize)]
+struct SnapshotClock {
+    slot: u64,
+    epoch_start_timestamp: i64,
+    epoch: u64,
+    leader_schedule_epoch: u64,
+    unix_timestamp: i64,
+}
+
+#[derive(Serialize)]
+struct SnapshotPool<'a> {
+    pool: String,
+    dex: &'a str,
+    cross_stream: bool,
+    accounts: Vec<SnapshotAccount>,
+}
+
+/// `owner` and `data` are absent for an account confirmed not to exist.
+#[derive(Serialize)]
+struct SnapshotAccount {
+    key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
+    lamports: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
+}
+
+pub fn write_snapshot(path: &Path, clock: &ChainClock, views: &[Arc<PoolView>]) -> io::Result<()> {
+    let snapshot = Snapshot {
+        clock: SnapshotClock {
+            slot: clock.slot.0,
+            epoch_start_timestamp: clock.epoch_start_timestamp,
+            epoch: clock.epoch,
+            leader_schedule_epoch: clock.leader_schedule_epoch,
+            unix_timestamp: clock.unix_timestamp,
+        },
+        pools: views
+            .iter()
+            .map(|view| SnapshotPool {
+                pool: view.pool.to_string(),
+                dex: view.dex.as_str(),
+                cross_stream: view.cross_stream,
+                accounts: view
+                    .accounts
+                    .iter()
+                    .filter_map(|(dep, account)| {
+                        let account = account.as_ref()?;
+                        let exists = account.exists();
+                        Some(SnapshotAccount {
+                            key: dep.pubkey.to_string(),
+                            owner: exists.then(|| account.owner.to_string()),
+                            lamports: if exists { account.lamports } else { 0 },
+                            data: exists.then(|| STANDARD.encode(&account.data)),
+                        })
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+    let mut gz = GzEncoder::new(BufWriter::new(File::create(path)?), Compression::best());
+    serde_json::to_writer(&mut gz, &snapshot)?;
+    gz.finish()?.flush()
 }
 
 pub fn log_not_ready(pools: &[(Pubkey, DexKind, Readiness)]) {

@@ -7,3 +7,6 @@ junit.xml
 *keypair*.json
 id.json
 /config.toml
+/oracle/target
+/oracle/programs/*.so
+/oracle/snapshots

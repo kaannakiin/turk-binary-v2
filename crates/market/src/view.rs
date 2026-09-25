@@ -75,8 +75,17 @@ impl Snapshots {
         });
     }
 
+    /// Every partition writes its own stream's Clock into this one cell, and a
+    /// rolled-back fork moves one partition's Clock back; only a newer slot
+    /// replaces the cell.
     pub(crate) fn set_clock(&self, clock: Option<ChainClock>) {
-        self.clock.store(clock.map(Arc::new));
+        let Some(clock) = clock else {
+            return;
+        };
+        self.clock.rcu(|current| match current {
+            Some(current) if current.slot >= clock.slot => Some(Arc::clone(current)),
+            _ => Some(Arc::new(clock)),
+        });
     }
 }
 
@@ -126,5 +135,31 @@ impl MarketReader {
     #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<PoolChanged> {
         self.changes.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use domain::{ChainClock, Slot};
+
+    use super::Snapshots;
+
+    fn clock(slot: u64) -> ChainClock {
+        ChainClock {
+            slot: Slot(slot),
+            epoch_start_timestamp: 0,
+            epoch: 0,
+            leader_schedule_epoch: 0,
+            unix_timestamp: i64::try_from(slot).expect("small slot"),
+        }
+    }
+
+    #[test]
+    fn a_partition_behind_another_does_not_move_the_clock_back() {
+        let snapshots = Snapshots::default();
+        snapshots.set_clock(Some(clock(200)));
+        snapshots.set_clock(Some(clock(199)));
+        snapshots.set_clock(None);
+        assert_eq!(snapshots.clock.load().as_deref().copied(), Some(clock(200)));
     }
 }
