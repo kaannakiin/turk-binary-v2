@@ -1,13 +1,13 @@
 use solana_pubkey::Pubkey;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AccountFilter {
     pub owner: Pubkey,
     pub data_size: Option<u64>,
     pub memcmp: Vec<Memcmp>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Memcmp {
     pub offset: usize,
     pub bytes: Vec<u8>,
