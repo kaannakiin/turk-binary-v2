@@ -465,6 +465,24 @@ async fn a_readiness_change_without_a_write_is_announced() {
 }
 
 #[tokio::test]
+async fn a_flap_on_an_unrelated_stream_keeps_the_published_view() {
+    let pool = cpmm_pool();
+    let rig = subscribed(&pool).await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let before = rig.reader.pool_view(&rig.pool).unwrap();
+    rig.send(StreamEvent::Down {
+        stream: StreamId::Shard(1),
+        generation: 1,
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let after = rig.reader.pool_view(&rig.pool).unwrap();
+    assert!(Arc::ptr_eq(&before, &after));
+}
+
+#[tokio::test]
 async fn a_rejected_pool_is_unsubscribable() {
     let pool = cpmm_pool();
     let rig = subscribed(&pool).await;

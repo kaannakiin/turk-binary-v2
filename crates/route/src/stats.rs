@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use domain::LatencySnapshot;
+
 #[derive(Debug, Default)]
 pub(crate) struct Stats {
     pub decoded: AtomicU64,
@@ -22,6 +24,8 @@ pub struct RouteStatsSnapshot {
     /// Ready pools whose every account decoded.
     pub quotable: u64,
     pub unsupported: u64,
+    /// Time a thread spent on one drained batch of changes.
+    pub batch: LatencySnapshot,
 }
 
 impl Stats {
@@ -43,6 +47,7 @@ impl Stats {
             pools: load(&self.pools),
             quotable: load(&self.quotable),
             unsupported: load(&self.unsupported),
+            batch: LatencySnapshot::default(),
         }
     }
 }
@@ -57,6 +62,7 @@ impl RouteStatsSnapshot {
             pools: a.pools + b.pools,
             quotable: a.quotable + b.quotable,
             unsupported: a.unsupported + b.unsupported,
+            batch: LatencySnapshot::default(),
         })
     }
 }

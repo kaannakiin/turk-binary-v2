@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write as _};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -12,6 +13,7 @@ use flate2::write::GzEncoder;
 use serde::Serialize;
 
 use domain::{ChainClock, DexKind, Pubkey};
+use graph::{GraphStats, Topology};
 use grpc::{Conn, Finding, TraceKind, TraceRow};
 use market::{PoolView, Readiness, StatsSnapshot};
 use route::{ProbeReport, RouteStatsSnapshot};
@@ -62,8 +64,31 @@ pub fn log_route(s: &RouteStatsSnapshot) {
         decode_errors = s.decode_errors,
         panics = s.panics,
         lagged = s.lagged,
+        batch_p50 = ?s.batch.p50,
+        batch_p99 = ?s.batch.p99,
+        batch_max = ?s.batch.max,
         "route"
     );
+}
+
+pub fn log_graph_built(topology: &Topology, took: Duration) {
+    let s = topology.stats();
+    tracing::info!(
+        mints = s.mints,
+        pools = s.pools,
+        pairs = s.pairs,
+        edges = s.edges,
+        unplaced = s.unplaced,
+        took = ?took,
+        "graph built"
+    );
+    for (pool, reason) in topology.unplaced() {
+        tracing::debug!(%pool, ?reason, "pool left out of the graph");
+    }
+}
+
+pub fn log_graph(s: &GraphStats) {
+    tracing::info!(active = s.active, pools = s.pools, flips = s.flips, "graph");
 }
 
 pub fn log_probe(amount_in: u64, report: &ProbeReport) {

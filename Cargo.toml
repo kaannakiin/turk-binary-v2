@@ -12,6 +12,7 @@ publish = false
 [workspace.dependencies]
 dex = { path = "crates/dex" }
 domain = { path = "crates/domain" }
+graph = { path = "crates/graph" }
 grpc = { path = "crates/grpc" }
 market = { path = "crates/market" }
 quoter = { path = "crates/quoter" }
@@ -27,6 +28,7 @@ bytemuck = "1.25.0"
 ethnum = "1.5.3"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 futures = "0.3.34"
 rand = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }

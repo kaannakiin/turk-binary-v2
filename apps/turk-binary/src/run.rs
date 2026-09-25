@@ -4,10 +4,11 @@ use std::future::Future;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use domain::{DexKind, Pubkey};
+use graph::Topology;
 use grpc::{GeyserHub, ProbeKind, SlotSource, TraceRow, TxnProbeOptions};
 use market::{Market, MarketError, MarketReader, Readiness, Universe};
 use route::{ProbeReport, Router};
@@ -21,6 +22,7 @@ struct Running {
     market: Market,
     router: Router<MarketReader>,
     reader: MarketReader,
+    topology: Arc<Topology>,
     config: config::AppConfig,
 }
 
@@ -40,6 +42,10 @@ impl Running {
             !universe.pools.is_empty(),
             "no pools matched the configured universe"
         );
+        let started = Instant::now();
+        let topology =
+            Arc::new(Topology::from_universe(&universe).context("building the token graph")?);
+        output::log_graph_built(&topology, started.elapsed());
 
         let slot_source = grpc::resolve_slot_source(
             secrets.grpc_url.clone(),
@@ -65,13 +71,14 @@ impl Running {
         )?;
         tracing::info!(partitions, "market partitions");
         let reader = market.reader();
-        let router = Router::start(reader.clone(), &config.route)?;
+        let router = Router::start(reader.clone(), &config.route, &topology)?;
         tracing::info!(threads = config.route.route_threads, "route threads");
         Ok(Self {
             hub: hub.task,
             market,
             router,
             reader,
+            topology,
             config,
         })
     }
@@ -102,6 +109,7 @@ impl Running {
                 _ = ticker.tick() => {
                     output::log_stats(&self.market.stats());
                     output::log_route(&self.router.stats());
+                    output::log_graph(&self.topology.stats());
                     output::log_not_ready(&self.reader.pools());
                     if probe_amount > 0 && probing.as_ref().is_none_or(JoinHandle::is_finished) {
                         if let Some(done) = probing.take() {

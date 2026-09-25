@@ -810,8 +810,6 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             self.table.insert(pool, meta);
             if changed {
                 self.pool_changed(pool, self.confirmed);
-            } else {
-                self.publish(&pool);
             }
         }
         let ready = self

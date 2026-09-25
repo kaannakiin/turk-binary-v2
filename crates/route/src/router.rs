@@ -3,6 +3,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 
+use domain::LatencyHistogram;
+use graph::Topology;
 use serde::Deserialize;
 use tokio::sync::{oneshot, watch};
 
@@ -43,14 +45,20 @@ impl RouteSettings {
 pub struct Router<F> {
     reader: QuoteReader<F>,
     stats: Vec<Arc<Stats>>,
+    batch: Arc<LatencyHistogram>,
     stop: watch::Sender<bool>,
     stopped: Vec<oneshot::Receiver<Result<(), RouteError>>>,
 }
 
 impl<F: PoolFeed> Router<F> {
-    pub fn start(feed: F, settings: &RouteSettings) -> Result<Self, RouteError> {
+    pub fn start(
+        feed: F,
+        settings: &RouteSettings,
+        topology: &Arc<Topology>,
+    ) -> Result<Self, RouteError> {
         let threads = settings.threads()?;
         let table = Arc::new(Table::default());
+        let batch = Arc::new(LatencyHistogram::default());
         let (stop, stop_rx) = watch::channel(false);
         let mut stats = Vec::with_capacity(threads);
         let mut stopped = Vec::with_capacity(threads);
@@ -63,6 +71,8 @@ impl<F: PoolFeed> Router<F> {
                 feed.clone(),
                 Arc::clone(&table),
                 thread_stats,
+                Arc::clone(topology),
+                Arc::clone(&batch),
             );
             let stop_rx = stop_rx.clone();
             let (done, done_rx) = oneshot::channel();
@@ -82,6 +92,7 @@ impl<F: PoolFeed> Router<F> {
         Ok(Self {
             reader: QuoteReader { feed, table },
             stats,
+            batch,
             stop,
             stopped,
         })
@@ -95,7 +106,10 @@ impl<F: PoolFeed> Router<F> {
     #[must_use]
     pub fn stats(&self) -> RouteStatsSnapshot {
         let parts: Vec<RouteStatsSnapshot> = self.stats.iter().map(|s| s.snapshot()).collect();
-        RouteStatsSnapshot::merge(&parts)
+        RouteStatsSnapshot {
+            batch: self.batch.snapshot(),
+            ..RouteStatsSnapshot::merge(&parts)
+        }
     }
 
     pub fn shutdown(&self) {

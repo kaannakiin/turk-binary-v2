@@ -1,10 +1,12 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::time::Instant;
 
 use bytes::Bytes;
 use dex::Role;
-use domain::{DexKind, Pubkey, UpdateOrder};
+use domain::{DexKind, LatencyHistogram, Pubkey, UpdateOrder};
+use graph::Topology;
 use market::{PoolChanged, PoolView, Readiness, Reason, StoredAccount};
 use quoter::{AccountRef, DecodeError, VenueState};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -75,6 +77,10 @@ impl Entry {
             errors: HashMap::default(),
             ready: false,
         }
+    }
+
+    fn quotable(&self) -> bool {
+        self.supported && self.ready && self.errors.is_empty()
     }
 
     /// `Err` when the venue panicked; the state is then discarded.
@@ -154,6 +160,8 @@ pub(crate) struct Worker<F> {
     pub feed: F,
     pub table: Arc<Table>,
     pub stats: Arc<Stats>,
+    topology: Arc<Topology>,
+    batch: Arc<LatencyHistogram>,
     pools: HashMap<Pubkey, Entry, ahash::RandomState>,
 }
 
@@ -164,6 +172,8 @@ impl<F: PoolFeed> Worker<F> {
         feed: F,
         table: Arc<Table>,
         stats: Arc<Stats>,
+        topology: Arc<Topology>,
+        batch: Arc<LatencyHistogram>,
     ) -> Self {
         Self {
             index,
@@ -171,6 +181,8 @@ impl<F: PoolFeed> Worker<F> {
             feed,
             table,
             stats,
+            topology,
+            batch,
             pools: HashMap::default(),
         }
     }
@@ -208,6 +220,7 @@ impl<F: PoolFeed> Worker<F> {
                     Err(TryRecvError::Closed) => return,
                 }
             }
+            let started = Instant::now();
             if rescan {
                 Stats::add(&self.stats.lagged, 1);
                 self.rescan();
@@ -218,6 +231,7 @@ impl<F: PoolFeed> Worker<F> {
                 }
                 self.gauges();
             }
+            self.batch.record(started.elapsed());
         }
     }
 
@@ -238,6 +252,7 @@ impl<F: PoolFeed> Worker<F> {
     pub(crate) fn process(&mut self, pool: Pubkey) {
         let Some(view) = self.feed.pool_view(&pool) else {
             self.pools.remove(&pool);
+            self.mark(&pool, false);
             return;
         };
         if matches!(
@@ -255,6 +270,7 @@ impl<F: PoolFeed> Worker<F> {
                     panicked: false,
                 },
             );
+            self.mark(&pool, false);
             return;
         }
         let entry = self
@@ -263,6 +279,7 @@ impl<F: PoolFeed> Worker<F> {
             .or_insert_with(|| Entry::new(view.dex));
         entry.ready = view.readiness == Readiness::Ready;
         let panicked = entry.ready && entry.sync(&view, &self.stats).is_err();
+        let active = !panicked && entry.quotable();
         let decoded = Decoded {
             readiness: view.readiness,
             state: entry.state.clone(),
@@ -274,14 +291,17 @@ impl<F: PoolFeed> Worker<F> {
             self.pools.remove(&pool);
         }
         self.table.publish(pool, decoded);
+        self.mark(&pool, active);
+    }
+
+    fn mark(&self, pool: &Pubkey, active: bool) {
+        if let Some(id) = self.topology.pool_id(pool) {
+            self.topology.activity().set(id, active);
+        }
     }
 
     fn gauges(&self) {
-        let quotable = self
-            .pools
-            .values()
-            .filter(|e| e.supported && e.ready && e.errors.is_empty())
-            .count();
+        let quotable = self.pools.values().filter(|e| e.quotable()).count();
         let unsupported = self.pools.values().filter(|e| !e.supported).count();
         Stats::set(&self.stats.pools, self.pools.len());
         Stats::set(&self.stats.quotable, quotable);
