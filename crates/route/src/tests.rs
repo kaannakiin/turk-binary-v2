@@ -12,6 +12,7 @@ use bytes::Bytes;
 use dex::{Dependency, OwnerRule, Role, Scope, Side};
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 use domain::{ChainClock, DexKind, Pubkey, Slot, UpdateOrder, WriteVersion};
+use graph::{PoolSeed, Topology};
 use market::{PoolChanged, PoolView, Readiness, Reason, StoredAccount};
 use quoter::{AccountRef, QuoteInput, VenueState};
 use tokio::sync::broadcast;
@@ -204,6 +205,23 @@ fn until<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> T {
     }
 }
 
+fn topology_of(pools: &[(Pubkey, DexKind)]) -> Arc<Topology> {
+    Arc::new(
+        Topology::build(pools.iter().map(|&(pubkey, dex)| PoolSeed {
+            pubkey,
+            dex,
+            mints: Some((Pubkey::new_unique(), Pubkey::new_unique())),
+        }))
+        .expect("small universe"),
+    )
+}
+
+fn active(topology: &Topology, pool: &Pubkey) -> bool {
+    topology
+        .activity()
+        .is_active(topology.pool_id(pool).expect("placed pool"))
+}
+
 fn settings(route_threads: u16) -> RouteSettings {
     RouteSettings {
         route_threads,
@@ -215,7 +233,8 @@ fn settings(route_threads: u16) -> RouteSettings {
 fn a_ready_pool_is_decoded_and_quoted_through_the_reader() {
     let feed = FakeFeed::new();
     let recorded = recorded();
-    let router = Router::start(feed.clone(), &settings(2)).expect("router");
+    let topology = topology_of(&[(recorded.pool, DexKind::PumpAmm)]);
+    let router = Router::start(feed.clone(), &settings(2), &topology).expect("router");
     let reader = router.reader();
     feed.publish(view(&recorded, Readiness::Ready, 10));
     let expected = oracle(&recorded, &feed, 1_000_000);
@@ -223,6 +242,9 @@ fn a_ready_pool_is_decoded_and_quoted_through_the_reader() {
         reader.quote(&recorded.pool, 1_000_000, false, 0).ok()
     });
     assert_eq!(got.out.amount_out, expected);
+    until("the pool to turn active", || {
+        active(&topology, &recorded.pool).then_some(())
+    });
     router.shutdown();
 }
 
@@ -230,7 +252,8 @@ fn a_ready_pool_is_decoded_and_quoted_through_the_reader() {
 fn an_account_moved_back_by_a_rollback_is_decoded_again() {
     let feed = FakeFeed::new();
     let mut recorded = recorded();
-    let router = Router::start(feed.clone(), &settings(1)).expect("router");
+    let topology = topology_of(&[(recorded.pool, DexKind::PumpAmm)]);
+    let router = Router::start(feed.clone(), &settings(1), &topology).expect("router");
     let reader = router.reader();
     feed.publish(view(&recorded, Readiness::Ready, 20));
     until("the first quote", || {
@@ -255,7 +278,8 @@ fn an_account_moved_back_by_a_rollback_is_decoded_again() {
 fn a_pool_that_stops_being_ready_is_refused() {
     let feed = FakeFeed::new();
     let recorded = recorded();
-    let router = Router::start(feed.clone(), &settings(1)).expect("router");
+    let topology = topology_of(&[(recorded.pool, DexKind::PumpAmm)]);
+    let router = Router::start(feed.clone(), &settings(1), &topology).expect("router");
     let reader = router.reader();
     feed.publish(view(&recorded, Readiness::Ready, 30));
     until("the first quote", || {
@@ -269,5 +293,52 @@ fn a_pool_that_stops_being_ready_is_refused() {
         )
         .then_some(())
     });
+    until("the pool to turn inactive", || {
+        (!active(&topology, &recorded.pool)).then_some(())
+    });
+    router.shutdown();
+}
+
+#[test]
+fn a_ready_pool_that_cannot_be_quoted_stays_inactive() {
+    let feed = FakeFeed::new();
+    let mut broken = recorded();
+    broken.accounts[3].2.truncate(10);
+    let unsupported = PoolView {
+        pool: Pubkey::new_unique(),
+        dex: DexKind::PumpBondingCurve,
+        readiness: Readiness::Ready,
+        accounts: Vec::new(),
+        cross_stream: false,
+    };
+    let healthy = recorded();
+    let topology = topology_of(&[
+        (broken.pool, DexKind::PumpAmm),
+        (unsupported.pool, DexKind::PumpBondingCurve),
+        (healthy.pool, DexKind::PumpAmm),
+    ]);
+    let router = Router::start(feed.clone(), &settings(1), &topology).expect("router");
+    let reader = router.reader();
+    feed.publish(view(&broken, Readiness::Ready, 40));
+    feed.publish(unsupported.clone());
+    until("both pools decoded", || {
+        let broken_refused = matches!(
+            reader.quote(&broken.pool, 1_000_000, false, 0),
+            Err(RouteError::Decode(_))
+        );
+        let unsupported_refused = matches!(
+            reader.quote(&unsupported.pool, 1_000_000, false, 0),
+            Err(RouteError::Quote(quoter::QuoteError::Unsupported(
+                DexKind::PumpBondingCurve
+            )))
+        );
+        (broken_refused && unsupported_refused).then_some(())
+    });
+    feed.publish(view(&healthy, Readiness::Ready, 41));
+    until("a later batch to finish", || {
+        active(&topology, &healthy.pool).then_some(())
+    });
+    assert!(!active(&topology, &broken.pool));
+    assert!(!active(&topology, &unsupported.pool));
     router.shutdown();
 }

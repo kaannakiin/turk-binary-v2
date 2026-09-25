@@ -11,13 +11,16 @@
 | `grpc`             | Every Yellowstone gRPC stream: subscriptions, reconnects, replay, provider probes           | Yes, gRPC only             |
 | `market`           | Picks the pools, keeps every account they depend on subscribed and in sync, answers reads   | Through `rpc` and `grpc`   |
 | `quoter`           | Decodes a pool's accounts and computes swap quotes (DEX math and SDK binds); pure           | No                         |
-| `route`            | Route threads: decode each pool as the market changes it, publish state for quotes         | No (reads `market`)        |
+| `graph`            | Token graph built once from the universe: mints, pools, edges, per-pool activity bits       | No                         |
+| `route`            | Route threads: decode each pool as the market changes it, publish state for quotes          | No (reads `market`)        |
 
 Dependencies point one way:
 
 ```text
 turk-binary ──▶ route ──▶ quoter ──▶ dex ──▶ domain
+     │            ├─────▶ graph ──▶ market
      │            └─────▶ market
+     ├──────────▶ graph
      └──────────▶ market ──▶ rpc ──┐
                      │  └──▶ grpc ─┤
                      └────▶ dex ───┴──▶ domain
@@ -149,8 +152,29 @@ If a parent link is missing, slots below the hole are promoted as if canonical, 
 - **Incremental decode.** Per pool the thread remembers, for every dependency, the update order, owner, lamports and data buffer it last decoded. Any difference counts as a change: a fork rollback moves the order back and RPC seeds share one write version, so "newer" would miss them. Only changed accounts go through `quoter::VenueState::apply`; a dependency that leaves the closure is applied as absent.
 - **Readiness.** Only `Ready` pools are decoded. `Closed` and `Invalid` pools drop their state.
 - **Output.** Each pool's state is published into a lock-free table together with the `PoolView` it was decoded from. `route::QuoteReader::quote` runs on the caller's thread and refuses when the market has published a newer view than the one decoded (`Stale`), the pool is not ready, a dependency failed to decode, or no Clock is known yet. Time-dependent inputs (fees by epoch, activation times) come from the Clock sysvar at quote time, so a Clock update needs no re-decode.
+- **Activity.** Right after decoding a pool, its thread writes the pool's activity bit in the [graph](#graph).
 - **Panics.** A venue panic while decoding or quoting is caught: the pool's state is discarded and rebuilt on its next change, and `panics` counts it.
+- **Batch time.** Every drained batch (or rescan) is timed into one lock-free histogram shared by all threads; the `route` line reports its p50, p99 and max.
 - **Probe.** `watch` exercises the quote path on live state: each stats tick it quotes `route.probe_amount` both ways through every decoded pool on a blocking thread (`QuoteReader::probe`) and logs, per DEX, how many quoted and why the rest refused (`quote probe`), with the sweep time and the slowest quote.
+
+## Graph
+
+`graph::Topology` is the token graph the search runs on. `watch` builds it once from the universe, before the market starts: mints are nodes, every pool gives one edge per direction. Pool mints never change on chain and the universe is fixed for the process, so the structure is never rebuilt; only the activity bits change.
+
+- **Layout.** Mints and pools get dense `u32` ids (`MintId`, `PoolId`), valid for one process. An edge is `PoolId << 1 | b_to_a`, so it needs no table of its own. Outgoing edges are stored per mint, grouped by the mint they lead to: every pool between the same two mints sits in one run, which a search quotes together. Incoming edges are grouped the same way, for closing cycles.
+- **Left out.** A pool without two known mints (a Pump bonding curve given by address) or with the same mint on both sides gets no edge. `graph built` counts them as `unplaced` and lists them at debug level.
+- **Activity.** One bit per pool: the pool is `Ready`, its DEX has a quoter venue, and every account decoded. The route thread that owns the pool writes the bit right after decoding it, so each bit has one writer and never runs ahead of the decoded state. A route rescan after `Lagged` rewrites every bit it owns.
+- **The bit is coarse on purpose.** An active pool can still refuse a quote: a transfer-hook mint, one direction disabled, or `Stale` between a market publish and its decode. A search treats any refused quote as a dead edge for that search.
+- **Stats.** `graph built` at start (mints, pools, pairs, edges, unplaced, build time); each stats tick, `graph` (active pools, flips). `just bench graph` measures building the graph and scanning a hub on synthetic power-law universes of 10k and 100k pools.
+
+### Search (next phase)
+
+Not implemented yet; the layout above is built for it.
+
+- A query `(in, out, amount)` runs a hop-layered Bellman-Ford over the graph with real integer exact-in quotes, keeping the best few labels per (depth, mint). Pool uniqueness and the account budget are enforced during the search, not afterwards. Depth is bounded by what the executor can land: 64 account locks per transaction, and the on-chain router's client takes up to 4 hops.
+- Arbitrage is the cycle case: when pool u→v changes, search forward from v and close at u; the amount comes from a golden-section search on integers.
+- The quoter is exact-in only, so no amount-aware search runs backwards from the output mint.
+- Search runs on its own thread pool, apart from the pipeline and route threads, and reads the topology and quotes without locks.
 
 ## LiteSVM oracle
 

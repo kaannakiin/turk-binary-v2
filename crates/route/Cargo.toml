@@ -11,6 +11,7 @@ arc-swap.workspace = true
 bytes.workspace = true
 dex.workspace = true
 domain.workspace = true
+graph.workspace = true
 market.workspace = true
 quoter.workspace = true
 serde.workspace = true

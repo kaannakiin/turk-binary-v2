@@ -19,6 +19,9 @@ test *args:
 test-crate crate *args:
     cargo nextest run -p {{crate}} {{args}}
 
+bench crate *args:
+    cargo bench -p {{crate}} {{args}}
+
 deny:
     cargo deny check
 

@@ -11,6 +11,7 @@ base64.workspace = true
 clap.workspace = true
 domain.workspace = true
 flate2.workspace = true
+graph.workspace = true
 grpc.workspace = true
 market.workspace = true
 route.workspace = true
