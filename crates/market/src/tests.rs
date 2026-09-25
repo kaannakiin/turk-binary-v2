@@ -6,9 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use domain::chain::{CLOCK_SYSVAR, SYSVAR_OWNER, TOKEN_PROGRAM};
+use domain::chain::{CLOCK_SYSVAR, SYSTEM_PROGRAM, SYSVAR_OWNER, TOKEN_PROGRAM};
 use domain::{AccountUpdate, DexKind, Pubkey, Slot, TxnSignature, WriteVersion};
-use grpc::{GapReason, GroupChange, GroupKey, GrpcError, Placement, StreamEvent, StreamId};
+use grpc::{
+    GapReason, GroupChange, GroupKey, GrpcError, Placement, SlotStatus, StreamEvent, StreamId,
+};
 use rpc::RpcError;
 use tokio::sync::mpsc;
 
@@ -186,6 +188,10 @@ struct Rig {
 }
 
 fn start(pool: &Pool) -> Rig {
+    start_with(pool, 0)
+}
+
+fn start_with(pool: &Pool, audit_interval_ms: u64) -> Rig {
     let chain = FakeSource::default();
     {
         let mut c = chain.0.lock().unwrap();
@@ -222,7 +228,7 @@ fn start(pool: &Pool) -> Rig {
     let hub = FakeHub::default();
     let settings = SyncSettings {
         tick_ms: 5,
-        audit_interval_ms: 0,
+        audit_interval_ms,
         ..SyncSettings::default()
     };
     let engine = Engine::new(
@@ -575,4 +581,71 @@ async fn a_shard_write_is_applied_only_once_its_transaction_status_arrives() {
         r.head_data(&vault_a.0).as_deref() == Some(b"after swap".as_slice())
     })
     .await;
+}
+
+async fn confirm(rig: &Rig, stream: StreamId, slot: u64) {
+    rig.send(StreamEvent::Slot {
+        stream,
+        slot: Slot(slot),
+        parent: None,
+        status: SlotStatus::Confirmed,
+    })
+    .await;
+}
+
+async fn audited_ready(pool: &Pool) -> Rig {
+    let rig = start_with(pool, 5);
+    rig.until("subscription", |r| {
+        !r.hub.keys_on(Placement::Pool).is_empty()
+    })
+    .await;
+    rig
+}
+
+#[tokio::test]
+async fn a_funded_uninitialized_account_matching_the_chain_is_not_drift() {
+    let pool = cpmm_pool();
+    let rig = audited_ready(&pool).await;
+    let vault = pool.deps[1].0;
+    {
+        let mut chain = rig.chain.0.lock().unwrap();
+        let funded = chain.accounts.get_mut(&vault).unwrap();
+        funded.owner = SYSTEM_PROGRAM;
+        funded.data = Bytes::new();
+        funded.lamports = 1_000_000;
+    }
+    rig.effective_all(100).await;
+    rig.until("seeded", |r| r.stats.snapshot().accounts_seeded > 0)
+        .await;
+    confirm(&rig, SHARD, 200).await;
+    confirm(&rig, StreamId::Shared(0), 200).await;
+    let keys = rig.hub.keys_on(Placement::Pool).len() + rig.hub.keys_on(Placement::Shared).len();
+    rig.until("a full audit", |r| {
+        r.stats.snapshot().audit_checked >= keys as u64
+    })
+    .await;
+    assert_eq!(rig.stats.snapshot().audit_mismatches, 0);
+}
+
+#[tokio::test]
+async fn a_key_is_not_audited_past_what_its_own_stream_confirmed() {
+    let pool = cpmm_pool();
+    let rig = audited_ready(&pool).await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    let vault = pool.deps[1].0;
+    rig.chain
+        .0
+        .lock()
+        .unwrap()
+        .accounts
+        .get_mut(&vault)
+        .unwrap()
+        .data = Bytes::from_static(b"written at 150, not streamed yet");
+    confirm(&rig, SHARD, 120).await;
+    confirm(&rig, StreamId::Shared(0), 200).await;
+    rig.until("an audit", |r| r.stats.snapshot().audit_checked > 0)
+        .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(rig.stats.snapshot().audit_mismatches, 0);
 }

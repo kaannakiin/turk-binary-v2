@@ -605,7 +605,8 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
     }
 
     /// A key is compared only where the store can say what it held at the
-    /// read's slot; a difference there is drift the stream never reported.
+    /// read's slot: its own stream confirmed that slot, so every write up to
+    /// it has arrived. A difference there is drift the stream never reported.
     fn on_audited(
         &mut self,
         keys: &[Pubkey],
@@ -617,15 +618,19 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             return;
         }
         for (key, account) in keys.iter().zip(accounts) {
+            if !self.stream_confirmed(key, slot) {
+                continue;
+            }
             let Some(stored) = self.store.settled(key, slot) else {
                 continue;
             };
             self.stats.add(Counter::AuditChecked, 1);
+            // Raw fields, not `exists()`: a funded but uninitialized address
+            // counts as absent yet still has to match the chain byte for byte.
             let same = match &account {
-                None => !stored.exists(),
+                None => stored.lamports == 0,
                 Some(a) => {
-                    stored.exists()
-                        && a.owner == stored.owner
+                    a.owner == stored.owner
                         && a.lamports == stored.lamports
                         && a.data == stored.data
                 }
@@ -643,6 +648,23 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             self.mark_ready(key);
             self.after_change(key, &before, slot);
         }
+    }
+
+    fn stream_confirmed(&self, key: &Pubkey, slot: Slot) -> bool {
+        let scope = if self.global_tree {
+            TreeScope::Global
+        } else if self.index.is_shared(key) {
+            TreeScope::Stream(self.hub.stream_for(&GroupKey(*key), Placement::Shared))
+        } else {
+            let Some(pool) = self.index.pools_of(key).next() else {
+                return false;
+            };
+            TreeScope::Stream(self.hub.stream_for(&GroupKey(*pool), Placement::Pool))
+        };
+        self.trees
+            .get(&scope)
+            .and_then(SlotTree::confirmed)
+            .is_some_and(|confirmed| confirmed >= slot)
     }
 
     /// What an update has to be compared against. The previous bytes are

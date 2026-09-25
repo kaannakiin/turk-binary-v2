@@ -62,6 +62,10 @@ impl SlotTree {
         }
     }
 
+    pub const fn confirmed(&self) -> Option<Slot> {
+        self.confirmed
+    }
+
     /// After a drop the chain resumes at the next session's first live slot:
     /// a replayed session continues it, an unreplayed one leaves a hole that
     /// the stream's `Gap` already re-reads.
