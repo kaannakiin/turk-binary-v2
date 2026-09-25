@@ -36,3 +36,11 @@ probe kinds="" config="config.toml":
 # Optimized build of `watch`, for profiling.
 watch-release config="config.toml":
     cargo run --release -p turk-binary -- watch --config {{config}}
+
+# Read-only: how a transaction's account writes and its status arrive on one stream.
+txn-probe minutes="30" per_dex="20" config="config.toml":
+    cargo run --release -p turk-binary -- txn-probe --config {{config}} --minutes {{minutes}} --per-dex {{per_dex}} --out target/txn-probe.tsv
+
+# Read-only: record one DEX's pool streams as a replay fixture for crates/market.
+txn-record dex minutes="1" per_dex="60" config="config.toml":
+    cargo run --release -p turk-binary -- txn-probe --config {{config}} --minutes {{minutes}} --per-dex {{per_dex}} --only {{dex}} --record crates/market/src/tests/fixtures/streams/{{dex}}.tsv

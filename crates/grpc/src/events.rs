@@ -1,12 +1,12 @@
 use std::collections::BTreeSet;
 
-use domain::{AccountFilter, AccountUpdate, Pubkey, Slot};
+use domain::{AccountFilter, AccountUpdate, Pubkey, Slot, TxnSignature};
 use yellowstone_grpc_proto::prelude::SlotStatus as ProtoSlotStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StreamId {
     Shard(u16),
-    Shared,
+    Shared(u16),
     SlotFeed,
 }
 
@@ -73,9 +73,23 @@ pub enum GapReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LimitViolation {
-    Pubkeys { limit: usize },
-    Filters { limit: usize },
-    RequestBytes { bytes: usize, limit: usize },
+    Pubkeys {
+        limit: usize,
+    },
+    Filters {
+        limit: usize,
+    },
+    RequestBytes {
+        bytes: usize,
+        limit: usize,
+    },
+    TxnFilters {
+        limit: usize,
+    },
+    /// The server does not allow this key in a filter.
+    PubkeyRejected {
+        pubkey: Pubkey,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +106,13 @@ pub enum StreamEvent {
         slot: Slot,
         parent: Option<Slot>,
         status: SlotStatus,
+    },
+    /// Every account write of `signature` on this stream was sent before it.
+    TxnCommitted {
+        stream: StreamId,
+        generation: u64,
+        slot: Slot,
+        signature: TxnSignature,
     },
     /// The server applies a filter change from `slot` on: writes after it
     /// are streamed, earlier state has to be read over RPC.

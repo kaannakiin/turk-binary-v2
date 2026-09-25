@@ -29,6 +29,10 @@ impl Resolution {
         self.canonical.contains(&slot) || self.unresolved_below.is_some_and(|u| slot < u)
     }
 
+    pub fn canonical_slots(&self) -> impl Iterator<Item = Slot> + '_ {
+        self.canonical.iter().copied()
+    }
+
     /// Promoted without a fork check because the parent chain has a hole.
     pub fn is_unchecked(&self, slot: Slot) -> bool {
         self.has_gap() && self.unresolved_below.is_some_and(|u| slot < u)

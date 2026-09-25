@@ -1,5 +1,7 @@
 use yellowstone_grpc_proto::tonic::{Code, Status};
 
+use domain::Pubkey;
+
 use crate::events::LimitViolation;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +18,7 @@ pub(crate) enum Failure {
 const REPLAY_UNSUPPORTED: &str = "from_slot is not supported";
 const PUBKEY_LIMIT: &str = "Max amount of Pubkeys reached, only ";
 const FILTER_LIMIT: &str = "Max amount of filters/data_slices reached, only ";
+const PUBKEY_REJECTED: (&str, &str) = ("Pubkey ", " in filters is not allowed");
 
 pub(crate) fn classify(status: &Status) -> Failure {
     let message = status.message();
@@ -41,6 +44,14 @@ fn limit(message: &str) -> Option<LimitViolation> {
     allowed(PUBKEY_LIMIT)
         .map(|limit| LimitViolation::Pubkeys { limit })
         .or_else(|| allowed(FILTER_LIMIT).map(|limit| LimitViolation::Filters { limit }))
+        .or_else(|| rejected(message).map(|pubkey| LimitViolation::PubkeyRejected { pubkey }))
+}
+
+fn rejected(message: &str) -> Option<Pubkey> {
+    let (before, after) = PUBKEY_REJECTED;
+    let end = message.find(after)?;
+    let start = message[..end].rfind(before)? + before.len();
+    message[start..end].parse().ok()
 }
 
 #[cfg(test)]

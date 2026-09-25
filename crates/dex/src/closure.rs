@@ -34,6 +34,24 @@ pub enum Role {
     Clock,
 }
 
+impl Role {
+    /// Whether a swap on the pool can write this account. Only program and
+    /// token configs, mints and sysvars are ruled out; anything else counts
+    /// as written.
+    #[must_use]
+    pub const fn swap_writes(&self) -> bool {
+        !matches!(
+            self,
+            Self::Mint(_)
+                | Self::AmmConfig
+                | Self::PumpGlobal
+                | Self::PumpFeeConfig
+                | Self::PumpAmmGlobalConfig
+                | Self::Clock
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Scope {
     Pool,

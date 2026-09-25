@@ -53,11 +53,12 @@ When a structural account changes (a bitmap bit flips, an extension is created),
 
 ## gRPC hub
 
-- **Groups and sharding.** A pool's group lands on one of `streams` shards by rendezvous hashing of the pool address, so a pool and all its arrays share a stream, a connection generation and a slot tree. Shared accounts go to one separate `Shared` stream. Streams without groups never connect.
+- **Groups and sharding.** A pool's group lands on one of `streams` shards by rendezvous hashing of the pool address. The group holds the pool's pool-scoped accounts (vaults, arrays, oracle), so they share a stream, a connection generation and a slot tree. Shared accounts (Clock, mints, configs, DAMM v1 vault state, any account two pools use) go to the partition's own `Shared` stream (see [Partitions](#partitions)), so a pool's accounts can arrive over two streams with no order between them. Streams without groups never connect.
+- **Transaction statuses on shards.** Each shard also subscribes `transactions_status` for its group accounts (Clock excluded; vote and failed transactions excluded). The plugin sends a transaction's status after every account write of that transaction on the same stream, so the status closes the group of writes that carry its signature. Measured 2026-09-25 with `just txn-probe` (30 min, 280 pools, Yellowstone 15.2.1 on Agave 4.2.2): of 44,434 statuses none arrived before one of its writes or after its slot's `processed` status, and no group went 2 s without one. A 45-minute rerun on an otherwise idle machine put the status 15–133 µs after the group's last write at p50 and under 0.6 ms at p99 for every DEX (max 48 ms). The first run, taken while the same machine was compiling, showed a p99 of 107–169 ms for Whirlpool and DLMM, most likely the probe itself waiting for CPU. In the rerun, a new transaction never wrote a pool before the previous transaction's status arrived, so releasing a group early on the next write would gain nothing.
 - **Every request is the full filter set**, because Yellowstone replaces filters on each send. Pubkeys are split into filters of at most `max_pubkeys_per_filter`. Changes are coalesced for `filter_flush_ms` and sent on the open stream; no reconnect.
 - **Confirming a filter change.** The plugin sends no acknowledgement, so filter names carry a sequence number and the server tags every update with the names it matched. The first update tagged with a new sequence proves the switch; its slot is the effective slot. A request never carries `ping`: the plugin treats a request with `ping` as a keepalive and leaves its filters unchanged. Server pings are answered with a ping-only request.
 - **Clock on every stream.** `SysvarC1ock11111111111111111111111111111111` updates every slot, so every stream subscribes it. It is the heartbeat, the evidence of the stream's current slot, the replay checkpoint, and (on the shared stream only) the chain clock readers use.
-- **Limits.** A group that would push a request over a provider limit is refused alone (`Rejected`), not the whole stream. Limit errors from the server lower the limits and the stream reconnects.
+- **Limits.** Nothing assumes a provider's limits; they are learned from its errors. A group that would push a request over a limit is refused alone (`Rejected`), not the whole stream. Limit errors from the server lower the limits and the stream reconnects. The plugin words account and transaction-status filter limits the same way, so a reported limit is charged to whichever part of the request exceeds it. A key the server does not allow in a filter (`account_include_reject`) is first left out of the transaction-status filter; if the account filter refuses it too, only the groups holding it are rejected.
 
 ### Reconnects and replay
 
@@ -74,10 +75,24 @@ Account updates older than `max_message_delay_ms` make a stream reconnect, excep
 
 To exercise this on a live stream, run `just watch-release` and, in another terminal, `sudo scripts/net_fault.sh drop 30` (packets vanish, the stream has to notice) or `sudo scripts/net_fault.sh reset 5` (connections are reset at once). The script cuts only that process's TCP connections, with pf, and restores them after the given seconds. Expect `downs` and `resumed` to rise, `gaps` and `drift` to stay at 0, and every pool to be ready again. With `replay = false` the same cut exercises the `Gap` path instead.
 
+## Partitions
+
+`sync.pipeline_threads` (default 2) splits the writers. Shard `i` feeds partition `i % pipeline_threads`, so a pool's partition follows from its shard. Each partition is one `Engine` on its own OS thread (`market-p{i}`, with a single-threaded tokio runtime) and owns its pools' store, closures, sync state, repairs, audit and slot trees.
+
+Partitions share nothing but the read side:
+
+- Each partition has its own shared stream, so Clock, mints and configs are subscribed once per partition. A shared account's `Effective`, seeds and fork state therefore never cross a partition.
+- The slot feed (`blocks_meta` mode) sends its slot statuses to every partition.
+- All partitions publish into one lock-free snapshot table and one `PoolChanged` feed, and their stats are summed (slots: the newest).
+- RPC load stays bounded by the `rpc` gateway's global `max_in_flight` and `max_rps`. `repair_concurrency` applies per partition.
+
+With `pipeline_threads = 1` everything runs on one writer thread, as before.
+
 ## Engine
 
-`market::Engine` owns all state in one task and never waits on RPC. Seeds, repairs and audits run in spawned tasks and report back, so a slow endpoint delays seeds but never the stream.
+`market::Engine` owns one partition's state in one task and never waits on RPC. Seeds, repairs and audits run in spawned tasks and report back, so a slow endpoint delays seeds but never the stream.
 
+- **Transaction groups.** A swap writes the pool and both vaults in separate messages. Applied one by one, a reader could see one vault after the swap and the other before it. The txn probe measured this at 66–86% of pool updates. So a shard write that carries a transaction signature is held until that transaction's status arrives, then the whole group is applied at once and each affected pool gets one `PoolChanged`. Writes without a signature (sysvars) and shared-stream writes are applied at once. A group whose status never comes is applied after `txn_wait_ms`, or before its slot is confirmed, whichever is first, and counted as `txn_orphans`. A dropped stream discards its open groups; replay or the `Gap` re-read brings them back. Pools whose state spans both streams (DAMM v1, accounts shared by two pools) get no such guarantee.
 - **Repair queue.** Keys needing a read are batched into tickets of up to 100 keys, pool and structural accounts first, speculative ones (Whirlpool tick arrays that may not exist) last. At most `repair_concurrency` tickets are in flight, and a key is never read twice at once.
 - **Epochs.** A gap bumps each affected key's epoch; a read dispatched before the gap cannot mark the key live.
 - **Drift audit.** Every `audit_interval_ms`, up to 100 live keys are read and compared with what the store held at that slot. A difference replaces the stored copy and is counted.
@@ -90,9 +105,9 @@ An address the System program owns with no data counts as absent even when it ho
 
 `market::MarketReader` is the read side for the quote layer:
 
-- `pool_view(pool, layer)`: every dependency read under one store lock, with the pool's readiness and the chain clock.
-- `clock(layer)`: the Clock sysvar, never the host clock.
-- `subscribe()`: a `PoolChanged` for each change to a pool's dependencies.
+- `pool_view(pool)`: the pool as the engine last published it: every dependency except the Clock, its readiness, and `cross_stream` when an account a swap writes rides the shared stream (DAMM v1, accounts two pools share), so the view may hold part of a transaction. Reads take no lock: the engine publishes an immutable view per pool (`arc-swap`) after each applied transaction group, seed, audit fix or readiness change.
+- `clock()`: the Clock sysvar, never the host clock. It has its own cell, so a Clock update rebuilds no pool view and sends no `PoolChanged`.
+- `subscribe()`: a `PoolChanged` for each published change to a pool, once per transaction group.
 
 ## Fork tracking
 
@@ -111,6 +126,7 @@ Resolution:
 
 - **When slot C is confirmed**: walk C's parents back to the previous confirmed slot. Pending versions on that chain are promoted to committed. Pending versions from other slots at or below C were on a losing fork and are dropped (`rolled_back`). Only accounts with pending versions at or below C are visited.
 - **When a slot is dead**: its pending versions are dropped (`dead_dropped`).
+- **An update for a slot that is already confirmed**: this happens with replay after a reconnect, or when confirmations come over the separate slot-feed connection. The update is never put in pending, because the next confirmation would roll it back. If its slot is on the confirmed canonical chain (the last 512 slots are remembered), it goes straight to committed. Otherwise it is dropped and the account is read again (`late`).
 - **Readers**: `Head` returns the newest pending version, or the committed one. `Committed` returns only confirmed state.
 - **RPC reads** are taken at `confirmed`, so they go straight into the committed layer. An account that does not exist is stored as absent at that slot, which is state too.
 
@@ -120,7 +136,20 @@ If a parent link is missing, slots below the hole are promoted as if canonical, 
 
 ## Provider probes
 
-`turk-binary probe` checks what the gRPC provider supports: the `slots` filter, Clock streaming, filter-name tagging, ping-only requests, replay (window, a recent `from_slot`, the out-of-range error), filter limits and which older slot statuses a new subscription is sent (`slot-backlog`). All checks are read-only. Run it once per provider and set `slot_source` and the limits from its output.
+`turk-binary probe` checks what the gRPC provider supports: the `slots` filter, Clock streaming, filter-name tagging, ping-only requests, replay (window, a recent `from_slot`, the out-of-range error), account and transaction-status filter limits and which older slot statuses a new subscription is sent (`slot-backlog`). All checks are read-only. Run it once per provider and set `slot_source` and the limits from its output.
+
+`just txn-probe [minutes]` (`turk-binary txn-probe`) measures, per DEX, how one transaction's account writes and its `transactions_status` message arrive on the pool's stream. It picks up to `--per-dex` pools from the universe, subscribes to their pool-only keys plus a status filter on them, and their shared keys on a second stream. It reports:
+
+- status messages that arrive before one of their writes (expected 0);
+- writes without a signature;
+- groups whose writes are interleaved with other groups;
+- the share of pool updates that would publish a half-applied transaction if every write were published on its own;
+- the delay from a group's last write to its status;
+- groups with no status within `--orphan-after-ms`;
+- statuses that arrive after their slot's `processed` status;
+- how shared-stream writes of the same transaction line up with the pool stream's status.
+
+Every message's metadata (no account data, no endpoint) goes to `target/txn-probe.tsv`.
 
 Measured 2026-09-24 on the configured provider: `slots` accepted, Clock streamed every slot, filter names tagged on updates, ping-only requests keep the filters, a replay window of about 3,000 slots, the out-of-range error as the plugin source defines it, and at least 20,000 pubkeys per filter and 200 filters per request. Measured 2026-09-25: a new subscription is also sent `finalized` statuses, with parents, for about 22 older slots (up to 31 back), mostly after its first `processed` one.
 

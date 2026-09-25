@@ -7,13 +7,13 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use domain::chain::{CLOCK_SYSVAR, SYSVAR_OWNER, TOKEN_PROGRAM};
-use domain::{AccountUpdate, DexKind, Pubkey, Slot, WriteVersion};
+use domain::{AccountUpdate, DexKind, Pubkey, Slot, TxnSignature, WriteVersion};
 use grpc::{GapReason, GroupChange, GroupKey, GrpcError, Placement, StreamEvent, StreamId};
 use rpc::RpcError;
 use tokio::sync::mpsc;
 
 use crate::{
-    AccountSource, Engine, HubPort, Layer, MarketReader, PoolInfo, Readiness, Reason, SyncSettings,
+    AccountSource, Engine, HubPort, MarketReader, PoolInfo, Readiness, Reason, SyncSettings,
     Universe,
 };
 
@@ -72,7 +72,7 @@ impl HubPort for FakeHub {
     fn stream_for(&self, _key: &GroupKey, placement: Placement) -> StreamId {
         match placement {
             Placement::Pool => SHARD,
-            Placement::Shared => StreamId::Shared,
+            Placement::Shared => StreamId::Shared(0),
         }
     }
 }
@@ -107,6 +107,7 @@ fn account(pubkey: Pubkey, owner: Pubkey, data: Vec<u8>) -> AccountUpdate {
         data: Bytes::from(data),
         slot: Slot(1),
         write_version: WriteVersion(1),
+        txn: None,
     }
 }
 
@@ -253,7 +254,7 @@ impl Rig {
     async fn effective_all(&self, slot: u64) {
         for (stream, placement) in [
             (SHARD, Placement::Pool),
-            (StreamId::Shared, Placement::Shared),
+            (StreamId::Shared(0), Placement::Shared),
         ] {
             self.send(StreamEvent::Effective {
                 stream,
@@ -276,6 +277,17 @@ impl Rig {
             );
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    fn head_data(&self, key: &Pubkey) -> Option<Bytes> {
+        self.reader
+            .pool_view(&self.pool)?
+            .accounts
+            .iter()
+            .find(|(dep, _)| dep.pubkey == *key)?
+            .1
+            .as_ref()
+            .map(|a| a.data.clone())
     }
 
     fn readiness(&self) -> Option<Readiness> {
@@ -348,7 +360,7 @@ async fn streamed_updates_after_effective_settle_keys_without_rpc() {
     let accounts = rig.chain.0.lock().unwrap().accounts.clone();
     for key in keys {
         let stream = if rig.hub.keys_on(Placement::Shared).contains(&key) {
-            StreamId::Shared
+            StreamId::Shared(0)
         } else {
             SHARD
         };
@@ -494,6 +506,7 @@ async fn a_closed_pool_is_reported_closed() {
             data: Bytes::new(),
             slot: Slot(300),
             write_version: WriteVersion(9),
+            txn: None,
         },
     })
     .await;
@@ -509,8 +522,8 @@ async fn a_pool_view_reads_every_dependency_and_the_chain_clock() {
     let rig = subscribed(&pool).await;
     rig.effective_all(100).await;
     rig.ready().await;
-    let view = rig.reader.pool_view(&pool.address, Layer::Head).unwrap();
-    assert!(view.accounts.iter().all(|(_, a)| a.is_some()) && view.clock.is_some());
+    let view = rig.reader.pool_view(&pool.address).unwrap();
+    assert!(view.accounts.iter().all(|(_, a)| a.is_some()) && rig.reader.clock().is_some());
 }
 
 #[tokio::test]
@@ -521,4 +534,45 @@ async fn account_updates_count_toward_the_stats() {
     rig.ready().await;
     rig.until("seeded", |r| r.stats.snapshot().accounts_seeded > 0)
         .await;
+}
+
+#[tokio::test]
+async fn a_shard_write_is_applied_only_once_its_transaction_status_arrives() {
+    let pool = cpmm_pool();
+    let rig = subscribed(&pool).await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    let (vault_a, vault_b) = (pool.deps[1], pool.deps[2]);
+    let signature = TxnSignature([7; 64]);
+    let write = |(key, owner): (Pubkey, Pubkey), data: &[u8], txn| StreamEvent::Account {
+        stream: SHARD,
+        generation: 1,
+        update: AccountUpdate {
+            slot: Slot(200),
+            txn,
+            ..account(key, owner, data.to_vec())
+        },
+    };
+    rig.send(write(vault_a, b"after swap", Some(signature)))
+        .await;
+    rig.send(write(vault_b, b"marker", None)).await;
+    rig.until("the marker", |r| {
+        r.head_data(&vault_b.0).as_deref() == Some(b"marker".as_slice())
+    })
+    .await;
+    assert_ne!(
+        rig.head_data(&vault_a.0).as_deref(),
+        Some(b"after swap".as_slice())
+    );
+    rig.send(StreamEvent::TxnCommitted {
+        stream: SHARD,
+        generation: 1,
+        slot: Slot(200),
+        signature,
+    })
+    .await;
+    rig.until("the committed write", |r| {
+        r.head_data(&vault_a.0).as_deref() == Some(b"after swap".as_slice())
+    })
+    .await;
 }

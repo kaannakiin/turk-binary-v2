@@ -59,6 +59,40 @@ impl Universe {
         self.pools.keys().copied().collect()
     }
 
+    /// Closures that need more than the pool bytes stay partial.
+    #[must_use]
+    pub fn probe_targets(&self, per_dex: usize) -> Vec<grpc::ProbeTarget> {
+        let mut taken: BTreeMap<DexKind, usize> = BTreeMap::new();
+        let mut targets = Vec::new();
+        for (&address, info) in &self.pools {
+            let count = taken.entry(info.dex).or_default();
+            if *count >= per_dex {
+                continue;
+            }
+            let pool = dex::PoolAccount {
+                address,
+                data: &info.account.data,
+                mints: info.mints,
+            };
+            let Ok(closure) = dex::closure(info.dex, &pool, &dex::NoAccounts) else {
+                continue;
+            };
+            *count += 1;
+            let (pool_deps, shared_deps): (Vec<&dex::Dependency>, Vec<_>) = closure
+                .deps
+                .iter()
+                .partition(|d| d.scope == dex::Scope::Pool);
+            targets.push(grpc::ProbeTarget {
+                label: info.dex.to_string(),
+                pool_keys: std::iter::once(address)
+                    .chain(pool_deps.iter().map(|d| d.pubkey))
+                    .collect(),
+                shared_keys: shared_deps.iter().map(|d| d.pubkey).collect(),
+            });
+        }
+        targets
+    }
+
     #[must_use]
     pub fn count_by_dex(&self) -> BTreeMap<DexKind, usize> {
         let mut counts = BTreeMap::new();
@@ -301,6 +335,7 @@ mod tests {
             data: Bytes::from(data),
             slot: Slot(1),
             write_version: WriteVersion::SNAPSHOT,
+            txn: None,
         }
     }
 

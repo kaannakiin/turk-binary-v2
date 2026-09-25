@@ -20,8 +20,10 @@ use yellowstone_grpc_proto::prost_types::Timestamp;
 use yellowstone_grpc_proto::tonic::Status;
 
 use crate::connector::Connector;
-use crate::events::{GapReason, Group, GroupChange, GroupKey, Placement, StreamEvent, StreamId};
-use crate::hub::{HubHandle, spawn_with};
+use crate::events::{
+    GapReason, Group, GroupChange, GroupKey, LimitViolation, Placement, StreamEvent, StreamId,
+};
+use crate::hub::{HubHandle, Partition, Spawned, spawn_with};
 use crate::request::seq_of;
 use crate::settings::SlotSource;
 use crate::{GrpcError, GrpcSettings};
@@ -94,7 +96,11 @@ fn rig(settings: &GrpcSettings, first_available: Option<u64>, slot_source: SlotS
         requests: requests_tx,
         first_available,
     });
-    let (hub, events, done) = spawn_with(&connector, settings, slot_source);
+    let Spawned {
+        mut partitions,
+        task: done,
+    } = spawn_with(&connector, settings, slot_source, 1);
+    let Partition { hub, events } = partitions.remove(0);
     Rig {
         hub,
         events,
@@ -320,7 +326,7 @@ async fn the_shared_stream_forwards_the_clock() {
     assert!(matches!(
         event,
         StreamEvent::Account {
-            stream: StreamId::Shared,
+            stream: StreamId::Shared(0),
             ..
         }
     ));
@@ -652,4 +658,151 @@ async fn filter_names_on_updates_carry_the_request_sequence() {
     let _updates = rig.open();
     let request = rig.request().await;
     assert!(names(&request).iter().all(|name| seq_of(name) == Some(1)));
+}
+
+#[tokio::test]
+async fn a_pools_updates_reach_only_the_partition_that_owns_its_shard() {
+    let (requests_tx, mut requests) = fmpsc::unbounded();
+    let (plans, plans_rx) = mpsc::unbounded_channel();
+    let connector = Arc::new(Fake {
+        plans: Mutex::new(plans_rx),
+        requests: requests_tx,
+        first_available: None,
+    });
+    let settings = GrpcSettings {
+        streams: 2,
+        ..settings()
+    };
+    let spawned = spawn_with(&connector, &settings, SlotSource::Slots, 2);
+    let mut partitions = spawned.partitions.into_iter();
+    let (Some(mut first), Some(mut second)) = (partitions.next(), partitions.next()) else {
+        panic!("expected two partitions")
+    };
+    let pool = std::iter::repeat_with(Pubkey::new_unique)
+        .find(|k| second.hub.owns(&GroupKey(*k)))
+        .unwrap();
+    let key = Pubkey::new_unique();
+    second
+        .hub
+        .apply(vec![GroupChange::Upsert {
+            key: GroupKey(pool),
+            placement: Placement::Pool,
+            group: Group {
+                pubkeys: BTreeSet::from([key]),
+                filters: Vec::new(),
+            },
+        }])
+        .unwrap();
+    let (updates, stream) = fmpsc::unbounded();
+    plans.send(Plan::Open(stream)).unwrap();
+    let request = tokio::time::timeout(WAIT, requests.next())
+        .await
+        .unwrap()
+        .unwrap();
+    updates
+        .unbounded_send(Ok(account(key, 50, &names(&request))))
+        .unwrap();
+    loop {
+        let event = tokio::time::timeout(WAIT, second.events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if matches!(&event, StreamEvent::Account { update, .. } if update.pubkey == key) {
+            break;
+        }
+    }
+    assert!(first.events.try_recv().is_err());
+}
+
+fn txn_listed(request: &SubscribeRequest) -> BTreeSet<String> {
+    request
+        .transactions_status
+        .values()
+        .flat_map(|f| f.account_include.iter().cloned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_pubkey_limit_the_txn_status_filter_hits_splits_only_that_filter() {
+    let settings = GrpcSettings {
+        max_pubkeys_per_filter: 2,
+        ..settings()
+    };
+    let mut rig = rig(&settings, None, SlotSource::Slots);
+    let keys = [
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+    ];
+    rig.upsert(Pubkey::new_unique(), Placement::Pool, &keys);
+    rig.refuse(Status::invalid_argument(
+        "failed to create filter: Max amount of Pubkeys reached, only 2 allowed",
+    ));
+    let _first = rig.request().await;
+    let _updates = rig.open();
+    let retry = rig.request().await;
+    assert!(
+        retry
+            .transactions_status
+            .values()
+            .all(|f| f.account_include.len() <= 2)
+            && txn_listed(&retry).len() == keys.len()
+    );
+}
+
+#[tokio::test]
+async fn a_key_the_server_rejects_is_left_out_of_the_txn_status_filter_only() {
+    let mut rig = rig(&settings(), None, SlotSource::Slots);
+    let rejected = Pubkey::new_unique();
+    rig.upsert(
+        Pubkey::new_unique(),
+        Placement::Pool,
+        &[rejected, Pubkey::new_unique()],
+    );
+    rig.refuse(Status::invalid_argument(format!(
+        "failed to create filter: Pubkey {rejected} in filters is not allowed"
+    )));
+    let _first = rig.request().await;
+    let _updates = rig.open();
+    let retry = rig.request().await;
+    assert_eq!(
+        (
+            txn_listed(&retry).contains(&rejected.to_string()),
+            listed(&retry).contains(&rejected.to_string())
+        ),
+        (false, true)
+    );
+}
+
+#[tokio::test]
+async fn a_key_rejected_by_the_account_filter_too_rejects_only_its_group() {
+    let mut rig = rig(&settings(), None, SlotSource::Slots);
+    let pool = Pubkey::new_unique();
+    let rejected = Pubkey::new_unique();
+    rig.upsert(pool, Placement::Pool, &[rejected]);
+    rig.upsert(
+        Pubkey::new_unique(),
+        Placement::Pool,
+        &[Pubkey::new_unique()],
+    );
+    let refusal = || {
+        Status::invalid_argument(format!(
+            "failed to create filter: Pubkey {rejected} in filters is not allowed"
+        ))
+    };
+    rig.refuse(refusal());
+    rig.refuse(refusal());
+    let StreamEvent::Rejected { group, reason, .. } = rig
+        .event_matching(|e| matches!(e, StreamEvent::Rejected { .. }))
+        .await
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        (group, reason),
+        (
+            GroupKey(pool),
+            LimitViolation::PubkeyRejected { pubkey: rejected }
+        )
+    );
 }

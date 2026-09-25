@@ -4,9 +4,14 @@ use crate::events::{GroupKey, Placement, StreamId};
 
 /// Rendezvous hashing: adding a shard moves only the groups that land on it,
 /// and the mapping is stable across restarts.
-pub(crate) fn stream_for(key: &GroupKey, placement: Placement, shards: u16) -> StreamId {
+pub(crate) fn stream_for(
+    key: &GroupKey,
+    placement: Placement,
+    shards: u16,
+    partition: u16,
+) -> StreamId {
     match placement {
-        Placement::Shared => StreamId::Shared,
+        Placement::Shared => StreamId::Shared(partition),
         Placement::Pool => StreamId::Shard(
             (0..shards.max(1))
                 .max_by_key(|shard| score(&key.0, *shard))
@@ -43,23 +48,23 @@ mod tests {
     fn a_pool_always_lands_on_the_same_shard() {
         let key = GroupKey(Pubkey::new_unique());
         assert_eq!(
-            stream_for(&key, Placement::Pool, 12),
-            stream_for(&key, Placement::Pool, 12)
+            stream_for(&key, Placement::Pool, 12, 0),
+            stream_for(&key, Placement::Pool, 12, 0)
         );
     }
 
     #[test]
-    fn shared_groups_go_to_the_shared_stream() {
+    fn shared_groups_go_to_their_partitions_shared_stream() {
         assert_eq!(
-            stream_for(&pool(1), Placement::Shared, 12),
-            StreamId::Shared
+            stream_for(&pool(1), Placement::Shared, 12, 3),
+            StreamId::Shared(3)
         );
     }
 
     #[test]
     fn pools_spread_over_every_shard() {
         let used: std::collections::BTreeSet<StreamId> = (0..=255)
-            .map(|i| stream_for(&pool(i), Placement::Pool, 4))
+            .map(|i| stream_for(&pool(i), Placement::Pool, 4, 0))
             .collect();
         assert_eq!(used.len(), 4);
     }
@@ -67,8 +72,8 @@ mod tests {
     #[test]
     fn adding_a_shard_moves_pools_only_onto_the_new_shard() {
         for i in 0..=255 {
-            let before = stream_for(&pool(i), Placement::Pool, 4);
-            let after = stream_for(&pool(i), Placement::Pool, 5);
+            let before = stream_for(&pool(i), Placement::Pool, 4, 0);
+            let after = stream_for(&pool(i), Placement::Pool, 5, 0);
             assert!(after == before || after == StreamId::Shard(4));
         }
     }

@@ -85,6 +85,15 @@ impl TonicConnector {
             .await
             .map_err(|err| Status::unavailable(err.to_string()))
     }
+
+    pub(crate) async fn version(&self) -> Result<String, Status> {
+        self.client()
+            .await?
+            .get_version()
+            .await
+            .map(|response| response.version)
+            .map_err(into_status)
+    }
 }
 
 impl Connector for TonicConnector {

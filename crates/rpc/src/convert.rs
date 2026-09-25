@@ -54,6 +54,7 @@ pub(crate) fn account_update(
         data: Bytes::from(data),
         slot,
         write_version: WriteVersion::SNAPSHOT,
+        txn: None,
     })
 }
 

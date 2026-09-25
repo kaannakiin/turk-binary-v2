@@ -30,6 +30,24 @@ macro_rules! counters {
                 }
             }
         }
+
+        impl StatsSnapshot {
+            /// Partitions' counters add up; the slots they report are the
+            /// newest any of them saw.
+            #[must_use]
+            pub fn merge(parts: &[Self]) -> Self {
+                let mut merged = Self {
+                    pool_updates: DexKind::ALL
+                        .into_iter()
+                        .map(|d| (d, parts.iter().map(|p| p.pool_updates[d as usize].1).sum()))
+                        .collect(),
+                    $($name: parts.iter().map(|p| p.$name).sum(),)*
+                };
+                merged.last_slot = parts.iter().map(|p| p.last_slot).max().unwrap_or(0);
+                merged.confirmed_slot = parts.iter().map(|p| p.confirmed_slot).max().unwrap_or(0);
+                merged
+            }
+        }
     };
 }
 
@@ -37,6 +55,7 @@ counters!(
     dependency_updates,
     stale,
     overflowed,
+    late,
     last_slot,
     confirmed_slot,
     rolled_back,
@@ -56,6 +75,7 @@ counters!(
     pools_ready,
     pools_not_ready,
     repair_backlog,
+    txn_orphans,
 );
 
 impl Stats {
@@ -65,10 +85,14 @@ impl Stats {
                 self.stale.fetch_add(1, Ordering::Relaxed);
                 return;
             }
+            Applied::Late => {
+                self.late.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
             Applied::Overflowed => {
                 self.overflowed.fetch_add(1, Ordering::Relaxed);
             }
-            Applied::Stored => {}
+            Applied::Stored | Applied::Committed => {}
         }
         let counter = pool_of.map_or(&self.dependency_updates, |d| &self.pool_updates[d as usize]);
         counter.fetch_add(1, Ordering::Relaxed);
@@ -112,6 +136,7 @@ impl Stats {
             Counter::PoolsReady => &self.pools_ready,
             Counter::PoolsNotReady => &self.pools_not_ready,
             Counter::RepairBacklog => &self.repair_backlog,
+            Counter::TxnOrphans => &self.txn_orphans,
         }
     }
 }
@@ -133,6 +158,7 @@ pub(crate) enum Counter {
     PoolsReady,
     PoolsNotReady,
     RepairBacklog,
+    TxnOrphans,
 }
 
 #[cfg(test)]
@@ -144,6 +170,18 @@ mod tests {
         for (i, dex) in DexKind::ALL.into_iter().enumerate() {
             assert_eq!(dex as usize, i);
         }
+    }
+
+    #[test]
+    fn merged_partitions_add_counters_and_keep_the_newest_slot() {
+        let part = |stale, slot| {
+            let stats = Stats::default();
+            stats.stale.store(stale, Ordering::Relaxed);
+            stats.last_slot.store(slot, Ordering::Relaxed);
+            stats.snapshot()
+        };
+        let merged = StatsSnapshot::merge(&[part(2, 100), part(3, 90)]);
+        assert_eq!((merged.stale, merged.last_slot), (5, 100));
     }
 
     #[test]

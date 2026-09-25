@@ -7,8 +7,8 @@ use domain::{Commitment, Pubkey};
 use futures::{SinkExt, StreamExt};
 use tokio::time::{Instant, timeout};
 use yellowstone_grpc_proto::prelude::{
-    SubscribeRequest, SubscribeRequestFilterAccounts, SubscribeUpdate,
-    subscribe_update::UpdateOneof,
+    SubscribeRequest, SubscribeRequestFilterAccounts, SubscribeRequestFilterTransactions,
+    SubscribeUpdate, subscribe_update::UpdateOneof,
 };
 use yellowstone_grpc_proto::tonic::Status;
 
@@ -68,7 +68,7 @@ pub struct Finding {
 }
 
 impl Finding {
-    fn new(check: &'static str, ok: bool, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(check: &'static str, ok: bool, detail: impl Into<String>) -> Self {
         Self {
             check,
             ok,
@@ -120,13 +120,13 @@ pub async fn resolve_slot_source(
 
 fn clock_request(heartbeat: Heartbeat, seq: u64, from_slot: Option<u64>) -> SubscribeRequest {
     let limits = Limits {
-        pubkeys_per_filter: 100,
-        account_filters: None,
         request_bytes: usize::MAX,
+        ..Limits::from_settings(&GrpcSettings::default())
     };
     build_request(
         &BTreeMap::new(),
         heartbeat,
+        false,
         Commitment::Processed,
         &limits,
         seq,
@@ -470,6 +470,27 @@ async fn limits(connector: &TonicConnector) -> Vec<Finding> {
             .collect(),
         ..SubscribeRequest::default()
     };
+    let status_filter = |keys: Vec<String>| SubscribeRequestFilterTransactions {
+        vote: Some(false),
+        failed: Some(false),
+        account_include: keys,
+        ..SubscribeRequestFilterTransactions::default()
+    };
+    let one_status_filter = SubscribeRequest {
+        transactions_status: HashMap::from([(
+            "limit".to_owned(),
+            status_filter(pubkeys(PROBE_PUBKEYS)),
+        )]),
+        ..SubscribeRequest::default()
+    };
+    let many_status_filters = SubscribeRequest {
+        transactions_status: pubkeys(PROBE_FILTERS)
+            .into_iter()
+            .enumerate()
+            .map(|(i, key)| (format!("limit{i}"), status_filter(vec![key])))
+            .collect(),
+        ..SubscribeRequest::default()
+    };
     vec![
         limit_finding(
             "pubkeys per filter",
@@ -481,7 +502,31 @@ async fn limits(connector: &TonicConnector) -> Vec<Finding> {
             PROBE_FILTERS,
             attempt(connector, many_filters).await,
         ),
+        txn_limit_finding(
+            "txn status account_include",
+            PROBE_PUBKEYS,
+            attempt(connector, one_status_filter).await,
+        ),
+        txn_limit_finding(
+            "txn status filters",
+            PROBE_FILTERS,
+            attempt(connector, many_status_filters).await,
+        ),
     ]
+}
+
+/// Transaction filters have their own server limits, but the plugin words
+/// their refusals like the account ones, so the raw message is kept.
+fn txn_limit_finding(check: &'static str, tried: usize, result: Result<(), Status>) -> Finding {
+    match result {
+        Ok(()) => Finding::new(check, true, format!("at least {tried}")),
+        Err(status) => match classify(&status) {
+            Failure::Limit(_) => {
+                Finding::new(check, true, format!("limited: {}", status.message()))
+            }
+            _ => Finding::new(check, false, format!("refused: {status}")),
+        },
+    }
 }
 
 async fn attempt(connector: &TonicConnector, request: SubscribeRequest) -> Result<(), Status> {

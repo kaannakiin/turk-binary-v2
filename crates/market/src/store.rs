@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bytes::Bytes;
 use dex::{AccountView, Known};
@@ -10,6 +9,7 @@ use grpc::StreamId;
 use crate::fork::Resolution;
 
 const MAX_PENDING: usize = 64;
+const CANONICAL_KEPT: u64 = 512;
 
 /// An account at a slot. `lamports == 0` records that the account did not
 /// exist at that slot (closed, or never created), which is itself state:
@@ -79,6 +79,10 @@ pub enum Applied {
     /// Stored, but an older pending version had to be evicted; the account
     /// may resolve to a wrong fork and should be re-read.
     Overflowed,
+    Committed,
+    /// Its slot was already confirmed but is not known to be canonical;
+    /// dropped, and the account should be re-read.
+    Late,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -87,12 +91,6 @@ pub struct Resolved {
     pub rolled_back: usize,
     /// Promoted from below a hole in the parent chain, so never fork-checked.
     pub unchecked: Vec<Pubkey>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Layer {
-    Head,
-    Committed,
 }
 
 #[derive(Debug, Clone)]
@@ -125,19 +123,30 @@ impl Entry {
             .map(|p| &p.account)
             .or(self.committed.as_ref())
     }
+}
 
-    fn at(&self, layer: Layer) -> Option<&StoredAccount> {
-        match layer {
-            Layer::Head => self.head(),
-            Layer::Committed => self.committed.as_ref(),
-        }
-    }
+/// A replayed or slow update can arrive after its slot was confirmed; a
+/// pending version would then be rolled back by the next confirmation,
+/// canonical or not.
+#[derive(Debug, Default)]
+struct Settled {
+    upto: Slot,
+    canonical: BTreeSet<Slot>,
 }
 
 #[derive(Debug, Default)]
 struct Inner {
     entries: HashMap<Pubkey, Entry>,
     pending_index: BTreeMap<(TreeScope, Slot), BTreeSet<Pubkey>>,
+    settled: HashMap<TreeScope, Settled>,
+}
+
+const fn scope_of(global_tree: bool, source: Source) -> TreeScope {
+    if global_tree {
+        TreeScope::Global
+    } else {
+        TreeScope::Stream(source.stream)
+    }
 }
 
 /// Two layers per account: `committed` holds the newest confirmed state,
@@ -145,7 +154,7 @@ struct Inner {
 /// and may still turn out to be on an abandoned fork.
 #[derive(Debug, Default)]
 pub struct AccountStore {
-    inner: RwLock<Inner>,
+    inner: Inner,
     global_tree: bool,
 }
 
@@ -153,26 +162,18 @@ impl AccountStore {
     #[must_use]
     pub fn new(global_tree: bool) -> Self {
         Self {
-            inner: RwLock::default(),
+            inner: Inner::default(),
             global_tree,
         }
     }
 
-    const fn scope_of(&self, source: Source) -> TreeScope {
-        if self.global_tree {
-            TreeScope::Global
-        } else {
-            TreeScope::Stream(source.stream)
-        }
-    }
-
-    pub fn apply_stream(&self, source: Source, update: AccountUpdate) -> Applied {
-        let scope = self.scope_of(source);
-        let mut inner = self.write();
+    pub fn apply_stream(&mut self, source: Source, update: AccountUpdate) -> Applied {
+        let scope = scope_of(self.global_tree, source);
         let Inner {
             entries,
             pending_index,
-        } = &mut *inner;
+            settled,
+        } = &mut self.inner;
         let key = update.pubkey;
         let slot = update.slot;
         let entry = entries.entry(key).or_default();
@@ -182,6 +183,16 @@ impl AccountStore {
             .is_some_and(|c| c.order.slot >= slot)
         {
             return Applied::Stale;
+        }
+        if let Some(settled) = settled.get(&scope)
+            && slot <= settled.upto
+        {
+            if !settled.canonical.contains(&slot) {
+                return Applied::Late;
+            }
+            entry.committed = Some(update.into());
+            entry.pending.retain(|p| p.account.order.slot > slot);
+            return Applied::Committed;
         }
         // write_version is node-local, so it only orders versions of the
         // same slot that came over the same connection.
@@ -219,13 +230,12 @@ impl AccountStore {
     /// For RPC reads at `confirmed`; `account == None` records that the key
     /// did not exist at `slot`.
     pub fn apply_confirmed(
-        &self,
+        &mut self,
         pubkey: Pubkey,
         slot: Slot,
         account: Option<AccountUpdate>,
     ) -> bool {
-        let mut inner = self.write();
-        let entry = inner.entries.entry(pubkey).or_default();
+        let entry = self.inner.entries.entry(pubkey).or_default();
         if entry
             .committed
             .as_ref()
@@ -239,16 +249,23 @@ impl AccountStore {
         true
     }
 
-    pub fn remove(&self, pubkey: &Pubkey) {
-        self.write().entries.remove(pubkey);
+    pub fn remove(&mut self, pubkey: &Pubkey) {
+        self.inner.entries.remove(pubkey);
     }
 
-    pub(crate) fn resolve(&self, scope: TreeScope, resolution: &Resolution) -> Resolved {
-        let mut inner = self.write();
+    pub(crate) fn resolve(&mut self, scope: TreeScope, resolution: &Resolution) -> Resolved {
+        let global_tree = self.global_tree;
         let Inner {
             entries,
             pending_index,
-        } = &mut *inner;
+            settled,
+        } = &mut self.inner;
+        let window = settled.entry(scope).or_default();
+        window.upto = resolution.confirmed;
+        window.canonical.extend(resolution.canonical_slots());
+        window.canonical = window
+            .canonical
+            .split_off(&Slot(resolution.confirmed.0.saturating_sub(CANONICAL_KEPT)));
         let due: Vec<(TreeScope, Slot)> = pending_index
             .range((scope, Slot(0))..=(scope, resolution.confirmed))
             .map(|(k, _)| *k)
@@ -268,7 +285,7 @@ impl AccountStore {
             let mut unchecked = false;
             entry.pending.retain(|p| {
                 let slot = p.account.order.slot;
-                if self.scope_of(p.source) != scope || slot > resolution.confirmed {
+                if scope_of(global_tree, p.source) != scope || slot > resolution.confirmed {
                     return true;
                 }
                 if resolution.is_canonical(slot) {
@@ -297,12 +314,13 @@ impl AccountStore {
         resolved
     }
 
-    pub(crate) fn drop_slot(&self, scope: TreeScope, slot: Slot) -> usize {
-        let mut inner = self.write();
+    pub(crate) fn drop_slot(&mut self, scope: TreeScope, slot: Slot) -> usize {
+        let global_tree = self.global_tree;
         let Inner {
             entries,
             pending_index,
-        } = &mut *inner;
+            ..
+        } = &mut self.inner;
         let Some(keys) = pending_index.remove(&(scope, slot)) else {
             return 0;
         };
@@ -310,9 +328,9 @@ impl AccountStore {
         for key in keys {
             if let Some(entry) = entries.get_mut(&key) {
                 let before = entry.pending.len();
-                entry
-                    .pending
-                    .retain(|p| self.scope_of(p.source) != scope || p.account.order.slot != slot);
+                entry.pending.retain(|p| {
+                    scope_of(global_tree, p.source) != scope || p.account.order.slot != slot
+                });
                 dropped += before - entry.pending.len();
             }
         }
@@ -322,11 +340,11 @@ impl AccountStore {
     /// Newest known state, possibly from a slot that is not confirmed yet.
     #[must_use]
     pub fn head(&self, pubkey: &Pubkey) -> Option<StoredAccount> {
-        self.read().entries.get(pubkey)?.head().cloned()
+        self.inner.entries.get(pubkey)?.head().cloned()
     }
 
     pub(crate) fn head_exists(&self, pubkey: &Pubkey) -> Option<bool> {
-        self.read()
+        self.inner
             .entries
             .get(pubkey)?
             .head()
@@ -335,51 +353,39 @@ impl AccountStore {
 
     #[must_use]
     pub fn committed(&self, pubkey: &Pubkey) -> Option<StoredAccount> {
-        self.read().entries.get(pubkey)?.committed.clone()
+        self.inner.entries.get(pubkey)?.committed.clone()
     }
 
     /// What the store holds for `pubkey` as of `slot`, if it can tell: the
     /// committed state when it is not newer than `slot` and no pending
     /// version at or below `slot` could still replace it.
     pub(crate) fn settled(&self, pubkey: &Pubkey, slot: Slot) -> Option<StoredAccount> {
-        let inner = self.read();
-        let entry = inner.entries.get(pubkey)?;
+        let entry = self.inner.entries.get(pubkey)?;
         let committed = entry.committed.as_ref()?;
         let unsettled = committed.order.slot > slot
             || entry.pending.iter().any(|p| p.account.order.slot <= slot);
         (!unsettled).then(|| committed.clone())
     }
 
-    /// Every key read under one lock, so the accounts come from one instant.
     #[must_use]
-    pub fn read_many(&self, keys: &[Pubkey], layer: Layer) -> Vec<Option<StoredAccount>> {
-        let inner = self.read();
+    pub fn read_many(&self, keys: &[Pubkey]) -> Vec<Option<StoredAccount>> {
         keys.iter()
-            .map(|k| inner.entries.get(k).and_then(|e| e.at(layer)).cloned())
+            .map(|k| self.inner.entries.get(k).and_then(Entry::head).cloned())
             .collect()
     }
 
     pub(crate) fn with_view<R>(&self, f: impl FnOnce(&dyn AccountView) -> R) -> R {
-        let inner = self.read();
-        f(&HeadView(&inner))
+        f(&HeadView(&self.inner))
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.read().entries.len()
+        self.inner.entries.len()
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    fn read(&self) -> RwLockReadGuard<'_, Inner> {
-        self.inner.read().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn write(&self) -> RwLockWriteGuard<'_, Inner> {
-        self.inner.write().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -412,6 +418,7 @@ mod tests {
             data: Bytes::from_static(data),
             slot: Slot(slot),
             write_version: WriteVersion(write_version),
+            txn: None,
         }
     }
 
@@ -426,16 +433,16 @@ mod tests {
         account.map(|a| a.data)
     }
 
-    fn confirmed(store: &AccountStore, slot: u64, data: &'static [u8]) {
+    fn confirmed(store: &mut AccountStore, slot: u64, data: &'static [u8]) {
         store.apply_confirmed(KEY, Slot(slot), Some(update(slot, 0, data)));
     }
 
     #[test]
     fn confirmation_keeps_canonical_version_and_rolls_back_sibling_fork() {
-        let store = AccountStore::default();
+        let mut store = AccountStore::default();
         let mut tree = SlotTree::default();
         tree.confirm(Slot(100));
-        confirmed(&store, 100, b"base");
+        confirmed(&mut store, 100, b"base");
         tree.record_parent(Slot(101), Slot(100), true);
         tree.record_parent(Slot(102), Slot(100), true);
         store.apply_stream(source(1), update(101, 5, b"canonical"));
@@ -453,8 +460,39 @@ mod tests {
     }
 
     #[test]
+    fn a_canonical_update_arriving_after_its_confirmation_survives_the_next_one() {
+        let mut store = AccountStore::default();
+        let mut tree = SlotTree::default();
+        tree.confirm(Slot(100));
+        confirmed(&mut store, 100, b"base");
+        tree.record_parent(Slot(101), Slot(100), true);
+        store.resolve(SCOPE, &tree.confirm(Slot(101)).unwrap());
+        store.apply_stream(source(2), update(101, 5, b"replayed"));
+        tree.record_parent(Slot(102), Slot(101), true);
+        store.resolve(SCOPE, &tree.confirm(Slot(102)).unwrap());
+        assert_eq!(
+            data(store.head(&KEY)),
+            Some(Bytes::from_static(b"replayed"))
+        );
+    }
+
+    #[test]
+    fn a_late_update_from_an_abandoned_fork_is_not_shown() {
+        let mut store = AccountStore::default();
+        let mut tree = SlotTree::default();
+        tree.confirm(Slot(100));
+        confirmed(&mut store, 100, b"base");
+        tree.record_parent(Slot(101), Slot(100), true);
+        tree.record_parent(Slot(102), Slot(100), true);
+        tree.record_parent(Slot(103), Slot(101), true);
+        store.resolve(SCOPE, &tree.confirm(Slot(103)).unwrap());
+        store.apply_stream(source(2), update(102, 5, b"abandoned"));
+        assert_eq!(data(store.head(&KEY)), Some(Bytes::from_static(b"base")));
+    }
+
+    #[test]
     fn resolve_leaves_other_scopes_pending() {
-        let store = AccountStore::default();
+        let mut store = AccountStore::default();
         let mut tree = SlotTree::default();
         tree.confirm(Slot(100));
         let other = Source {
@@ -469,8 +507,8 @@ mod tests {
 
     #[test]
     fn dead_slot_version_is_dropped() {
-        let store = AccountStore::default();
-        confirmed(&store, 100, b"base");
+        let mut store = AccountStore::default();
+        confirmed(&mut store, 100, b"base");
         store.apply_stream(source(1), update(101, 5, b"dead"));
         store.drop_slot(SCOPE, Slot(101));
         assert_eq!(data(store.head(&KEY)), Some(Bytes::from_static(b"base")));
@@ -478,7 +516,7 @@ mod tests {
 
     #[test]
     fn write_version_is_not_compared_across_connections() {
-        let store = AccountStore::default();
+        let mut store = AccountStore::default();
         store.apply_stream(source(1), update(101, 900, b"old node"));
         assert_eq!(
             store.apply_stream(source(2), update(101, 5, b"new node")),
@@ -488,9 +526,9 @@ mod tests {
 
     #[test]
     fn confirmed_snapshot_supersedes_older_pending() {
-        let store = AccountStore::default();
+        let mut store = AccountStore::default();
         store.apply_stream(source(1), update(101, 5, b"pending"));
-        confirmed(&store, 105, b"snapshot");
+        confirmed(&mut store, 105, b"snapshot");
         assert_eq!(
             data(store.head(&KEY)),
             Some(Bytes::from_static(b"snapshot"))
@@ -499,14 +537,14 @@ mod tests {
 
     #[test]
     fn a_confirmed_absence_is_recorded_as_state() {
-        let store = AccountStore::default();
+        let mut store = AccountStore::default();
         store.apply_confirmed(KEY, Slot(50), None);
         assert!(store.head(&KEY).is_some_and(|a| !a.exists()));
     }
 
     #[test]
     fn a_later_stream_version_replaces_a_confirmed_absence() {
-        let store = AccountStore::default();
+        let mut store = AccountStore::default();
         store.apply_confirmed(KEY, Slot(50), None);
         store.apply_stream(source(1), update(51, 1, b"created"));
         assert!(store.head(&KEY).is_some_and(|a| a.exists()));
@@ -514,10 +552,10 @@ mod tests {
 
     #[test]
     fn view_reports_absent_present_and_unknown() {
-        let store = AccountStore::default();
+        let mut store = AccountStore::default();
         let missing = Pubkey::new_unique();
         store.apply_confirmed(missing, Slot(1), None);
-        confirmed(&store, 2, b"here");
+        confirmed(&mut store, 2, b"here");
         let seen = store.with_view(|view| {
             (
                 view.get(&missing) == Known::Absent,
@@ -530,7 +568,7 @@ mod tests {
 
     #[test]
     fn too_many_pending_versions_report_an_overflow() {
-        let store = AccountStore::default();
+        let mut store = AccountStore::default();
         let results: Vec<Applied> = (0..=64u64)
             .map(|i| store.apply_stream(source(1), update(100 + i, 1, b"v")))
             .collect();
@@ -539,7 +577,7 @@ mod tests {
 
     #[test]
     fn a_funded_but_uninitialized_address_counts_as_absent() {
-        let store = AccountStore::default();
+        let mut store = AccountStore::default();
         let funded = AccountUpdate {
             owner: SYSTEM_PROGRAM,
             lamports: 1_000_000,
@@ -552,8 +590,8 @@ mod tests {
 
     #[test]
     fn removed_keys_are_forgotten() {
-        let store = AccountStore::default();
-        confirmed(&store, 1, b"x");
+        let mut store = AccountStore::default();
+        confirmed(&mut store, 1, b"x");
         store.remove(&KEY);
         assert_eq!(store.head(&KEY), None);
     }

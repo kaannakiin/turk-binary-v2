@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use domain::{AccountUpdate, Pubkey, Slot, WriteVersion};
+use domain::{AccountUpdate, Pubkey, Slot, TxnSignature, WriteVersion};
 use yellowstone_grpc_proto::prelude::SubscribeUpdateAccount;
 use yellowstone_grpc_proto::prost_types::Timestamp;
 
@@ -21,6 +21,10 @@ pub(crate) fn account_update(update: SubscribeUpdateAccount) -> Option<AccountUp
         data: info.data,
         slot: Slot(update.slot),
         write_version: WriteVersion(info.write_version),
+        txn: info
+            .txn_signature
+            .and_then(|sig| <[u8; 64]>::try_from(sig.as_slice()).ok())
+            .map(TxnSignature),
     })
 }
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use domain::chain::CLOCK_SYSVAR;
-use domain::{AccountFilter, Pubkey, Slot};
+use domain::{AccountFilter, Pubkey, Slot, TxnSignature};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -19,14 +19,23 @@ use crate::events::{
     GapReason, Group, GroupChange, GroupKey, LimitViolation, SlotStatus, StreamEvent, StreamId,
 };
 use crate::request::{
-    Built, Heartbeat, Limits, build_request, ping_request, seq_of, slot_feed_request,
+    Built, Heartbeat, Limits, build_request, ping_request, seq_of, shape, slot_feed_request,
 };
 use crate::{GrpcError, GrpcSettings};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Role {
-    Accounts { forward_clock: bool },
+    Accounts {
+        forward_clock: bool,
+        txn_status: bool,
+    },
     SlotFeed,
+}
+
+/// The slot feed serves every partition's global slot tree.
+pub(crate) enum EventSink {
+    One(mpsc::Sender<StreamEvent>),
+    All(Vec<mpsc::Sender<StreamEvent>>),
 }
 
 pub(crate) struct StreamActor<C> {
@@ -37,7 +46,7 @@ pub(crate) struct StreamActor<C> {
     pub(crate) heartbeat: Heartbeat,
     pub(crate) limits: Limits,
     pub(crate) commands: mpsc::UnboundedReceiver<Vec<GroupChange>>,
-    pub(crate) events: mpsc::Sender<StreamEvent>,
+    pub(crate) events: EventSink,
     pub(crate) state: State,
 }
 
@@ -236,9 +245,17 @@ impl<C: Connector> StreamActor<C> {
     }
 
     fn build(&self, seq: u64, from_slot: Option<u64>) -> Result<Built, LimitViolation> {
+        let txn_status = matches!(
+            self.role,
+            Role::Accounts {
+                txn_status: true,
+                ..
+            }
+        );
         let built = build_request(
             &self.state.groups,
             self.heartbeat,
+            txn_status,
             self.settings.commitment,
             &self.limits,
             seq,
@@ -248,6 +265,35 @@ impl<C: Connector> StreamActor<C> {
             tracing::warn!(stream = ?self.id, bytes = built.bytes, "grpc subscribe request is large; consider more streams");
         }
         Ok(built)
+    }
+
+    const fn txn_status(&self) -> bool {
+        matches!(
+            self.role,
+            Role::Accounts {
+                txn_status: true,
+                ..
+            }
+        )
+    }
+
+    async fn reject_holders(&mut self, pubkey: Pubkey) {
+        let holders: Vec<GroupKey> = self
+            .state
+            .groups
+            .iter()
+            .filter(|(_, g)| g.pubkeys.contains(&pubkey))
+            .map(|(k, _)| *k)
+            .collect();
+        for group in holders {
+            self.state.groups.remove(&group);
+            self.emit(StreamEvent::Rejected {
+                stream: self.id,
+                group,
+                reason: LimitViolation::PubkeyRejected { pubkey },
+            })
+            .await;
+        }
     }
 
     fn record_send(&mut self, seq: u64) {
@@ -301,11 +347,26 @@ impl<C: Connector> StreamActor<C> {
         }
     }
 
+    /// The plugin words account and transaction filter limits alike, so a
+    /// server-reported limit is charged to whichever part of the request
+    /// actually exceeds it.
     async fn fit_limits(&mut self, violation: LimitViolation) {
+        let shape = shape(&self.state.groups, self.txn_status(), &self.limits);
         match violation {
-            LimitViolation::Pubkeys { limit } => self.limits.pubkeys_per_filter = limit.max(1),
-            LimitViolation::Filters { limit } => self.limits.account_filters = Some(limit),
-            LimitViolation::RequestBytes { .. } => {}
+            LimitViolation::Pubkeys { limit } if shape.account_chunk > limit => {
+                self.limits.pubkeys_per_filter = limit.max(1);
+            }
+            LimitViolation::Pubkeys { limit } => self.limits.txn_pubkeys_per_filter = limit.max(1),
+            LimitViolation::Filters { limit } if shape.account_filters > limit => {
+                self.limits.account_filters = Some(limit);
+            }
+            LimitViolation::Filters { limit } => self.limits.txn_filters = Some(limit),
+            LimitViolation::PubkeyRejected { pubkey } => {
+                if !(self.txn_status() && self.limits.txn_excluded.insert(pubkey)) {
+                    self.reject_holders(pubkey).await;
+                }
+            }
+            LimitViolation::RequestBytes { .. } | LimitViolation::TxnFilters { .. } => {}
         }
         while let Err(reason) = self.build(self.state.seq + 1, None) {
             let Some(largest) = self
@@ -422,10 +483,13 @@ impl<C: Connector> StreamActor<C> {
                 };
                 let slot = update.slot;
                 let forward = update.pubkey != CLOCK_SYSVAR
-                    || self.role
-                        == (Role::Accounts {
+                    || matches!(
+                        self.role,
+                        Role::Accounts {
                             forward_clock: true,
-                        });
+                            ..
+                        }
+                    );
                 let event = forward.then_some(StreamEvent::Account {
                     stream: self.id,
                     generation: self.state.generation,
@@ -442,6 +506,21 @@ impl<C: Connector> StreamActor<C> {
                     status: SlotStatus::from(slot.status),
                 }),
             ),
+            Some(UpdateOneof::TransactionStatus(status)) => {
+                let Ok(signature) = <[u8; 64]>::try_from(status.signature.as_slice()) else {
+                    tracing::warn!(stream = ?self.id, "dropping malformed grpc transaction status");
+                    return None;
+                };
+                (
+                    Some(Slot(status.slot)),
+                    Some(StreamEvent::TxnCommitted {
+                        stream: self.id,
+                        generation: self.state.generation,
+                        slot: Slot(status.slot),
+                        signature: TxnSignature(signature),
+                    }),
+                )
+            }
             Some(UpdateOneof::BlockMeta(meta)) => (
                 Some(Slot(meta.slot)),
                 Some(StreamEvent::Slot {
@@ -571,7 +650,17 @@ impl<C: Connector> StreamActor<C> {
     }
 
     async fn emit(&self, event: StreamEvent) -> bool {
-        self.events.send(event).await.is_ok()
+        match &self.events {
+            EventSink::One(tx) => tx.send(event).await.is_ok(),
+            EventSink::All(txs) => {
+                for tx in txs {
+                    if tx.send(event.clone()).await.is_err() {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
     }
 }
 

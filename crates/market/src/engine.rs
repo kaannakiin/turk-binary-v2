@@ -1,11 +1,11 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::{Arc, PoisonError, RwLock};
-use std::time::Duration;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use dex::{Dependency, PoolAccount, Presence, Role};
 use domain::chain::CLOCK_SYSVAR;
-use domain::{AccountUpdate, DexKind, Pubkey, RetryPolicy, Slot};
+use domain::{AccountUpdate, ChainClock, DexKind, Pubkey, RetryPolicy, Slot};
 use grpc::{GroupKey, Placement, SlotStatus, StreamEvent, StreamId};
 use rpc::RpcError;
 use serde::Deserialize;
@@ -18,12 +18,14 @@ use crate::ports::{AccountSource, HubPort};
 use crate::readiness::{Inputs, Readiness, Reason, evaluate};
 use crate::repair::{Priority, RepairQueue, Ticket};
 use crate::stats::{Counter, Stats};
-use crate::store::{AccountStore, Applied, Layer, Source, StoredAccount, TreeScope};
+use crate::store::{AccountStore, Applied, Source, StoredAccount, TreeScope};
 use crate::sync::{KeyState, SyncTable};
-use crate::view::{MarketReader, PoolChanged, PoolMeta, PoolTable};
+use crate::txn::{Released, TxnBuffer};
+use crate::view::{MarketReader, PoolChanged, PoolMeta, PoolTable, PoolView, Snapshots};
 use crate::{MarketError, Universe};
 
 const AUDIT_BATCH: usize = 100;
+const MAX_HELD_WRITES: usize = 65_536;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -35,6 +37,8 @@ pub struct SyncSettings {
     pub audit_interval_ms: u64,
     pub stream_swap_accounts: bool,
     pub tick_ms: u64,
+    pub txn_wait_ms: u64,
+    pub pipeline_threads: u16,
 }
 
 impl Default for SyncSettings {
@@ -51,6 +55,21 @@ impl Default for SyncSettings {
             audit_interval_ms: 10_000,
             stream_swap_accounts: true,
             tick_ms: 50,
+            txn_wait_ms: 400,
+            pipeline_threads: 2,
+        }
+    }
+}
+
+impl SyncSettings {
+    pub fn partitions(&self, streams: u16) -> Result<u16, MarketError> {
+        if (1..=streams).contains(&self.pipeline_threads) {
+            Ok(self.pipeline_threads)
+        } else {
+            Err(MarketError::Partitions {
+                requested: self.pipeline_threads,
+                streams,
+            })
         }
     }
 }
@@ -84,9 +103,10 @@ pub struct Engine<S, H> {
     source: Arc<S>,
     hub: H,
     settings: SyncSettings,
-    store: Arc<AccountStore>,
+    store: AccountStore,
     stats: Arc<Stats>,
-    table: Arc<RwLock<PoolTable>>,
+    table: PoolTable,
+    snapshots: Arc<Snapshots>,
     changes: broadcast::Sender<PoolChanged>,
     index: ClosureIndex,
     sync: SyncTable,
@@ -105,6 +125,8 @@ pub struct Engine<S, H> {
     audit_busy: bool,
     fetched_tx: mpsc::Sender<Fetched>,
     fetched_rx: mpsc::Receiver<Fetched>,
+    txns: TxnBuffer,
+    batch: Option<BTreeMap<Pubkey, Slot>>,
 }
 
 impl<S: AccountSource, H: HubPort> Engine<S, H> {
@@ -135,9 +157,10 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         Self {
             source,
             hub,
-            store: Arc::new(AccountStore::new(global_tree)),
+            store: AccountStore::new(global_tree),
             stats: Arc::default(),
-            table: Arc::default(),
+            table: PoolTable::new(),
+            snapshots: Arc::default(),
             changes: broadcast::channel(4_096).0,
             index: ClosureIndex::new(settings.stream_swap_accounts),
             sync: SyncTable::default(),
@@ -156,15 +179,25 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             audit_busy: false,
             fetched_tx,
             fetched_rx,
+            txns: TxnBuffer::default(),
+            batch: None,
             settings,
         }
+    }
+
+    pub(crate) fn share_output(
+        &mut self,
+        snapshots: &Arc<Snapshots>,
+        changes: &broadcast::Sender<PoolChanged>,
+    ) {
+        self.snapshots = Arc::clone(snapshots);
+        self.changes = changes.clone();
     }
 
     #[must_use]
     pub fn reader(&self) -> MarketReader {
         MarketReader {
-            store: Arc::clone(&self.store),
-            table: Arc::clone(&self.table),
+            snapshots: Arc::clone(&self.snapshots),
             changes: self.changes.clone(),
         }
     }
@@ -202,8 +235,16 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                 stream,
                 generation,
                 update,
+            } => self.on_streamed(Source { stream, generation }, update),
+            StreamEvent::TxnCommitted {
+                stream,
+                generation,
+                slot,
+                signature,
             } => {
-                self.on_account(Source { stream, generation }, update);
+                let source = Source { stream, generation };
+                let updates = self.txns.commit(source, slot, signature);
+                self.apply_group(source, updates);
             }
             StreamEvent::Slot {
                 stream,
@@ -228,6 +269,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             }
             StreamEvent::Down { stream, .. } => {
                 self.stats.add(Counter::Downs, 1);
+                self.txns.discard(stream);
                 self.set_up(stream, false);
                 let scope = match (self.global_tree, stream) {
                     (false, _) => Some(TreeScope::Stream(stream)),
@@ -253,6 +295,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                     "grpc gap, re-reading the stream's accounts"
                 );
                 self.stats.add(Counter::Gaps, 1);
+                self.txns.discard(stream);
                 self.stats.add(Counter::GapKeys, keys.len());
                 self.set_up(stream, true);
                 let barrier = Slot(effective.0 + self.settings.settle_slots);
@@ -277,6 +320,42 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         }
     }
 
+    /// Shards also stream each transaction's status, so their writes wait
+    /// for it; the shared stream does not, and applies them at once.
+    fn on_streamed(&mut self, source: Source, update: AccountUpdate) {
+        if !matches!(source.stream, StreamId::Shard(_)) || !self.index.contains(&update.pubkey) {
+            self.on_account(source, update);
+            return;
+        }
+        if let Some(update) = self.txns.hold(source, update, Instant::now()) {
+            self.on_account(source, update);
+        }
+        if self.txns.held() > MAX_HELD_WRITES {
+            let released = self.txns.all();
+            self.release_orphans(released);
+        }
+    }
+
+    fn apply_group(&mut self, source: Source, updates: Vec<AccountUpdate>) {
+        if updates.is_empty() {
+            return;
+        }
+        self.batch = Some(BTreeMap::new());
+        for update in updates {
+            self.on_account(source, update);
+        }
+        for (pool, slot) in self.batch.take().unwrap_or_default() {
+            self.pool_changed(pool, slot);
+        }
+    }
+
+    fn release_orphans(&mut self, released: Released) {
+        self.stats.add(Counter::TxnOrphans, released.len());
+        for (source, updates) in released {
+            self.apply_group(source, updates);
+        }
+    }
+
     fn on_account(&mut self, source: Source, update: AccountUpdate) {
         let key = update.pubkey;
         if key == CLOCK_SYSVAR {
@@ -292,12 +371,18 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             .record_update(self.seeds.get(&key).map(|s| s.dex), applied);
         match applied {
             Applied::Stale => return,
+            Applied::Late => {
+                if let Some(epoch) = self.sync.epoch(&key) {
+                    self.repair.want(key, slot, epoch, self.priority(&key));
+                }
+                return;
+            }
             Applied::Overflowed => {
                 if let Some(epoch) = self.sync.epoch(&key) {
                     self.repair.want(key, slot, epoch, self.priority(&key));
                 }
             }
-            Applied::Stored => {}
+            Applied::Stored | Applied::Committed => {}
         }
         if self.sync.streamed(&key) {
             self.repair.cancel(&key);
@@ -307,6 +392,10 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
     }
 
     fn on_slot(&mut self, stream: StreamId, slot: Slot, parent: Option<Slot>, status: SlotStatus) {
+        if matches!(status, SlotStatus::Confirmed | SlotStatus::Finalized) {
+            let released = self.txns.through(slot);
+            self.release_orphans(released);
+        }
         let scope = if self.global_tree {
             TreeScope::Global
         } else {
@@ -352,6 +441,11 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
     }
 
     fn on_tick(&mut self) -> Result<(), MarketError> {
+        let released = self.txns.expired(
+            Instant::now(),
+            Duration::from_millis(self.settings.txn_wait_ms),
+        );
+        self.release_orphans(released);
         self.refresh_closures()?;
         self.dispatch_repairs();
         self.refresh_readiness();
@@ -580,9 +674,23 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         if before.exists != new.as_ref().map(StoredAccount::exists) {
             self.mark_ready(key);
         }
+        // Every pool depends on the Clock, which changes every slot; readers
+        // take it from its own cell instead of a rebuilt view of every pool.
+        if *key == CLOCK_SYSVAR {
+            self.snapshots
+                .set_clock(new.and_then(|a| ChainClock::decode(&a.data)));
+            return;
+        }
         let mut dirty = Vec::new();
+        let mut touched = Vec::new();
         for (pool, dep) in self.index.refs(key) {
-            let _ = self.changes.send(PoolChanged { pool: *pool, slot });
+            match &mut self.batch {
+                Some(batch) => {
+                    let at = batch.entry(*pool).or_insert(slot);
+                    *at = (*at).max(slot);
+                }
+                None => touched.push(*pool),
+            }
             let Some(entry) = self.index.pool(pool) else {
                 continue;
             };
@@ -598,6 +706,35 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             }
         }
         self.dirty_closure.extend(dirty);
+        for pool in touched {
+            self.pool_changed(pool, slot);
+        }
+    }
+
+    fn pool_changed(&mut self, pool: Pubkey, slot: Slot) {
+        self.publish(&pool);
+        let _ = self.changes.send(PoolChanged { pool, slot });
+    }
+
+    fn publish(&self, pool: &Pubkey) {
+        let Some(meta) = self.table.get(pool) else {
+            return;
+        };
+        let deps: Vec<Dependency> = meta
+            .deps
+            .iter()
+            .filter(|d| d.role != Role::Clock)
+            .copied()
+            .collect();
+        let keys: Vec<Pubkey> = deps.iter().map(|d| d.pubkey).collect();
+        let accounts = self.store.read_many(&keys);
+        self.snapshots.publish(PoolView {
+            pool: *pool,
+            dex: meta.dex,
+            readiness: meta.readiness,
+            accounts: deps.into_iter().zip(accounts).collect(),
+            cross_stream: meta.cross_stream,
+        });
     }
 
     fn refresh_readiness(&mut self) {
@@ -614,24 +751,33 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             .filter_map(|pool| {
                 let seed = self.seeds.get(&pool)?;
                 let (deps, readiness) = self.evaluate(&pool);
+                let cross_stream = deps
+                    .iter()
+                    .any(|d| d.role.swap_writes() && self.index.is_shared(&d.pubkey));
                 Some((
                     pool,
                     PoolMeta {
                         dex: seed.dex,
                         deps,
                         readiness,
+                        cross_stream,
                     },
                 ))
             })
             .collect();
-        let mut table = self.table.write().unwrap_or_else(PoisonError::into_inner);
-        table.extend(evaluated);
-        let ready = table
+        let pools: Vec<Pubkey> = evaluated.iter().map(|(pool, _)| *pool).collect();
+        self.table.extend(evaluated);
+        for pool in &pools {
+            self.publish(pool);
+        }
+        let ready = self
+            .table
             .values()
             .filter(|m| m.readiness == Readiness::Ready)
             .count();
         self.stats.set(Counter::PoolsReady, ready);
-        self.stats.set(Counter::PoolsNotReady, table.len() - ready);
+        self.stats
+            .set(Counter::PoolsNotReady, self.table.len() - ready);
     }
 
     fn evaluate(&self, pool: &Pubkey) -> (Arc<[Dependency]>, Readiness) {
@@ -642,7 +788,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         let keys: Vec<Pubkey> = deps.iter().map(|d| d.pubkey).collect();
         let states: Vec<_> = keys.iter().map(|k| self.sync.state(k)).collect();
         let accounts = if states.iter().all(|s| *s == Some(KeyState::Live)) {
-            self.store.read_many(&keys, Layer::Head)
+            self.store.read_many(&keys)
         } else {
             // Only a closed pool outranks Syncing, so the other accounts are
             // not read while the closure is still seeding.
@@ -651,11 +797,12 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                 .collect()
         };
         let pool_stream = self.hub.stream_for(&GroupKey(*pool), Placement::Pool);
+        let shared_stream = self.hub.stream_for(&GroupKey(*pool), Placement::Shared);
         let needs_shared = keys.iter().any(|k| self.index.is_shared(k));
         let down = if !self.is_up(pool_stream) {
             Some(pool_stream)
-        } else if needs_shared && !self.is_up(StreamId::Shared) {
-            Some(StreamId::Shared)
+        } else if needs_shared && !self.is_up(shared_stream) {
+            Some(shared_stream)
         } else {
             None
         };

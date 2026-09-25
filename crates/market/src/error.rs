@@ -38,4 +38,10 @@ pub enum MarketError {
     Grpc(#[from] grpc::GrpcError),
     #[error("grpc event stream closed")]
     StreamClosed,
+    #[error("sync.pipeline_threads = {requested} must be between 1 and grpc.streams ({streams})")]
+    Partitions { requested: u16, streams: u16 },
+    #[error("starting a market partition: {0}")]
+    Partition(#[source] std::io::Error),
+    #[error("a market partition panicked")]
+    PartitionPanicked,
 }

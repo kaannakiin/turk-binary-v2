@@ -9,15 +9,17 @@ mod probe;
 mod request;
 mod routing;
 mod settings;
+mod txn_probe;
 
 pub use error::GrpcError;
 pub use events::{
     GapReason, Group, GroupChange, GroupKey, LimitViolation, Placement, SlotStatus, StreamEvent,
     StreamId,
 };
-pub use hub::{GeyserHub, HubHandle, Spawned};
+pub use hub::{GeyserHub, HubHandle, Partition, Spawned};
 pub use probe::{Finding, ProbeKind, probe, resolve_slot_source};
 pub use settings::{Compression, GrpcSettings, SlotSource, TransportSettings};
+pub use txn_probe::{Conn, ProbeTarget, TraceKind, TraceRow, TxnProbeOptions, probe_txn_groups};
 
 #[cfg(test)]
 mod tests;

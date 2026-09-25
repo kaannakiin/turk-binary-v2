@@ -13,6 +13,9 @@ impl WriteVersion {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TxnSignature(pub [u8; 64]);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UpdateOrder {
     pub slot: Slot,
     pub write_version: WriteVersion,
@@ -26,6 +29,9 @@ pub struct AccountUpdate {
     pub data: Bytes,
     pub slot: Slot,
     pub write_version: WriteVersion,
+    /// The transaction that wrote it; `None` for RPC reads and for writes
+    /// outside a transaction (sysvars).
+    pub txn: Option<TxnSignature>,
 }
 
 impl AccountUpdate {

@@ -193,7 +193,7 @@ mod tests {
             states: &[None],
             verified: false,
             awaiting: true,
-            down: Some(StreamId::Shared),
+            down: Some(StreamId::Shared(0)),
             rejected: true,
         });
         assert_eq!(result, Readiness::NotReady(Reason::Closed));

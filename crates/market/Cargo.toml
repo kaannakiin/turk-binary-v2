@@ -6,6 +6,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+ahash.workspace = true
+arc-swap.workspace = true
 bytes.workspace = true
 dex.workspace = true
 domain.workspace = true

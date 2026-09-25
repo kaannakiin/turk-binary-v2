@@ -35,6 +35,7 @@ commitment = "processed"   # processed | confirmed | finalized
 streams = 12
 slot_source = "auto"       # auto | slots | blocks_meta (run `just probe` once per provider)
 max_pubkeys_per_filter = 100
+max_txn_pubkeys_per_filter = 100
 compression = "gzip"       # none | gzip | zstd
 recv_timeout_ms = 10000
 max_message_delay_ms = 10000
@@ -52,6 +53,8 @@ settle_slots = 4
 repair_concurrency = 2
 audit_interval_ms = 10000
 stream_swap_accounts = true
+txn_wait_ms = 400
+pipeline_threads = 2
 
 [grpc.transport]
 http2_keep_alive_interval_ms = 15000
