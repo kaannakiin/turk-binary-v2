@@ -19,3 +19,5 @@ just watch
 `just` loads `.env` by itself, so the endpoints never need to be exported in your shell.
 
 `watch` is read-only. It never signs or sends a transaction.
+
+Run `just probe` once per gRPC provider to see which features it supports (`slots`, Clock streaming, replay, filter limits); see [architecture.md](architecture.md#provider-probes).

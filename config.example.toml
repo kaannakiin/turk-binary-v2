@@ -33,17 +33,25 @@ max_delay_ms = 5000
 [grpc]
 commitment = "processed"   # processed | confirmed | finalized
 streams = 12
+slot_source = "auto"       # auto | slots | blocks_meta (run `just probe` once per provider)
 max_pubkeys_per_filter = 100
 compression = "gzip"       # none | gzip | zstd
 recv_timeout_ms = 10000
 max_message_delay_ms = 10000
 connect_timeout_ms = 10000
-recover_missed_data = true
+filter_flush_ms = 200
+replay = true
 
 [grpc.reconnect]
-max_attempts = 10
+max_attempts = 0           # 0 = retry forever
 base_delay_ms = 500
 max_delay_ms = 30000
+
+[sync]
+settle_slots = 4
+repair_concurrency = 2
+audit_interval_ms = 10000
+stream_swap_accounts = true
 
 [grpc.transport]
 http2_keep_alive_interval_ms = 15000

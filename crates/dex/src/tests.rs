@@ -2,6 +2,11 @@
 //! Expected mints come from the DEXes' own pool APIs, independent of the
 //! offsets under test.
 
+mod accounts;
+mod arrays;
+mod closure;
+mod damm_v1;
+
 use domain::{DexKind, Pubkey};
 
 use super::{identify, pump, spec};
@@ -109,6 +114,30 @@ fn every_pool_filter_matches_its_fixture() {
         let s = spec(kind);
         assert!(
             s.pool_filter().matches(&s.program_id, fixture(kind)),
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn pair_filter_matches_the_pool_only_in_its_own_mint_order() {
+    for kind in [
+        DexKind::RaydiumAmmV4,
+        DexKind::RaydiumClmm,
+        DexKind::OrcaWhirlpool,
+        DexKind::MeteoraDlmm,
+        DexKind::MeteoraDammV2,
+    ] {
+        let s = spec(kind);
+        let data = fixture(kind);
+        let forward = s.pool_filter_for_pair(&WSOL, &USDC).unwrap();
+        let reversed = s.pool_filter_for_pair(&USDC, &WSOL).unwrap();
+        assert_eq!(
+            (
+                forward.matches(&s.program_id, data),
+                reversed.matches(&s.program_id, data)
+            ),
+            (true, false),
             "{kind}"
         );
     }

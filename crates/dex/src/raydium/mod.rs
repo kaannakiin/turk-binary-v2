@@ -1,3 +1,7 @@
+pub(crate) mod amm_v4;
+pub(crate) mod clmm;
+pub(crate) mod cpmm;
+
 use domain::{DexKind, Pubkey};
 
 use crate::spec::{DexSpec, Discovery};

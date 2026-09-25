@@ -1,3 +1,7 @@
+pub(crate) mod damm_v1;
+pub(crate) mod damm_v2;
+pub(crate) mod dlmm;
+
 use domain::{DexKind, Pubkey};
 
 use crate::spec::{DexSpec, Discovery};

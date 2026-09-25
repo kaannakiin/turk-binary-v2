@@ -8,19 +8,23 @@ use yellowstone_grpc_proto::tonic::codec::CompressionEncoding;
 #[serde(default, deny_unknown_fields)]
 pub struct GrpcSettings {
     pub commitment: Commitment,
-    pub streams: usize,
+    pub streams: u16,
+    pub slot_source: SlotSource,
     pub max_pubkeys_per_filter: usize,
+    pub max_account_filters: Option<usize>,
+    pub warn_request_bytes: usize,
+    pub max_request_bytes: usize,
     pub compression: Compression,
     pub recv_timeout_ms: u64,
     pub max_message_delay_ms: u64,
     pub connect_timeout_ms: u64,
     pub max_message_bytes: usize,
     pub event_buffer: usize,
-    pub command_buffer: usize,
-    pub recover_missed_data: bool,
-    pub slot_retention: usize,
-    pub stream_reconnect_attempts: u32,
-    pub stream_reconnect_base_ms: u64,
+    pub filter_flush_ms: u64,
+    pub filter_ack_timeout_ms: u64,
+    pub replay: bool,
+    pub replay_margin_slots: u64,
+    pub replay_skip_tolerance: u64,
     pub reconnect: RetryPolicy,
     pub transport: TransportSettings,
 }
@@ -30,20 +34,24 @@ impl Default for GrpcSettings {
         Self {
             commitment: Commitment::Processed,
             streams: 12,
+            slot_source: SlotSource::Auto,
             max_pubkeys_per_filter: 100,
+            max_account_filters: None,
+            warn_request_bytes: 2 * 1024 * 1024,
+            max_request_bytes: 4_000_000,
             compression: Compression::Gzip,
             recv_timeout_ms: 10_000,
             max_message_delay_ms: 10_000,
             connect_timeout_ms: 10_000,
             max_message_bytes: 64 * 1024 * 1024,
             event_buffer: 16_384,
-            command_buffer: 128,
-            recover_missed_data: true,
-            slot_retention: yellowstone_grpc_client::DEFAULT_SLOT_RETENTION,
-            stream_reconnect_attempts: 5,
-            stream_reconnect_base_ms: 100,
+            filter_flush_ms: 200,
+            filter_ack_timeout_ms: 2_000,
+            replay: true,
+            replay_margin_slots: 4,
+            replay_skip_tolerance: 8,
             reconnect: RetryPolicy {
-                max_attempts: 10,
+                max_attempts: 0,
                 base_delay_ms: 500,
                 max_delay_ms: 30_000,
             },
@@ -60,6 +68,25 @@ impl GrpcSettings {
     pub(crate) fn max_message_delay(&self) -> Option<Duration> {
         non_zero_ms(self.max_message_delay_ms)
     }
+
+    pub(crate) const fn filter_flush(&self) -> Duration {
+        Duration::from_millis(self.filter_flush_ms)
+    }
+
+    pub(crate) const fn filter_ack_timeout(&self) -> Duration {
+        Duration::from_millis(self.filter_ack_timeout_ms)
+    }
+}
+
+/// Where fork tracking gets slot statuses from. Some providers reject any
+/// request carrying a `slots` filter; `blocks_meta` then feeds confirmations
+/// from one extra connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlotSource {
+    Auto,
+    Slots,
+    BlocksMeta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

@@ -1,15 +1,21 @@
 use domain::{AccountFilter, DexKind, Pubkey};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Discovery {
-    ProgramAccounts,
-    MintPda,
+use crate::bytes::read_pubkey;
+
+pub type PairFn = fn(&Pubkey, &[u8]) -> Option<(Pubkey, Pubkey)>;
+
+/// For DEXes whose pool address is derived from a mint instead of searched for.
+#[derive(Debug, Clone, Copy)]
+pub struct MintPda {
+    pub address: fn(&Pubkey) -> Option<Pubkey>,
+    /// `None` when the pool exists but cannot be traded (e.g. a completed curve).
+    pub pair: PairFn,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MintSide {
-    A,
-    B,
+#[derive(Debug, Clone, Copy)]
+pub enum Discovery {
+    ProgramAccounts,
+    MintPda(MintPda),
 }
 
 #[derive(Debug)]
@@ -38,14 +44,17 @@ impl DexSpec {
         }
     }
 
+    /// Matches only pools of this exact ordered pair. Filtering on one mint
+    /// alone returns every pool with that mint on its side (over a million
+    /// pump AMM pools for WSOL), all downloaded just to be thrown away.
     #[must_use]
-    pub fn pool_filter_with_mint(&self, side: MintSide, mint: &Pubkey) -> Option<AccountFilter> {
-        let (a, b) = self.mint_offsets?;
-        let offset = match side {
-            MintSide::A => a,
-            MintSide::B => b,
-        };
-        Some(self.pool_filter().with_memcmp(offset, mint.to_bytes()))
+    pub fn pool_filter_for_pair(&self, a: &Pubkey, b: &Pubkey) -> Option<AccountFilter> {
+        let (offset_a, offset_b) = self.mint_offsets?;
+        Some(
+            self.pool_filter()
+                .with_memcmp(offset_a, a.to_bytes())
+                .with_memcmp(offset_b, b.to_bytes()),
+        )
     }
 
     #[must_use]
@@ -63,18 +72,5 @@ impl DexSpec {
     pub fn pool_mints(&self, data: &[u8]) -> Option<(Pubkey, Pubkey)> {
         let (a, b) = self.mint_offsets?;
         Some((read_pubkey(data, a)?, read_pubkey(data, b)?))
-    }
-}
-
-pub(crate) fn read_pubkey(data: &[u8], offset: usize) -> Option<Pubkey> {
-    let bytes: [u8; 32] = data.get(offset..offset.checked_add(32)?)?.try_into().ok()?;
-    Some(Pubkey::new_from_array(bytes))
-}
-
-pub(crate) fn read_bool(data: &[u8], offset: usize) -> Option<bool> {
-    match data.get(offset)? {
-        0 => Some(false),
-        1 => Some(true),
-        _ => None,
     }
 }

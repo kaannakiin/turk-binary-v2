@@ -1,6 +1,10 @@
+pub(crate) mod amm;
+pub(crate) mod bonding_curve;
+
 use domain::{DexKind, Pubkey};
 
-use crate::spec::{DexSpec, Discovery, read_bool, read_pubkey};
+use crate::bytes::{read_bool, read_pubkey};
+use crate::spec::{DexSpec, Discovery, MintPda};
 
 pub static BONDING_CURVE: DexSpec = DexSpec {
     kind: DexKind::PumpBondingCurve,
@@ -12,7 +16,10 @@ pub static BONDING_CURVE: DexSpec = DexSpec {
     // Fields were appended over time; older curves may be shorter.
     data_size: None,
     mint_offsets: None,
-    discovery: Discovery::MintPda,
+    discovery: Discovery::MintPda(MintPda {
+        address: bonding_curve_address,
+        pair: active_bonding_curve_pair,
+    }),
     verified: true,
 };
 
@@ -31,6 +38,15 @@ pub static PUMP_AMM: DexSpec = DexSpec {
     discovery: Discovery::ProgramAccounts,
     verified: true,
 };
+
+// src: pump-fun/pump-public-docs@81091419e4457566469d4e2a27f64ed84d42419c idl/pump_fees.json
+pub(crate) const FEE_PROGRAM: Pubkey =
+    Pubkey::from_str_const("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
+// Both programs derive their FeeConfig under the fee program, seeded with
+// their own program id.
+// src: pump-fun/pump-public-docs@81091419e4457566469d4e2a27f64ed84d42419c idl/pump.json (buy.fee_config pda seeds)
+// src: pump-fun/pump-public-docs@81091419e4457566469d4e2a27f64ed84d42419c idl/pump_amm.json (buy.fee_config pda seeds)
+pub(crate) const FEE_CONFIG_SEED: &[u8] = b"fee_config";
 
 // src: pump-fun/pump-public-docs@81091419e4457566469d4e2a27f64ed84d42419c idl/pump.json (buy.bonding_curve pda seeds)
 const BONDING_CURVE_SEED: &[u8] = b"bonding-curve";

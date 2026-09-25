@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use dex::{DexSpec, Discovery, MintSide, pump};
+use dex::{DexSpec, Discovery};
 use domain::{AccountUpdate, DexKind, Pubkey};
 use futures::future::try_join_all;
 use rpc::RpcGateway;
@@ -19,10 +19,13 @@ pub struct UniverseConfig {
     pub blocked_dexes: Vec<DexKind>,
 }
 
+/// `account` is the pool as read during resolution; its dependencies are
+/// derived from these bytes until the stream delivers a newer copy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolInfo {
     pub dex: DexKind,
     pub mints: Option<(Pubkey, Pubkey)>,
+    pub account: AccountUpdate,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -117,7 +120,14 @@ async fn resolve_listed_pools(
             return Err(UniverseError::PoolDexDisabled { pool, dex }.into());
         }
         let mints = dex::spec(dex).pool_mints(&account.data);
-        out.insert(pool, PoolInfo { dex, mints });
+        out.insert(
+            pool,
+            PoolInfo {
+                dex,
+                mints,
+                account,
+            },
+        );
     }
     Ok(out)
 }
@@ -129,11 +139,12 @@ async fn discover(
 ) -> Result<Vec<(Pubkey, PoolInfo)>, MarketError> {
     let found = match spec.discovery {
         Discovery::ProgramAccounts => {
-            // Both mints must be in the set, so querying side A for every
-            // mint already reaches every pair; side B would only add duplicates.
+            // One query per ordered pair: pools store their mints in either
+            // order, and pinning both sides keeps each response to that pair.
             let queries = mints
                 .iter()
-                .filter_map(|m| spec.pool_filter_with_mint(MintSide::A, m))
+                .flat_map(|a| mints.iter().filter(move |b| *b != a).map(move |b| (a, b)))
+                .filter_map(|(a, b)| spec.pool_filter_for_pair(a, b))
                 .map(|filter| async move { rpc.get_program_accounts(&filter).await });
             let accounts: Vec<AccountUpdate> = try_join_all(queries)
                 .await
@@ -143,10 +154,10 @@ async fn discover(
                 .collect();
             select_pair_pools(spec, mints, &accounts)
         }
-        Discovery::MintPda => {
+        Discovery::MintPda(derive) => {
             let candidates: Vec<(Pubkey, Pubkey)> = mints
                 .iter()
-                .filter_map(|m| pump::bonding_curve_address(m).map(|pda| (*m, pda)))
+                .filter_map(|m| (derive.address)(m).map(|pda| (*m, pda)))
                 .collect();
             let pdas: Vec<Pubkey> = candidates.iter().map(|(_, pda)| *pda).collect();
             let accounts = rpc
@@ -158,15 +169,19 @@ async fn discover(
                 .zip(accounts)
                 .filter_map(|((mint, pda), account)| {
                     let account = account?;
-                    let pair = pump::active_bonding_curve_pair(&mint, &account.data)?;
-                    (spec.is_pool(&account.owner, &account.data) && mints.contains(&pair.1))
-                        .then_some((
-                            pda,
-                            PoolInfo {
-                                dex: spec.kind,
-                                mints: Some(pair),
-                            },
-                        ))
+                    let pair = (derive.pair)(&mint, &account.data)?;
+                    (spec.is_pool(&account.owner, &account.data) && mints.contains(&pair.1)).then(
+                        || {
+                            (
+                                pda,
+                                PoolInfo {
+                                    dex: spec.kind,
+                                    mints: Some(pair),
+                                    account,
+                                },
+                            )
+                        },
+                    )
                 })
                 .collect()
         }
@@ -196,13 +211,16 @@ fn select_pair_pools(
                 return None;
             }
             let (a, b) = spec.pool_mints(&account.data)?;
-            (a != b && mints.contains(&a) && mints.contains(&b)).then_some((
-                account.pubkey,
-                PoolInfo {
-                    dex: spec.kind,
-                    mints: Some((a, b)),
-                },
-            ))
+            (a != b && mints.contains(&a) && mints.contains(&b)).then(|| {
+                (
+                    account.pubkey,
+                    PoolInfo {
+                        dex: spec.kind,
+                        mints: Some((a, b)),
+                        account: account.clone(),
+                    },
+                )
+            })
         })
         .collect();
     if rejected > 0 {

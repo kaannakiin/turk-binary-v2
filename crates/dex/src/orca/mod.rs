@@ -1,3 +1,5 @@
+pub(crate) mod whirlpool;
+
 use domain::{DexKind, Pubkey};
 
 use crate::spec::{DexSpec, Discovery};

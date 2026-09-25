@@ -1,14 +1,10 @@
 mod config;
 mod output;
+mod run;
 
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::PathBuf;
 
-use anyhow::Context;
 use clap::{Parser, Subcommand};
-use grpc::GeyserHub;
-use market::{AccountStore, MarketError, Stats, Universe};
-use rpc::RpcGateway;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -20,10 +16,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Resolve the configured pool universe and stream live pool updates (read-only).
+    /// Resolve the pool universe, subscribe to every pool's dependencies and keep them in sync (read-only).
     Watch {
         #[arg(long, default_value = "config.toml")]
         config: PathBuf,
+    },
+    /// Check what the gRPC provider supports (read-only, sends no transactions).
+    Probe {
+        #[arg(long, default_value = "config.toml")]
+        config: PathBuf,
+        /// slots, clock, ping-only, replay, limits, slot-backlog. Empty runs them all.
+        #[arg(value_delimiter = ',')]
+        kinds: Vec<grpc::ProbeKind>,
     },
 }
 
@@ -35,53 +39,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     match Cli::parse().command {
-        Command::Watch { config } => watch(&config).await,
-    }
-}
-
-async fn watch(path: &Path) -> anyhow::Result<()> {
-    let config = config::load(path)?;
-    let secrets = config::Secrets::from_env()?;
-    let rpc = RpcGateway::new(secrets.rpc_url, &config.rpc);
-
-    let universe = Universe::resolve(&config.universe, &rpc)
-        .await
-        .context("resolving pool universe")?;
-    for (dex, pools) in universe.count_by_dex() {
-        tracing::info!(%dex, pools, "universe");
-    }
-    anyhow::ensure!(
-        !universe.pools.is_empty(),
-        "no pools matched the configured universe"
-    );
-
-    let (hub, mut events, hub_task) =
-        GeyserHub::spawn(secrets.grpc_url, secrets.grpc_x_token, &config.grpc)?;
-    let store = AccountStore::default();
-    let stats = Stats::default();
-    let ingest = market::run(&universe, &rpc, &hub, &mut events, &store, &stats);
-    tokio::pin!(ingest);
-    let shutdown = tokio::signal::ctrl_c();
-    tokio::pin!(shutdown);
-    let period = Duration::from_secs(config.stats_interval_secs.max(1));
-    let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
-
-    loop {
-        tokio::select! {
-            result = &mut ingest => {
-                return match result {
-                    Err(MarketError::StreamClosed) => {
-                        hub_task.await.context("grpc hub panicked")??;
-                        anyhow::bail!("grpc hub stopped")
-                    }
-                    other => other.context("market ingestion failed"),
-                };
-            }
-            _ = ticker.tick() => output::log_stats(&stats.snapshot(), store.len()),
-            _ = &mut shutdown => {
-                tracing::info!("shutting down");
-                return Ok(());
-            }
-        }
+        Command::Watch { config } => run::watch(&config).await,
+        Command::Probe { config, kinds } => run::probe(&config, &kinds).await,
     }
 }

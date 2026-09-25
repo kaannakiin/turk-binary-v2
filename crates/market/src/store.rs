@@ -1,19 +1,50 @@
-use std::collections::HashMap;
-use std::sync::{PoisonError, RwLock};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bytes::Bytes;
-use domain::{AccountUpdate, Pubkey, Slot, UpdateOrder};
+use dex::{AccountView, Known};
+use domain::chain::SYSTEM_PROGRAM;
+use domain::{AccountUpdate, Pubkey, Slot, UpdateOrder, WriteVersion};
+use grpc::StreamId;
 
 use crate::fork::Resolution;
 
 const MAX_PENDING: usize = 64;
 
+/// An account at a slot. `lamports == 0` records that the account did not
+/// exist at that slot (closed, or never created), which is itself state:
+/// an optional tick array confirmed absent is as final as a present one.
+///
+/// A funded address the System program still owns with no data is absent
+/// too: anyone can send lamports to a PDA, and the programs treat such an
+/// account as uninitialized.
+// src: orca-so/whirlpools@408c945fef4c49ab70def4303377cfaf8f0f3c99 programs/whirlpool/src/state/oracle.rs (is_oracle_account_initialized)
+// src: orca-so/whirlpools@408c945fef4c49ab70def4303377cfaf8f0f3c99 programs/whirlpool/src/util/sparse_swap.rs (maybe_load_tick_array)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredAccount {
     pub owner: Pubkey,
     pub lamports: u64,
     pub data: Bytes,
     pub order: UpdateOrder,
+}
+
+impl StoredAccount {
+    #[must_use]
+    pub fn exists(&self) -> bool {
+        self.lamports > 0 && !(self.owner == SYSTEM_PROGRAM && self.data.is_empty())
+    }
+
+    fn absent(slot: Slot) -> Self {
+        Self {
+            owner: Pubkey::default(),
+            lamports: 0,
+            data: Bytes::new(),
+            order: UpdateOrder {
+                slot,
+                write_version: WriteVersion::SNAPSHOT,
+            },
+        }
+    }
 }
 
 impl From<AccountUpdate> for StoredAccount {
@@ -27,16 +58,41 @@ impl From<AccountUpdate> for StoredAccount {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Source {
-    pub shard: usize,
+    pub stream: StreamId,
     pub generation: u64,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// Which slot tree decides a pending version's fork: each stream's own
+/// (when every stream carries `slots`) or one global tree fed by the slot feed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TreeScope {
+    Stream(StreamId),
+    Global,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applied {
+    Stale,
+    Stored,
+    /// Stored, but an older pending version had to be evicted; the account
+    /// may resolve to a wrong fork and should be re-read.
+    Overflowed,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Resolved {
     pub promoted: usize,
     pub rolled_back: usize,
+    /// Promoted from below a hole in the parent chain, so never fork-checked.
+    pub unchecked: Vec<Pubkey>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    Head,
+    Committed,
 }
 
 #[derive(Debug, Clone)]
@@ -61,89 +117,168 @@ struct Entry {
     pending: Vec<Pending>,
 }
 
+impl Entry {
+    fn head(&self) -> Option<&StoredAccount> {
+        self.pending
+            .iter()
+            .max_by_key(|p| p.key())
+            .map(|p| &p.account)
+            .or(self.committed.as_ref())
+    }
+
+    fn at(&self, layer: Layer) -> Option<&StoredAccount> {
+        match layer {
+            Layer::Head => self.head(),
+            Layer::Committed => self.committed.as_ref(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct Inner {
+    entries: HashMap<Pubkey, Entry>,
+    pending_index: BTreeMap<(TreeScope, Slot), BTreeSet<Pubkey>>,
+}
+
 /// Two layers per account: `committed` holds the newest confirmed state,
 /// `pending` holds streamed versions from slots that are not confirmed yet
 /// and may still turn out to be on an abandoned fork.
 #[derive(Debug, Default)]
 pub struct AccountStore {
-    entries: RwLock<HashMap<Pubkey, Entry>>,
+    inner: RwLock<Inner>,
+    global_tree: bool,
 }
 
 impl AccountStore {
-    /// `false` when the update is already superseded.
-    pub fn apply_stream(&self, source: Source, update: AccountUpdate) -> bool {
-        let mut entries = self.write();
-        let entry = entries.entry(update.pubkey).or_default();
+    #[must_use]
+    pub fn new(global_tree: bool) -> Self {
+        Self {
+            inner: RwLock::default(),
+            global_tree,
+        }
+    }
+
+    const fn scope_of(&self, source: Source) -> TreeScope {
+        if self.global_tree {
+            TreeScope::Global
+        } else {
+            TreeScope::Stream(source.stream)
+        }
+    }
+
+    pub fn apply_stream(&self, source: Source, update: AccountUpdate) -> Applied {
+        let scope = self.scope_of(source);
+        let mut inner = self.write();
+        let Inner {
+            entries,
+            pending_index,
+        } = &mut *inner;
+        let key = update.pubkey;
+        let slot = update.slot;
+        let entry = entries.entry(key).or_default();
         if entry
             .committed
             .as_ref()
-            .is_some_and(|c| c.order.slot >= update.slot)
+            .is_some_and(|c| c.order.slot >= slot)
         {
-            return false;
+            return Applied::Stale;
         }
         // write_version is node-local, so it only orders versions of the
         // same slot that came over the same connection.
         if let Some(same) = entry
             .pending
             .iter_mut()
-            .find(|p| p.source == source && p.account.order.slot == update.slot)
+            .find(|p| p.source == source && p.account.order.slot == slot)
         {
             if same.account.order.write_version >= update.write_version {
-                return false;
+                return Applied::Stale;
             }
             same.account = update.into();
-            return true;
+            return Applied::Stored;
         }
         entry.pending.push(Pending {
             source,
             account: update.into(),
         });
-        if entry.pending.len() > MAX_PENDING
-            && let Some(oldest) = entry
-                .pending
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, p)| p.key())
-                .map(|(i, _)| i)
+        pending_index.entry((scope, slot)).or_default().insert(key);
+        if entry.pending.len() <= MAX_PENDING {
+            return Applied::Stored;
+        }
+        if let Some(oldest) = entry
+            .pending
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, p)| p.key())
+            .map(|(i, _)| i)
         {
             entry.pending.swap_remove(oldest);
         }
-        true
+        Applied::Overflowed
     }
 
-    /// For RPC reads taken at `confirmed` commitment. `false` when the
-    /// stored state is already at or past that slot.
-    pub fn apply_confirmed(&self, update: AccountUpdate) -> bool {
-        let mut entries = self.write();
-        let entry = entries.entry(update.pubkey).or_default();
+    /// For RPC reads at `confirmed`; `account == None` records that the key
+    /// did not exist at `slot`.
+    pub fn apply_confirmed(
+        &self,
+        pubkey: Pubkey,
+        slot: Slot,
+        account: Option<AccountUpdate>,
+    ) -> bool {
+        let mut inner = self.write();
+        let entry = inner.entries.entry(pubkey).or_default();
         if entry
             .committed
             .as_ref()
-            .is_some_and(|c| c.order.slot >= update.slot)
+            .is_some_and(|c| c.order.slot >= slot)
         {
             return false;
         }
-        let slot = update.slot;
-        entry.committed = Some(update.into());
+        entry.committed =
+            Some(account.map_or_else(|| StoredAccount::absent(slot), StoredAccount::from));
         entry.pending.retain(|p| p.account.order.slot > slot);
         true
     }
 
-    pub(crate) fn resolve(&self, shard: usize, resolution: &Resolution) -> Resolved {
-        let mut counts = Resolved::default();
-        for entry in self.write().values_mut() {
+    pub fn remove(&self, pubkey: &Pubkey) {
+        self.write().entries.remove(pubkey);
+    }
+
+    pub(crate) fn resolve(&self, scope: TreeScope, resolution: &Resolution) -> Resolved {
+        let mut inner = self.write();
+        let Inner {
+            entries,
+            pending_index,
+        } = &mut *inner;
+        let due: Vec<(TreeScope, Slot)> = pending_index
+            .range((scope, Slot(0))..=(scope, resolution.confirmed))
+            .map(|(k, _)| *k)
+            .collect();
+        let mut due_keys: BTreeSet<Pubkey> = BTreeSet::new();
+        for k in due {
+            if let Some(keys) = pending_index.remove(&k) {
+                due_keys.extend(keys);
+            }
+        }
+        let mut resolved = Resolved::default();
+        for key in due_keys {
+            let Some(entry) = entries.get_mut(&key) else {
+                continue;
+            };
             let mut best: Option<Pending> = None;
+            let mut unchecked = false;
             entry.pending.retain(|p| {
-                if p.source.shard != shard || p.account.order.slot > resolution.confirmed {
+                let slot = p.account.order.slot;
+                if self.scope_of(p.source) != scope || slot > resolution.confirmed {
                     return true;
                 }
-                if resolution.is_canonical(p.account.order.slot) {
-                    counts.promoted += 1;
+                if resolution.is_canonical(slot) {
+                    resolved.promoted += 1;
+                    unchecked |= resolution.is_unchecked(slot);
                     if best.as_ref().is_none_or(|b| p.key() > b.key()) {
                         best = Some(p.clone());
                     }
                 } else {
-                    counts.rolled_back += 1;
+                    resolved.rolled_back += 1;
                 }
                 false
             });
@@ -155,18 +290,31 @@ impl AccountStore {
             {
                 entry.committed = Some(best.account);
             }
+            if unchecked {
+                resolved.unchecked.push(key);
+            }
         }
-        counts
+        resolved
     }
 
-    pub(crate) fn drop_slot(&self, shard: usize, slot: Slot) -> usize {
+    pub(crate) fn drop_slot(&self, scope: TreeScope, slot: Slot) -> usize {
+        let mut inner = self.write();
+        let Inner {
+            entries,
+            pending_index,
+        } = &mut *inner;
+        let Some(keys) = pending_index.remove(&(scope, slot)) else {
+            return 0;
+        };
         let mut dropped = 0;
-        for entry in self.write().values_mut() {
-            let before = entry.pending.len();
-            entry
-                .pending
-                .retain(|p| p.source.shard != shard || p.account.order.slot != slot);
-            dropped += before - entry.pending.len();
+        for key in keys {
+            if let Some(entry) = entries.get_mut(&key) {
+                let before = entry.pending.len();
+                entry
+                    .pending
+                    .retain(|p| self.scope_of(p.source) != scope || p.account.order.slot != slot);
+                dropped += before - entry.pending.len();
+            }
         }
         dropped
     }
@@ -174,24 +322,51 @@ impl AccountStore {
     /// Newest known state, possibly from a slot that is not confirmed yet.
     #[must_use]
     pub fn head(&self, pubkey: &Pubkey) -> Option<StoredAccount> {
-        let entries = self.read();
-        let entry = entries.get(pubkey)?;
-        entry
-            .pending
-            .iter()
-            .max_by_key(|p| p.key())
-            .map(|p| p.account.clone())
-            .or_else(|| entry.committed.clone())
+        self.read().entries.get(pubkey)?.head().cloned()
+    }
+
+    pub(crate) fn head_exists(&self, pubkey: &Pubkey) -> Option<bool> {
+        self.read()
+            .entries
+            .get(pubkey)?
+            .head()
+            .map(StoredAccount::exists)
     }
 
     #[must_use]
     pub fn committed(&self, pubkey: &Pubkey) -> Option<StoredAccount> {
-        self.read().get(pubkey)?.committed.clone()
+        self.read().entries.get(pubkey)?.committed.clone()
+    }
+
+    /// What the store holds for `pubkey` as of `slot`, if it can tell: the
+    /// committed state when it is not newer than `slot` and no pending
+    /// version at or below `slot` could still replace it.
+    pub(crate) fn settled(&self, pubkey: &Pubkey, slot: Slot) -> Option<StoredAccount> {
+        let inner = self.read();
+        let entry = inner.entries.get(pubkey)?;
+        let committed = entry.committed.as_ref()?;
+        let unsettled = committed.order.slot > slot
+            || entry.pending.iter().any(|p| p.account.order.slot <= slot);
+        (!unsettled).then(|| committed.clone())
+    }
+
+    /// Every key read under one lock, so the accounts come from one instant.
+    #[must_use]
+    pub fn read_many(&self, keys: &[Pubkey], layer: Layer) -> Vec<Option<StoredAccount>> {
+        let inner = self.read();
+        keys.iter()
+            .map(|k| inner.entries.get(k).and_then(|e| e.at(layer)).cloned())
+            .collect()
+    }
+
+    pub(crate) fn with_view<R>(&self, f: impl FnOnce(&dyn AccountView) -> R) -> R {
+        let inner = self.read();
+        f(&HeadView(&inner))
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.read().len()
+        self.read().entries.len()
     }
 
     #[must_use]
@@ -199,24 +374,35 @@ impl AccountStore {
         self.len() == 0
     }
 
-    fn read(&self) -> std::sync::RwLockReadGuard<'_, HashMap<Pubkey, Entry>> {
-        self.entries.read().unwrap_or_else(PoisonError::into_inner)
+    fn read(&self) -> RwLockReadGuard<'_, Inner> {
+        self.inner.read().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn write(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<Pubkey, Entry>> {
-        self.entries.write().unwrap_or_else(PoisonError::into_inner)
+    fn write(&self) -> RwLockWriteGuard<'_, Inner> {
+        self.inner.write().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+struct HeadView<'a>(&'a Inner);
+
+impl AccountView for HeadView<'_> {
+    fn get(&self, key: &Pubkey) -> Known<'_> {
+        match self.0.entries.get(key).and_then(Entry::head) {
+            None => Known::Unknown,
+            Some(account) if !account.exists() => Known::Absent,
+            Some(account) => Known::Present(&account.data),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use domain::WriteVersion;
-
     use super::*;
     use crate::fork::SlotTree;
 
     const KEY: Pubkey = Pubkey::new_from_array([1; 32]);
-    const SHARD: usize = 0;
+    const STREAM: StreamId = StreamId::Shard(0);
+    const SCOPE: TreeScope = TreeScope::Stream(STREAM);
 
     fn update(slot: u64, write_version: u64, data: &'static [u8]) -> AccountUpdate {
         AccountUpdate {
@@ -231,7 +417,7 @@ mod tests {
 
     fn source(generation: u64) -> Source {
         Source {
-            shard: SHARD,
+            stream: STREAM,
             generation,
         }
     }
@@ -240,36 +426,53 @@ mod tests {
         account.map(|a| a.data)
     }
 
+    fn confirmed(store: &AccountStore, slot: u64, data: &'static [u8]) {
+        store.apply_confirmed(KEY, Slot(slot), Some(update(slot, 0, data)));
+    }
+
     #[test]
     fn confirmation_keeps_canonical_version_and_rolls_back_sibling_fork() {
         let store = AccountStore::default();
         let mut tree = SlotTree::default();
         tree.confirm(Slot(100));
-        store.apply_confirmed(update(100, 0, b"base"));
-        tree.record_parent(Slot(101), Slot(100));
-        tree.record_parent(Slot(102), Slot(100));
+        confirmed(&store, 100, b"base");
+        tree.record_parent(Slot(101), Slot(100), true);
+        tree.record_parent(Slot(102), Slot(100), true);
         store.apply_stream(source(1), update(101, 5, b"canonical"));
         store.apply_stream(source(1), update(102, 6, b"abandoned"));
-        tree.record_parent(Slot(103), Slot(101));
-        let resolved = store.resolve(SHARD, &tree.confirm(Slot(103)).unwrap());
+        tree.record_parent(Slot(103), Slot(101), true);
+        let resolved = store.resolve(SCOPE, &tree.confirm(Slot(103)).unwrap());
         assert_eq!(
-            (resolved, data(store.head(&KEY))),
             (
-                Resolved {
-                    promoted: 1,
-                    rolled_back: 1
-                },
-                Some(Bytes::from_static(b"canonical"))
-            )
+                resolved.promoted,
+                resolved.rolled_back,
+                data(store.head(&KEY))
+            ),
+            (1, 1, Some(Bytes::from_static(b"canonical")))
         );
+    }
+
+    #[test]
+    fn resolve_leaves_other_scopes_pending() {
+        let store = AccountStore::default();
+        let mut tree = SlotTree::default();
+        tree.confirm(Slot(100));
+        let other = Source {
+            stream: StreamId::Shard(1),
+            generation: 1,
+        };
+        store.apply_stream(other, update(101, 5, b"other stream"));
+        tree.record_parent(Slot(101), Slot(100), true);
+        store.resolve(SCOPE, &tree.confirm(Slot(101)).unwrap());
+        assert_eq!(store.committed(&KEY), None);
     }
 
     #[test]
     fn dead_slot_version_is_dropped() {
         let store = AccountStore::default();
-        store.apply_confirmed(update(100, 0, b"base"));
+        confirmed(&store, 100, b"base");
         store.apply_stream(source(1), update(101, 5, b"dead"));
-        store.drop_slot(SHARD, Slot(101));
+        store.drop_slot(SCOPE, Slot(101));
         assert_eq!(data(store.head(&KEY)), Some(Bytes::from_static(b"base")));
     }
 
@@ -277,17 +480,81 @@ mod tests {
     fn write_version_is_not_compared_across_connections() {
         let store = AccountStore::default();
         store.apply_stream(source(1), update(101, 900, b"old node"));
-        assert!(store.apply_stream(source(2), update(101, 5, b"new node")));
+        assert_eq!(
+            store.apply_stream(source(2), update(101, 5, b"new node")),
+            Applied::Stored
+        );
     }
 
     #[test]
     fn confirmed_snapshot_supersedes_older_pending() {
         let store = AccountStore::default();
         store.apply_stream(source(1), update(101, 5, b"pending"));
-        store.apply_confirmed(update(105, 0, b"snapshot"));
+        confirmed(&store, 105, b"snapshot");
         assert_eq!(
             data(store.head(&KEY)),
             Some(Bytes::from_static(b"snapshot"))
         );
+    }
+
+    #[test]
+    fn a_confirmed_absence_is_recorded_as_state() {
+        let store = AccountStore::default();
+        store.apply_confirmed(KEY, Slot(50), None);
+        assert!(store.head(&KEY).is_some_and(|a| !a.exists()));
+    }
+
+    #[test]
+    fn a_later_stream_version_replaces_a_confirmed_absence() {
+        let store = AccountStore::default();
+        store.apply_confirmed(KEY, Slot(50), None);
+        store.apply_stream(source(1), update(51, 1, b"created"));
+        assert!(store.head(&KEY).is_some_and(|a| a.exists()));
+    }
+
+    #[test]
+    fn view_reports_absent_present_and_unknown() {
+        let store = AccountStore::default();
+        let missing = Pubkey::new_unique();
+        store.apply_confirmed(missing, Slot(1), None);
+        confirmed(&store, 2, b"here");
+        let seen = store.with_view(|view| {
+            (
+                view.get(&missing) == Known::Absent,
+                view.get(&KEY) == Known::Present(b"here"),
+                view.get(&Pubkey::new_unique()) == Known::Unknown,
+            )
+        });
+        assert_eq!(seen, (true, true, true));
+    }
+
+    #[test]
+    fn too_many_pending_versions_report_an_overflow() {
+        let store = AccountStore::default();
+        let results: Vec<Applied> = (0..=64u64)
+            .map(|i| store.apply_stream(source(1), update(100 + i, 1, b"v")))
+            .collect();
+        assert_eq!(results.last(), Some(&Applied::Overflowed));
+    }
+
+    #[test]
+    fn a_funded_but_uninitialized_address_counts_as_absent() {
+        let store = AccountStore::default();
+        let funded = AccountUpdate {
+            owner: SYSTEM_PROGRAM,
+            lamports: 1_000_000,
+            data: Bytes::new(),
+            ..update(10, 1, b"")
+        };
+        store.apply_stream(source(1), funded);
+        assert!(store.with_view(|view| view.get(&KEY) == Known::Absent));
+    }
+
+    #[test]
+    fn removed_keys_are_forgotten() {
+        let store = AccountStore::default();
+        confirmed(&store, 1, b"x");
+        store.remove(&KEY);
+        assert_eq!(store.head(&KEY), None);
     }
 }

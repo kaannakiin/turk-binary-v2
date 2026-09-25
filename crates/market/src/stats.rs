@@ -2,43 +2,75 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use domain::{DexKind, Slot};
 
-use crate::store::Resolved;
+use crate::store::{Applied, Resolved};
 
-#[derive(Debug, Default)]
-pub struct Stats {
-    per_dex: [AtomicU64; DexKind::ALL.len()],
-    other: AtomicU64,
-    stale: AtomicU64,
-    last_slot: AtomicU64,
-    confirmed_slot: AtomicU64,
-    rolled_back: AtomicU64,
-    dead_dropped: AtomicU64,
-    fork_gaps: AtomicU64,
-    reconnects: AtomicU64,
+macro_rules! counters {
+    ($($name:ident),* $(,)?) => {
+        #[derive(Debug, Default)]
+        pub struct Stats {
+            pool_updates: [AtomicU64; DexKind::ALL.len()],
+            $($name: AtomicU64,)*
+        }
+
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct StatsSnapshot {
+            pub pool_updates: Vec<(DexKind, u64)>,
+            $(pub $name: u64,)*
+        }
+
+        impl Stats {
+            #[must_use]
+            pub fn snapshot(&self) -> StatsSnapshot {
+                StatsSnapshot {
+                    pool_updates: DexKind::ALL
+                        .into_iter()
+                        .map(|d| (d, self.pool_updates[d as usize].load(Ordering::Relaxed)))
+                        .collect(),
+                    $($name: self.$name.load(Ordering::Relaxed),)*
+                }
+            }
+        }
+    };
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StatsSnapshot {
-    pub per_dex: Vec<(DexKind, u64)>,
-    pub other: u64,
-    pub stale: u64,
-    pub last_slot: Slot,
-    pub confirmed_slot: Slot,
-    pub rolled_back: u64,
-    pub dead_dropped: u64,
-    /// Confirmations whose parent chain had a hole; versions below it were
-    /// promoted without a fork check.
-    pub fork_gaps: u64,
-    pub reconnects: u64,
-}
+counters!(
+    dependency_updates,
+    stale,
+    overflowed,
+    last_slot,
+    confirmed_slot,
+    rolled_back,
+    dead_dropped,
+    fork_gaps,
+    downs,
+    resumed,
+    gaps,
+    gap_keys,
+    rejected,
+    seeds_sent,
+    seeds_failed,
+    accounts_seeded,
+    audit_checked,
+    audit_mismatches,
+    keys,
+    pools_ready,
+    pools_not_ready,
+    repair_backlog,
+);
 
 impl Stats {
-    pub(crate) fn record_update(&self, dex: Option<DexKind>, applied: bool) {
-        if !applied {
-            self.stale.fetch_add(1, Ordering::Relaxed);
-            return;
+    pub(crate) fn record_update(&self, pool_of: Option<DexKind>, applied: Applied) {
+        match applied {
+            Applied::Stale => {
+                self.stale.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            Applied::Overflowed => {
+                self.overflowed.fetch_add(1, Ordering::Relaxed);
+            }
+            Applied::Stored => {}
         }
-        let counter = dex.map_or(&self.other, |d| &self.per_dex[d as usize]);
+        let counter = pool_of.map_or(&self.dependency_updates, |d| &self.pool_updates[d as usize]);
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -46,7 +78,7 @@ impl Stats {
         self.last_slot.fetch_max(slot.0, Ordering::Relaxed);
     }
 
-    pub(crate) fn record_confirmation(&self, slot: Slot, resolved: Resolved, gap: bool) {
+    pub(crate) fn record_confirmation(&self, slot: Slot, resolved: &Resolved, gap: bool) {
         self.confirmed_slot.fetch_max(slot.0, Ordering::Relaxed);
         self.rolled_back
             .fetch_add(resolved.rolled_back as u64, Ordering::Relaxed);
@@ -55,32 +87,52 @@ impl Stats {
         }
     }
 
-    pub(crate) fn record_dead(&self, dropped: usize) {
-        self.dead_dropped
-            .fetch_add(dropped as u64, Ordering::Relaxed);
+    pub(crate) fn add(&self, counter: Counter, n: usize) {
+        self.counter(counter).fetch_add(n as u64, Ordering::Relaxed);
     }
 
-    pub(crate) fn record_reconnect(&self) {
-        self.reconnects.fetch_add(1, Ordering::Relaxed);
+    pub(crate) fn set(&self, counter: Counter, n: usize) {
+        self.counter(counter).store(n as u64, Ordering::Relaxed);
     }
 
-    #[must_use]
-    pub fn snapshot(&self) -> StatsSnapshot {
-        StatsSnapshot {
-            per_dex: DexKind::ALL
-                .into_iter()
-                .map(|d| (d, self.per_dex[d as usize].load(Ordering::Relaxed)))
-                .collect(),
-            other: self.other.load(Ordering::Relaxed),
-            stale: self.stale.load(Ordering::Relaxed),
-            last_slot: Slot(self.last_slot.load(Ordering::Relaxed)),
-            confirmed_slot: Slot(self.confirmed_slot.load(Ordering::Relaxed)),
-            rolled_back: self.rolled_back.load(Ordering::Relaxed),
-            dead_dropped: self.dead_dropped.load(Ordering::Relaxed),
-            fork_gaps: self.fork_gaps.load(Ordering::Relaxed),
-            reconnects: self.reconnects.load(Ordering::Relaxed),
+    const fn counter(&self, counter: Counter) -> &AtomicU64 {
+        match counter {
+            Counter::DeadDropped => &self.dead_dropped,
+            Counter::Downs => &self.downs,
+            Counter::Resumed => &self.resumed,
+            Counter::Gaps => &self.gaps,
+            Counter::GapKeys => &self.gap_keys,
+            Counter::Rejected => &self.rejected,
+            Counter::SeedsSent => &self.seeds_sent,
+            Counter::SeedsFailed => &self.seeds_failed,
+            Counter::AccountsSeeded => &self.accounts_seeded,
+            Counter::AuditChecked => &self.audit_checked,
+            Counter::AuditMismatches => &self.audit_mismatches,
+            Counter::Keys => &self.keys,
+            Counter::PoolsReady => &self.pools_ready,
+            Counter::PoolsNotReady => &self.pools_not_ready,
+            Counter::RepairBacklog => &self.repair_backlog,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Counter {
+    DeadDropped,
+    Downs,
+    Resumed,
+    Gaps,
+    GapKeys,
+    Rejected,
+    SeedsSent,
+    SeedsFailed,
+    AccountsSeeded,
+    AuditChecked,
+    AuditMismatches,
+    Keys,
+    PoolsReady,
+    PoolsNotReady,
+    RepairBacklog,
 }
 
 #[cfg(test)]
@@ -92,5 +144,13 @@ mod tests {
         for (i, dex) in DexKind::ALL.into_iter().enumerate() {
             assert_eq!(dex as usize, i);
         }
+    }
+
+    #[test]
+    fn stale_updates_are_not_counted_as_applied() {
+        let stats = Stats::default();
+        stats.record_update(Some(DexKind::RaydiumClmm), Applied::Stale);
+        let snapshot = stats.snapshot();
+        assert_eq!((snapshot.stale, snapshot.pool_updates[1].1), (1, 0));
     }
 }

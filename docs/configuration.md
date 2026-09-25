@@ -25,7 +25,7 @@ Endpoints often carry API keys, so they live in the environment, never in the fi
 How it is resolved:
 
 1. **Enabled DEXes** = `allowed_dexes` (or all verified ones if empty), minus `blocked_dexes`.
-2. **From `mints`**: on each enabled DEX, find pools where both sides are in `mints`. Three mints `A, B, C` give you every `A/B`, `A/C` and `B/C` pool. This uses `getProgramAccounts`, which many RPC providers block (HTTP 403). If yours does, `watch` stops and names the DEX. Use a provider that allows it, or list the pools under `pools`, which only needs `getMultipleAccounts`.
+2. **From `mints`**: on each enabled DEX, find pools where both sides are in `mints`. Three mints `A, B, C` give you every `A/B`, `A/C` and `B/C` pool. This uses one `getProgramAccounts` per ordered mint pair and DEX, so `n` mints cost `n × (n − 1)` calls per DEX. Many RPC providers block `getProgramAccounts` (HTTP 403); if yours does, `watch` stops and names the DEX. Use a provider that allows it, or list the pools under `pools`, which only needs `getMultipleAccounts`. Measured 2026-09-24: Shyft's free tier refuses it for every DEX program, Helius's free tier allows it.
 3. **From `pools`**: each address is looked up and its DEX detected. These are added on top of step 2.
 
 These are errors, not warnings:
@@ -49,7 +49,7 @@ These are errors, not warnings:
 
 | Key                   | Default       | Meaning                                                                                   |
 | --------------------- | ------------- | ----------------------------------------------------------------------------------------- |
-| `commitment`          | `"processed"` | See [Commitment values](#commitment-values)                                               |
+| `commitment`          | `"processed"` | Commitment for universe resolution. Seeds and repairs always read at `confirmed`.         |
 | `timeout_ms`          | `10000`       | Per-request timeout                                                                       |
 | `max_in_flight`       | `8`           | Max concurrent RPC requests                                                               |
 | `max_rps`             | `8`           | Requests per second, paced evenly across every method. `0` turns pacing off.              |
@@ -61,34 +61,40 @@ These are errors, not warnings:
 
 ### Streams
 
-| Key                      | Default       | Meaning                                                                                                     |
-| ------------------------ | ------------- | ----------------------------------------------------------------------------------------------------------- |
-| `commitment`             | `"processed"` | See [Commitment values](#commitment-values)                                                                 |
-| `streams`                | `12`          | Parallel gRPC streams (shards). Pools are split across them by address. Shards with no pools never connect. |
-| `max_pubkeys_per_filter` | `100`         | Longer address lists are split into several filters, because providers cap accounts per filter              |
-| `compression`            | `"gzip"`      | `none`, `gzip` or `zstd`. Use `none` when the gRPC node is on the same machine.                             |
-| `recv_timeout_ms`        | `10000`       | Reconnect a shard that has received nothing for this long. `0` turns it off.                                |
-| `max_message_delay_ms`   | `10000`       | Reconnect a shard whose messages are older than this (server `created_at`). `0` turns it off.               |
-| `connect_timeout_ms`     | `10000`       | Connect timeout                                                                                             |
-| `max_message_bytes`      | `67108864`    | Largest accepted message                                                                                    |
-| `event_buffer`           | `16384`       | Updates queued between the streams and the store                                                            |
-| `command_buffer`         | `128`         | Queued subscribe/unsubscribe requests per shard                                                             |
+| Key                      | Default       | Meaning                                                                                                               |
+| ------------------------ | ------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `commitment`             | `"processed"` | See [Commitment values](#commitment-values)                                                                           |
+| `streams`                | `12`          | Pool shards. A pool and its dependencies share one; shared accounts use one extra stream. Empty shards never connect. |
+| `slot_source`            | `"auto"`      | `slots`, `blocks_meta` or `auto`. See [architecture.md](architecture.md#fork-tracking).                               |
+| `max_pubkeys_per_filter` | `100`         | Longer address lists are split into several filters. Lowered automatically if the server reports a limit.             |
+| `max_account_filters`    | unset         | Max account filters per request. Unset means learn it from the server's error.                                        |
+| `warn_request_bytes`     | `2097152`     | Log a warning when a subscribe request is larger                                                                      |
+| `max_request_bytes`      | `4000000`     | Refuse groups that would make a request larger                                                                        |
+| `compression`            | `"gzip"`      | `none`, `gzip` or `zstd`. Use `none` when the gRPC node is on the same machine.                                       |
+| `recv_timeout_ms`        | `10000`       | Reconnect a stream that has received nothing for this long. `0` turns it off.                                         |
+| `max_message_delay_ms`   | `10000`       | Reconnect a stream whose messages are older than this (server `created_at`). `0` turns it off.                        |
+| `connect_timeout_ms`     | `10000`       | Connect timeout                                                                                                       |
+| `max_message_bytes`      | `67108864`    | Largest accepted message                                                                                              |
+| `event_buffer`           | `16384`       | Events queued between the streams and the engine                                                                      |
+| `filter_flush_ms`        | `200`         | Subscription changes are collected this long and sent as one filter update                                            |
+| `filter_ack_timeout_ms`  | `2000`        | If no update confirms a filter change in this time, it is assumed effective at the latest slot                        |
 
-Every shard also subscribes to slot updates. The receive timer resets on every message, slot updates included, so a pool with no trades never trips it. It only fires when the whole stream goes quiet.
+Every stream also subscribes to the Clock sysvar, which updates every slot. The receive timer resets on every message, so a pool with no trades never trips it.
 
 ### Reconnects
 
-| Key                         | Default | Meaning                                                                     |
-| --------------------------- | ------- | --------------------------------------------------------------------------- |
-| `recover_missed_data`       | `true`  | On a short drop, replay the missed slots (Yellowstone `from_slot` + dedup)  |
-| `slot_retention`            | `250`   | Slots of history the replay dedup keeps                                     |
-| `stream_reconnect_attempts` | `5`     | Quick reconnects inside the Yellowstone client before the shard rebuilds it |
-| `stream_reconnect_base_ms`  | `100`   | First quick-reconnect delay                                                 |
-| `reconnect.max_attempts`    | `10`    | Full rebuilds in a row before `watch` exits with an error                   |
-| `reconnect.base_delay_ms`   | `500`   | First full-rebuild delay                                                    |
-| `reconnect.max_delay_ms`    | `30000` | Full-rebuild delay cap                                                      |
+| Key                       | Default | Meaning                                                               |
+| ------------------------- | ------- | --------------------------------------------------------------------- |
+| `replay`                  | `true`  | Reconnect with `from_slot` to replay what was missed                  |
+| `replay_margin_slots`     | `4`     | Replay starts this many slots before the last slot seen               |
+| `replay_skip_tolerance`   | `8`     | A replay that starts more than this many slots late counts as a gap   |
+| `reconnect.max_attempts`  | `0`     | Failed reconnects in a row before `watch` exits. `0` retries forever. |
+| `reconnect.base_delay_ms` | `500`   | First reconnect delay                                                 |
+| `reconnect.max_delay_ms`  | `30000` | Reconnect delay cap                                                   |
 
-After a full rebuild, that shard's pools are fetched again over RPC, because the gap cannot be replayed.
+When a reconnect cannot replay, only that stream's accounts are read again over RPC (see [architecture.md](architecture.md#reconnects-and-replay)).
+
+**Removed keys.** `recover_missed_data`, `slot_retention`, `stream_reconnect_attempts`, `stream_reconnect_base_ms` and `command_buffer` no longer exist. Unknown keys are an error, so delete them from older configs.
 
 ### `[grpc.transport]` (HTTP/2 and TCP)
 
@@ -104,9 +110,18 @@ After a full rebuild, that shard's pools are fetched again over RPC, because the
 | `initial_stream_window_size`     | unset      | HTTP/2 stream window (bytes)          |
 | `buffer_size`                    | `8192`     | Client request buffer                 |
 
-### Where the defaults come from
+## `[sync]`
 
-The defaults follow two production Solana routers that stream from Yellowstone: OKX Pallas ([configuration](https://github.com/okx/dex-solana-binary/blob/master/docs/configuration.md#grpc-streaming-tuning)) and Metis ([self-host](https://metis.builders/docs/self-host#yellowstone-grpc-streaming)). Both use `processed`, 12 streams, gzip, a 10 s message delay limit and a 16384-update buffer. The transport values come from Metis. On `recv_timeout_ms` they differ: Metis uses 3 s, OKX 60 s. We use 10 s. With slot updates arriving several times a second, 10 s of silence is about 25 missed slots, well past gaps from skipped leaders. It still catches a stuck stream before HTTP/2 keepalive would (about 20 s).
+| Key                          | Default | Meaning                                                                                              |
+| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| `settle_slots`               | `4`     | A seed read must be at least this many slots after the slot its filter became effective              |
+| `repair_concurrency`         | `2`     | Seed and repair reads in flight at once                                                              |
+| `repair_batch`               | `100`   | Keys per read (`getMultipleAccounts` takes at most 100)                                              |
+| `repair_retry.base_delay_ms` | `500`   | First delay before a failed read is retried                                                          |
+| `repair_retry.max_delay_ms`  | `30000` | Retry delay cap. Failed reads are retried until they succeed.                                        |
+| `audit_interval_ms`          | `10000` | One drift check of up to 100 accounts per interval. `0` turns it off.                                |
+| `stream_swap_accounts`       | `true`  | Also subscribe accounts only the swap instruction needs (vaults the math does not read, DLMM oracle) |
+| `tick_ms`                    | `50`    | How often closures, reads and readiness are brought up to date                                       |
 
 ## Top level
 

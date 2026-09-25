@@ -1,11 +1,23 @@
+mod actor;
+mod classify;
+mod connector;
 mod convert;
 mod error;
+mod events;
 mod hub;
+mod probe;
 mod request;
+mod routing;
 mod settings;
-mod shard;
 
 pub use error::GrpcError;
-pub use hub::{GeyserHub, HubHandle, SlotStatus, Spawned, StreamEvent};
-pub use request::SubscriptionTarget;
-pub use settings::{Compression, GrpcSettings, TransportSettings};
+pub use events::{
+    GapReason, Group, GroupChange, GroupKey, LimitViolation, Placement, SlotStatus, StreamEvent,
+    StreamId,
+};
+pub use hub::{GeyserHub, HubHandle, Spawned};
+pub use probe::{Finding, ProbeKind, probe, resolve_slot_source};
+pub use settings::{Compression, GrpcSettings, SlotSource, TransportSettings};
+
+#[cfg(test)]
+mod tests;

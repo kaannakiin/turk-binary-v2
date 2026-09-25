@@ -789,6 +789,7 @@ version = "0.1.0"
 dependencies = [
  "domain",
  "solana-pubkey 4.4.0",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4598,6 +4599,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "domain",
  "grpc",
  "market",
  "rpc",

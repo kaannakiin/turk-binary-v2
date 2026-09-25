@@ -18,8 +18,8 @@ pub(crate) struct Resolution {
     canonical: HashSet<Slot>,
     /// The parent walk stopped at this slot without reaching `previous`;
     /// anything below it cannot be classified.
-    unresolved_below: Option<Slot>,
-    first_seen: Option<Slot>,
+    pub unresolved_below: Option<Slot>,
+    pub first_seen: Option<Slot>,
 }
 
 impl Resolution {
@@ -27,6 +27,11 @@ impl Resolution {
     /// store did before fork tracking, so a missing parent never loses data.
     pub fn is_canonical(&self, slot: Slot) -> bool {
         self.canonical.contains(&slot) || self.unresolved_below.is_some_and(|u| slot < u)
+    }
+
+    /// Promoted without a fork check because the parent chain has a hole.
+    pub fn is_unchecked(&self, slot: Slot) -> bool {
+        self.has_gap() && self.unresolved_below.is_some_and(|u| slot < u)
     }
 
     /// Slots created before the subscription started never had their parent
@@ -41,11 +46,23 @@ impl Resolution {
 }
 
 impl SlotTree {
-    pub fn record_parent(&mut self, slot: Slot, parent: Slot) {
-        self.first_seen.get_or_insert(slot);
+    /// `live` marks updates of the chain the subscription follows. On
+    /// connect the server also resends older slots (finalized, up to about
+    /// 32 back); their parents are usable but they do not start the chain.
+    pub fn record_parent(&mut self, slot: Slot, parent: Slot, live: bool) {
+        if live {
+            self.first_seen.get_or_insert(slot);
+        }
         if self.confirmed.is_none_or(|c| slot > c) {
             self.parents.insert(slot, parent);
         }
+    }
+
+    /// After a drop the chain resumes at the next session's first live slot:
+    /// a replayed session continues it, an unreplayed one leaves a hole that
+    /// the stream's `Gap` already re-reads.
+    pub fn restart(&mut self) {
+        self.first_seen = None;
     }
 
     /// `None` when `slot` is not newer than the last confirmed slot: its
@@ -85,13 +102,44 @@ mod tests {
     fn confirmation_excludes_sibling_fork() {
         let mut tree = SlotTree::default();
         tree.confirm(Slot(100));
-        tree.record_parent(Slot(101), Slot(100));
-        tree.record_parent(Slot(102), Slot(100));
-        tree.record_parent(Slot(103), Slot(101));
+        tree.record_parent(Slot(101), Slot(100), true);
+        tree.record_parent(Slot(102), Slot(100), true);
+        tree.record_parent(Slot(103), Slot(101), true);
         let res = tree.confirm(Slot(103)).unwrap();
         assert_eq!(
             [101, 102, 103].map(|s| res.is_canonical(Slot(s))),
             [true, false, true]
         );
+    }
+
+    #[test]
+    fn resent_finalized_slots_before_the_live_chain_are_not_a_gap() {
+        let mut tree = SlotTree::default();
+        tree.record_parent(Slot(91), Slot(90), false);
+        tree.confirm(Slot(91));
+        tree.record_parent(Slot(122), Slot(121), true);
+        tree.record_parent(Slot(123), Slot(122), true);
+        assert!(!tree.confirm(Slot(122)).unwrap().has_gap());
+    }
+
+    #[test]
+    fn missing_parent_inside_the_live_chain_is_a_gap() {
+        let mut tree = SlotTree::default();
+        tree.record_parent(Slot(100), Slot(99), true);
+        tree.confirm(Slot(100));
+        tree.record_parent(Slot(101), Slot(100), true);
+        tree.record_parent(Slot(103), Slot(102), true);
+        assert!(tree.confirm(Slot(103)).unwrap().has_gap());
+    }
+
+    #[test]
+    fn a_restarted_chain_starts_at_its_next_live_slot() {
+        let mut tree = SlotTree::default();
+        tree.record_parent(Slot(100), Slot(99), true);
+        tree.confirm(Slot(100));
+        tree.restart();
+        tree.record_parent(Slot(200), Slot(199), true);
+        tree.record_parent(Slot(201), Slot(200), true);
+        assert!(!tree.confirm(Slot(201)).unwrap().has_gap());
     }
 }

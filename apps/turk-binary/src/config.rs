@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use grpc::GrpcSettings;
-use market::UniverseConfig;
+use market::{SyncSettings, UniverseConfig};
 use rpc::RpcSettings;
 use serde::Deserialize;
 
@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub rpc: RpcSettings,
     #[serde(default)]
     pub grpc: GrpcSettings,
+    #[serde(default)]
+    pub sync: SyncSettings,
     pub universe: UniverseConfig,
 }
 

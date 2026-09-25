@@ -14,9 +14,38 @@ Use the **config name** in `allowed_dexes` / `blocked_dexes`.
 | `pump_bonding_curve` | Pump.fun bonding curve | `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`  | `BondingCurve`                      | address from mint | yes      |
 | `pump_amm`           | PumpSwap               | `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`  | `Pool` (301 B on chain)             | mint search       | yes      |
 
-**Mint search** asks RPC for the DEX's pool accounts whose first mint equals each configured mint, then keeps pools whose second mint is also configured.
+**Mint search** asks RPC, for every ordered pair of configured mints, for the DEX's pool accounts holding exactly that pair (both mint offsets are filtered). Filtering one mint alone would return every pool with that mint on its side, over a million PumpSwap pools for WSOL.
 
 **Address from mint** (Pump bonding curve only): the curve address is derived from the mint, so no search is needed. Curves that have completed (migrated to PumpSwap) are skipped.
+
+## Dependencies
+
+What `dex::closure` subscribes for each pool, besides the pool itself (see [architecture.md](architecture.md#dependency-closures)). "Swap only" accounts are passed to the swap instruction but not read by its math; `stream_swap_accounts` decides whether they are subscribed.
+
+| DEX                  | Pool-scoped                                                                          | Shared                                                                                         | Swap only                                |
+| -------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `raydium_amm_v4`     | coin and pc vaults                                                                   | mints                                                                                          |                                          |
+| `raydium_cpmm`       | token vaults                                                                         | `AmmConfig`, mints, Clock                                                                      |                                          |
+| `raydium_clmm`       | every tick array the pool bitmap and bitmap extension mark, the extension (optional) | `AmmConfig`, mints, Clock                                                                      | token vaults                             |
+| `orca_whirlpool`     | every possible tick-array PDA (optional), Oracle (required on adaptive-fee pools)    | mints, Clock                                                                                   | token vaults, Oracle on static-fee pools |
+| `meteora_dlmm`       | every bin array the bitmap and extension mark, the extension (optional)              | mints, Clock                                                                                   | reserves, Oracle                         |
+| `meteora_damm_v2`    |                                                                                      | mints, Clock                                                                                   | token vaults                             |
+| `meteora_damm_v1`    | the pool's vault LP token accounts                                                   | both vaults, their LP mints and token accounts, the stake account of depeg pools, mints, Clock |                                          |
+| `pump_bonding_curve` |                                                                                      | `Global`, `FeeConfig`, mints, Clock                                                            |                                          |
+| `pump_amm`           | pool base and quote token accounts                                                   | `GlobalConfig`, `FeeConfig`, mints, Clock                                                      |                                          |
+
+Tick-array PDA seeds encode the start index differently per DEX: CLMM as big-endian `i32`, DLMM as little-endian `i64`, Whirlpool as a decimal string.
+
+Every closure was checked against captured mainnet accounts (`crates/dex/src/tests/fixtures/accounts/`): every derived account exists with an accepted owner, every vault holds the pool's mint on its side, and the Python port that picked the captured arrays agrees with the Rust derivation (417 CLMM tick arrays, 183 DLMM bin arrays, all 362 existing Whirlpool arrays of 2522 possible).
+
+`meteora_damm_v1` was checked on one live pool per curve and depeg type (constant product, plain stable, Marinade, Lido, SPL stake pool) against an independent Python port. The same account set is what `dynamic-amm-quote::compute_quote` reads.
+
+## Source conflicts
+
+Found while verifying and left unresolved:
+
+- Raydium's CPMM docs describe an `AmmConfig.creator_fee_share_rate` field that `raydium-io/raydium-cp-swap@59fb845` does not have. It sits in padding and does not change the swap math.
+- `@pump-fun/pump-sdk` derives PumpSwap's config at `["amm_global"]`, which does not exist on chain. The IDL (`create_config`) and `@pump-fun/pump-swap-sdk` use `["global_config"]`, which is live. The code uses `global_config`.
 
 ## DAMM v1 notes
 
@@ -26,7 +55,12 @@ Meteora lists DAMM v1 as legacy: new pools can no longer be created, but existin
 - The deployed programs are newer than the last public commit (source 2025-08-11, pool program 2026-08-27 at slot 442,210,200, dynamic vault `24Uqj9JCLxUeoC3hGfh5W3s9FM9uCHDS2SG3LYwBpyTi` 2025-12-22).
 - Live accounts are larger than the source structs: pool 1387 B (source 875), vault 10240 B (source 1227). The mint offsets sit in the part the source does describe.
 
-So the quote cannot be ported from program source. It has to be checked against the deployed program's own simulated output instead. This is not done here yet.
+So the quote cannot be ported from program source. The closure rests on two things instead:
+
+- The official quote crate (`dynamic-amm-quote` in the same repo) reads the pool, both vaults, the pool's vault LP accounts, both vault LP mints, both vault token accounts, the Clock and, for depeg pools, one stake account: Marinade's state, Solido's state, or the pool's `stake` for SPL stake pools.
+- A quoter over exactly these accounts matched `simulateTransaction` to the lamport on 366 mainnet swaps, 170 of them after the 2026-08-27 redeploy, covering every curve and depeg type (the previous `turk-binary` repo, `damm-v1-onchain-sim.json`). The pool program has not been redeployed since (checked 2026-09-24, slot 450,119,426).
+
+A vault that runs strategies keeps only part of its liquidity in its token account (274 of 730 vaults in that corpus), so that account is always in the closure.
 
 ## Pump bonding curve notes
 
