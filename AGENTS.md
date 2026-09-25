@@ -1,22 +1,22 @@
 # AGENTS.md
 
-Solana ağında DEX'ler arası arbitraj yapan Rust binary. Rust workspace: binary'ler `apps/*`, kütüphaneler `crates/*` altında.
+Rust binary for cross-DEX arbitrage on Solana. Rust workspace: binaries under `apps/*`, libraries under `crates/*`.
 
-**Bu proje gerçek parayla canlı işlem yapar.** Yanlış bir program ID, account sırası, fee oranı veya yuvarlama yönü doğrudan para kaybıdır. Aşağıdaki doğrulama kuralları opsiyonel değildir.
+**This project trades live with real money.** A wrong program ID, account order, fee rate, or rounding direction is a direct loss. The verification rules below are not optional.
 
-## Yapı
+## Layout
 
 ```text
-apps/turk-binary/   # bin: argüman, config, log, çıktı
-crates/domain/      # lib: ortak tipler (Slot, DexKind, AccountUpdate, AccountFilter), iç bağımlılık yok
-crates/dex/         # lib: DEX kaydı (program ID, pool filtresi, mint offset'leri), I/O yok
-crates/rpc/         # lib: tüm JSON-RPC çağrıları
-crates/grpc/        # lib: tüm Yellowstone gRPC stream'leri (shard'lı hub)
-crates/market/      # lib: pool evreni çözümleme, account store, ingestion
-docs/               # kullanıcı dokümanı (İngilizce): mimari, config, DEX tablosu
+apps/turk-binary/   # bin: arguments, config, logging, output
+crates/domain/      # lib: shared types (Slot, DexKind, AccountUpdate, AccountFilter), no internal deps
+crates/dex/         # lib: DEX registry (program IDs, pool filters, mint offsets), no I/O
+crates/rpc/         # lib: all JSON-RPC calls
+crates/grpc/        # lib: all Yellowstone gRPC streams (sharded hub)
+crates/market/      # lib: pool universe resolution, account store, ingestion
+docs/               # user docs: architecture, config, DEX table
 ```
 
-Her crate'in `Cargo.toml`'u:
+Every crate's `Cargo.toml`:
 
 ```toml
 version.workspace = true
@@ -28,58 +28,58 @@ publish.workspace = true
 workspace = true
 ```
 
-Dependency sürümleri yalnızca kök `Cargo.toml` → `[workspace.dependencies]` içinde. Crate'lerde `foo.workspace = true`.
+Dependency versions live only in the root `Cargo.toml` → `[workspace.dependencies]`. Crates use `foo.workspace = true`.
 
-## Katmanlama kuralı
+## Layering rules
 
-- `apps/*` ince kalır: argüman parse, config yükleme, log kurulumu, çıktı basma. İş mantığı yok.
-- `crates/*` mantığı taşır ve uygulama kavramı bilmez: `clap`, `println!`, `std::process::exit` yok.
-- Bağımlılık tek yönlü: `apps → crates`. Crate app'e bağımlı olmaz, app'ler birbirine bağımlı olmaz.
-- Crate'ler arası yön de tek ve döngüsüz: `dex, rpc, grpc → domain`, `market → dex, rpc, grpc, domain`. `domain` hiçbir iç crate'e bağımlı değil.
-- **Ağ erişimi tek kapıdan**: JSON-RPC yalnızca `rpc`, gRPC yalnızca `grpc` üzerinden. Başka crate `solana-rpc-client` veya `yellowstone-grpc-*` çekemez; `deny.toml` → `[bans]` bunu CI'da zorlar.
-- `dex` saf kalır: I/O yok, async yok. DEX bilgisi yalnızca burada durur; `market` DEX'e özel sabit tutmaz.
-- Config anahtarı, crate veya DEX eklenir/değişirse `docs/` aynı değişiklikte güncellenir.
-- Hatalar: lib'de `thiserror` ile tipli hata, app'te `anyhow` ile sarma.
-- `main.rs` 100 satırı geçiyorsa mantık yanlış yere sızmıştır, crate'e taşı.
+- `apps/*` stay thin: argument parsing, config loading, logging setup, printing output. No business logic.
+- `crates/*` carry the logic and know nothing about the application: no `clap`, `println!`, or `std::process::exit`.
+- Dependencies flow one way: `apps → crates`. A crate never depends on an app; apps never depend on each other.
+- Crate-to-crate direction is also one-way and acyclic: `dex, rpc, grpc → domain`, `market → dex, rpc, grpc, domain`. `domain` depends on no internal crate.
+- **Network access through one door each**: JSON-RPC only via `rpc`, gRPC only via `grpc`. No other crate may pull in `solana-rpc-client` or `yellowstone-grpc-*`; `deny.toml` → `[bans]` enforces this in CI.
+- `dex` stays pure: no I/O, no async. DEX knowledge lives only here; `market` holds no DEX-specific constants.
+- When a config key, crate, or DEX is added or changed, `docs/` is updated in the same change.
+- Errors: typed errors with `thiserror` in libs, wrapped with `anyhow` in apps.
+- If `main.rs` grows past 100 lines, logic has leaked into the wrong place; move it into a crate.
 
-## Bilgi kaynakları
+## Sources of truth
 
-Öncelik sırasıyla. Üst sıradaki kaynak alttakini ezer.
+In priority order. A higher source overrides a lower one.
 
-1. **On-chain state (RPC)**: nihai gerçek. Program deploy edilmiş mi, account gerçekte hangi owner'da, hangi boyutta.
-2. **Program kaynak kodu ve IDL (GitHub, default branch)**: account layout, instruction account sırası, discriminator, fee ve fiyat matematiği, yuvarlama yönü.
-3. **MCP sunucuları** (`.mcp.json`):
-   - `solanaMcp`: Solana genel. Geniş konu için önce `list_sections`, sonra `get_documentation`. Dar soru veya hata mesajı için `Solana_Documentation_Search` ya da `Solana_Expert__Ask_For_Help`. On-chain program kodu yazılır veya değiştirilirse `program_autofixer` zorunludur.
-   - `raydium-docs`, `meteora`, `orca-docs`: protokol dokümanı. `search_*` ile ara, `query_docs_filesystem_*` ile sayfayı oku.
-4. **llms.txt**: dokümanın tam indeksi.
+1. **On-chain state (RPC)**: the final truth. Is the program deployed, which owner does the account actually have, what size is it.
+2. **Program source and IDL (GitHub, default branch)**: account layout, instruction account order, discriminators, fee and price math, rounding direction.
+3. **MCP servers** (`.mcp.json`):
+   - `solanaMcp`: general Solana. For broad topics, `list_sections` first, then `get_documentation`. For narrow questions or error messages, `Solana_Documentation_Search` or `Solana_Expert__Ask_For_Help`. `program_autofixer` is mandatory whenever on-chain program code is written or changed.
+   - `raydium-docs`, `meteora`, `orca-docs`: protocol docs. Search with `search_*`, read a page with `query_docs_filesystem_*`.
+4. **llms.txt**: full index of the docs.
    - <https://docs.raydium.io/llms.txt>
    - <https://docs.meteora.ag/llms.txt>
    - <https://docs.orca.so/llms.txt>
-5. **Skill'ler**: aşağıdaki "Skill'ler" bölümü. Skill metni yöntem öğretir, on-chain gerçeğin kaynağı değildir.
+5. **Skills**: see "Skills" below. Skill text teaches method; it is not a source of on-chain truth.
 
-Modelin eğitim hafızası kaynak **değildir**. Program ID, layout, fee oranı veya matematik "hatırlanarak" yazılmaz.
+The model's training memory is **not** a source. Program IDs, layouts, fee rates, or math are never written "from memory".
 
-### Kaynak repolar
+### Source repos
 
-| Protokol        | Repo                                                                                                               | Ne için                                                  |
-| --------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| Raydium CLMM    | [raydium-io/raydium-clmm](https://github.com/raydium-io/raydium-clmm)                                              | program, tick math                                       |
-| Raydium AMM v4  | [raydium-io/raydium-amm](https://github.com/raydium-io/raydium-amm)                                                | program                                                  |
-| Raydium CPMM    | [raydium-io/raydium-cp-swap](https://github.com/raydium-io/raydium-cp-swap)                                        | program, Token-2022                                      |
-| Raydium SDK     | [raydium-io/raydium-sdk-V2](https://github.com/raydium-io/raydium-sdk-V2)                                          | referans hesaplama                                       |
-| Orca Whirlpools | [orca-so/whirlpools](https://github.com/orca-so/whirlpools)                                                        | program + Rust/TS SDK                                    |
-| Meteora DLMM    | [MeteoraAg/dlmm-sdk](https://github.com/MeteoraAg/dlmm-sdk)                                                        | IDL (`idls/dlmm.json`), `commons/` Rust                  |
-| Meteora DAMM v2 | [MeteoraAg/damm-v2](https://github.com/MeteoraAg/damm-v2), [damm-v2-sdk](https://github.com/MeteoraAg/damm-v2-sdk) | program, SDK                                             |
-| Meteora DAMM v1 | [MeteoraAg/damm-v1-sdk](https://github.com/MeteoraAg/damm-v1-sdk)                                          | legacy                                                   |
-| Pump.fun        | [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs)                                          | IDL (`idl/`), `docs/` (bonding curve, PumpSwap, fee'ler) |
+| Protocol        | Repo                                                                                                               | Used for                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| Raydium CLMM    | [raydium-io/raydium-clmm](https://github.com/raydium-io/raydium-clmm)                                              | program, tick math                                    |
+| Raydium AMM v4  | [raydium-io/raydium-amm](https://github.com/raydium-io/raydium-amm)                                                | program                                               |
+| Raydium CPMM    | [raydium-io/raydium-cp-swap](https://github.com/raydium-io/raydium-cp-swap)                                        | program, Token-2022                                   |
+| Raydium SDK     | [raydium-io/raydium-sdk-V2](https://github.com/raydium-io/raydium-sdk-V2)                                          | reference calculations                                |
+| Orca Whirlpools | [orca-so/whirlpools](https://github.com/orca-so/whirlpools)                                                        | program + Rust/TS SDK                                 |
+| Meteora DLMM    | [MeteoraAg/dlmm-sdk](https://github.com/MeteoraAg/dlmm-sdk)                                                        | IDL (`idls/dlmm.json`), `commons/` Rust               |
+| Meteora DAMM v2 | [MeteoraAg/damm-v2](https://github.com/MeteoraAg/damm-v2), [damm-v2-sdk](https://github.com/MeteoraAg/damm-v2-sdk) | program, SDK                                          |
+| Meteora DAMM v1 | [MeteoraAg/damm-v1-sdk](https://github.com/MeteoraAg/damm-v1-sdk)                                                  | legacy                                                |
+| Pump.fun        | [pump-fun/pump-public-docs](https://github.com/pump-fun/pump-public-docs)                                          | IDL (`idl/`), `docs/` (bonding curve, PumpSwap, fees) |
 
-Pump.fun için MCP veya llms.txt yok. Tek resmi kaynak bu repo: `idl/*.json` ve `docs/`. Özellikle `docs/BREAKING_*.md` dosyaları, buy/sell instruction'larına yeni account eklenen breaking upgrade'leri duyurur.
+Pump.fun has no MCP server or llms.txt. The only official source is this repo: `idl/*.json` and `docs/`. In particular, `docs/BREAKING_*.md` files announce breaking upgrades that add new accounts to the buy/sell instructions.
 
-### Program ID'leri
+### Program IDs
 
-Doğrulandı: 2026-09-24. Kaynak kod veya IDL ile mainnet `getAccountInfo` karşılaştırıldı, hepsi `executable=true`, owner `BPFLoaderUpgradeab1e…`.
+Verified: 2026-09-24. Source code or IDL compared against mainnet `getAccountInfo`; all `executable=true`, owner `BPFLoaderUpgradeab1e…`.
 
-| Program            | Mainnet ID                                     | Kaynak                                           |
+| Program            | Mainnet ID                                     | Source                                           |
 | ------------------ | ---------------------------------------------- | ------------------------------------------------ |
 | Raydium CLMM       | `CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK` | `programs/amm/src/lib.rs`                        |
 | Raydium AMM v4     | `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8` | `program/src/lib.rs`                             |
@@ -92,83 +92,87 @@ Doğrulandı: 2026-09-24. Kaynak kod veya IDL ile mainnet `getAccountInfo` karş
 | PumpSwap AMM       | `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`  | `idl/pump_amm.json`                              |
 | Pump fees          | `pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ`  | `idl/pump_fees.json`                             |
 
-Raydium repolarında `#[cfg(feature = "devnet")]` ile ayrı devnet ID'leri var. Mainnet ID'si `not(feature = "devnet")` dalındakidir.
+Raydium repos have separate devnet IDs behind `#[cfg(feature = "devnet")]`. The mainnet ID is the one in the `not(feature = "devnet")` branch.
 
-Tüm programlar upgradeable: layout ve account listesi değişebilir. Bu tablo bir başlangıç noktasıdır, otorite değildir.
+All programs are upgradeable: layouts and account lists can change. This table is a starting point, not an authority.
 
-## Skill'ler
+## Skills
 
-Repoda `.agents/skills/` altında kurulu, Claude Code için `.claude/skills/` symlink. Sürümleri `skills-lock.json`'da. Kurulum: `npx skills add <repo> --skill <ad>`.
+Installed under `.agents/skills/` in the repo, symlinked into `.claude/skills/` for Claude Code. Versions are in `skills-lock.json`. Install: `npx skills add <repo> --skill <name>`. Exception: `test-audit` is specific to this repo, is not in the lock file, and is edited by hand.
 
-İş başlamadan ilgili skill yüklenir:
+Load the relevant skill before starting the work:
 
-| İş                                                                                 | Skill                                    |
-| ---------------------------------------------------------------------------------- | ---------------------------------------- |
-| Solana client, transaction kurma, RPC, PDA, Token-2022, test (LiteSVM, Surfpool)   | `solana-dev`                             |
-| Genel Rust stili, yeni kod veya review                                             | `rust-best-practices`                    |
-| Borrow ve lifetime hataları (E0382, E0597, E0499 …)                                | `m01-ownership`, `m03-mutability`        |
-| `Arc`, `Box`, `Rc`, `Drop`, RAII                                                   | `m02-resource`, `m12-lifecycle`          |
-| Generic, trait, `dyn` ve statik dispatch                                           | `m04-zero-cost`                          |
-| Newtype, typestate: geçersiz durumu temsil edilemez yapma (`Lamports`, `PoolId` …) | `m05-type-driven`                        |
-| `Result`, `thiserror`/`anyhow`, retry ve backoff, geçici ve kalıcı RPC hataları    | `m06-error-handling`, `m13-domain-error` |
-| tokio, kanallar, websocket stream'leri, paralel quote                              | `m07-concurrency`                        |
-| Pool, route, fırsat gibi domain modelleri                                          | `m09-domain`                             |
-| Hot path: quote hesabı, allocation, benchmark                                      | `m10-performance`                        |
-| Crate seçimi, feature flag, workspace                                              | `m11-ecosystem`                          |
-| Review'da anti-pattern avı                                                         | `m15-anti-pattern`                       |
-| Rename, fonksiyon taşıma, extract                                                  | `rust-refactor-helper`                   |
+| Task                                                                                   | Skill                                    |
+| -------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Solana client, building transactions, RPC, PDAs, Token-2022, tests (LiteSVM, Surfpool) | `solana-dev`                             |
+| General Rust style, new code, or review                                                | `rust-best-practices`                    |
+| Writing, changing, reviewing, or deleting tests                                        | `test-audit`                             |
+| Borrow and lifetime errors (E0382, E0597, E0499 …)                                     | `m01-ownership`, `m03-mutability`        |
+| `Arc`, `Box`, `Rc`, `Drop`, RAII                                                       | `m02-resource`, `m12-lifecycle`          |
+| Generics, traits, `dyn` vs. static dispatch                                            | `m04-zero-cost`                          |
+| Newtype, typestate: making invalid states unrepresentable (`Lamports`, `PoolId` …)     | `m05-type-driven`                        |
+| `Result`, `thiserror`/`anyhow`, retry and backoff, transient vs. permanent RPC errors  | `m06-error-handling`, `m13-domain-error` |
+| tokio, channels, websocket streams, parallel quotes                                    | `m07-concurrency`                        |
+| Domain models such as pools, routes, opportunities                                     | `m09-domain`                             |
+| Hot path: quote computation, allocation, benchmarks                                    | `m10-performance`                        |
+| Crate choice, feature flags, workspace                                                 | `m11-ecosystem`                          |
+| Hunting anti-patterns in review                                                        | `m15-anti-pattern`                       |
+| Rename, moving functions, extract                                                      | `rust-refactor-helper`                   |
 
-Skill ile bu dosya çelişirse bu dosya geçerlidir.
+If a skill conflicts with this file, this file wins.
 
-## Doğrulama protokolü
+## Verification protocol
 
-**Kritik bilgi**: program ID, PDA seed'leri, instruction discriminator'ı, instruction account sırası ve writable/signer bayrakları, account layout ve offset'leri, fee oranları ve fee hesaplama sırası, tick/bin/sqrt-price matematiği, yuvarlama yönü, token program (SPL Token veya Token-2022; transfer fee ve hook extension'ları), mint decimals.
+**Critical information**: program IDs, PDA seeds, instruction discriminators, instruction account order and writable/signer flags, account layouts and offsets, fee rates and fee computation order, tick/bin/sqrt-price math, rounding direction, token program (SPL Token or Token-2022; transfer fee and hook extensions), mint decimals.
 
-Kritik bilgi kodlanmadan önce:
+Before critical information is coded:
 
-1. **İki bağımsız kaynak.** Biri mutlaka program kaynağı veya IDL olmalı. Diğeri RPC, MCP ya da resmi SDK.
-2. **Kaynak kaydı.** Sabitin yanında `// src: <repo>@<commit-sha> <path>` bırakılır. Upgrade sonrası neyin yeniden kontrol edileceği buradan bulunur.
-3. **Çelişki varsa dur.** Kaynaklar farklı söylüyorsa tahmin etme, "yakın olanı" seçme. Farkı raporla ve insan kararını bekle.
-4. **Matematik birebir.** Swap quote hesabı programın kendi kodundan port edilir, formülden türetilmez. Yuvarlama yönü (floor/ceil) ve ara tip (u64, u128, U256) aynen korunur.
-5. **Karşılaştırmalı test.** Her quote fonksiyonu gerçek mainnet pool state'i üzerinde (klonlanmış account'larla LiteSVM veya Surfpool) programın simülasyon çıktısıyla birebir eşleştirilerek test edilir.
-6. **Upgrade takibi.** Bir programa dokunan değişiklikten önce ilgili reponun son commit'lerine ve (Pump için) `docs/BREAKING_*.md` dosyalarına bakılır.
+1. **Two independent sources.** One must be the program source or IDL. The other is RPC, MCP, or the official SDK.
+2. **Source record.** Leave `// src: <repo>@<commit-sha> <path>` next to the constant. After an upgrade, this is how you find what to recheck.
+3. **Stop on conflict.** If sources disagree, do not guess and do not pick the "closest" one. Report the difference and wait for a human decision.
+4. **Math ported verbatim.** Swap quote computation is ported from the program's own code, not derived from a formula. Rounding direction (floor/ceil) and intermediate types (u64, u128, U256) are preserved exactly.
+5. **Comparative tests.** Every quote function is tested against real mainnet pool state (LiteSVM or Surfpool with cloned accounts), matching the program's simulation output exactly.
+6. **Upgrade tracking.** Before a change that touches a program, check the recent commits of its repo and (for Pump) the `docs/BREAKING_*.md` files.
 
-Doğrulanamayan bilgi `TODO(verify)` olarak işaretlenir ve o kod yolu mainnet'e çıkamaz.
+Information that cannot be verified is marked `TODO(verify)`, and that code path cannot ship to mainnet.
 
-## Canlı işlem güvenliği
+## Live trading safety
 
-- **Anahtarlar**: private key veya keypair dosyası asla repoya, loga, hata mesajına ya da agent context'ine girmez. Keypair yolu yalnızca env değişkeninden okunur.
-- **Endpoint secret'ları**: RPC/gRPC URL'leri ve `x-token` kökteki `.env` dosyasındadır (gitignore'da, şablon `.env.example`). `just` bu dosyayı kendisi yükler. Agent'lar `.env`'i okumaz, düzenlemez, içeriğini veya `TB_*` değişkenlerini yazdırmaz; `watch` gerekiyorsa `just watch` çalıştırır. `.claude/settings.json` bu okumaları engeller. Bu bir korkuluktur, sandbox değildir: kurala uymak zorunludur. Ağa giden hiçbir hata/log mesajı URL taşımaz (`rpc` crate'i reqwest hatalarından URL'i siler).
-- **Agent'lar mainnet'e işlem göndermez**, gerçek keypair ile hiçbir komut çalıştırmaz. Mainnet işlemini yalnızca insan başlatır.
-- **Varsayılan mod dry-run.** Gerçek gönderim açık bir flag ister (örn. `--live`), config'deki varsayılan asla live olmaz.
-- **Önce simülasyon.** Her işlem gönderilmeden önce `simulateTransaction` çalıştırılır. Simülasyon hatası veya beklenenden düşük çıktı işlemi iptal eder.
-- **Atomik arbitraj.** Tüm bacaklar tek transaction'dadır. Her swap'ta `minimum_amount_out` sıkı hesaplanır. Kâr eşiğinin altında kalan işlem zararla land etmez, fail eder.
-- **Limitler.** Maksimum işlem büyüklüğü, maksimum günlük zarar ve kill switch config'dedir. Kod bu limitleri atlayamaz.
-- **Aritmetik.** Fiyat ve miktar yolunda `f64` yok. Tamsayı (u64/u128) ve `checked_*` kullanılır; taşma panic değil hatadır.
-- **Test sırası.** Önce localnet/LiteSVM, sonra mainnet-fork (Surfpool), en son küçük miktarla mainnet. Mainnet ilk test ortamı değildir.
+- **Keys**: private keys or keypair files never enter the repo, logs, error messages, or agent context. The keypair path is read only from an environment variable.
+- **Endpoint secrets**: RPC/gRPC URLs and the `x-token` live in the root `.env` file (gitignored, template `.env.example`). `just` loads it itself. Agents do not read or edit `.env` and never print its contents or any `TB_*` variable; if `watch` is needed, they run `just watch`. `.claude/settings.json` blocks these reads. It is a guardrail, not a sandbox: following the rule is mandatory. No error or log message that leaves the process carries a URL (the `rpc` crate strips URLs from reqwest errors).
+- **Agents never send transactions to mainnet** and never run any command with a real keypair. Only a human starts a mainnet transaction.
+- **Dry-run is the default mode.** Real submission requires an explicit flag (e.g. `--live`); the config default is never live.
+- **Simulate first.** Every transaction runs `simulateTransaction` before sending. A simulation error or lower-than-expected output aborts the transaction.
+- **Atomic arbitrage.** All legs are in one transaction. `minimum_amount_out` is computed tightly for every swap. A trade below the profit threshold fails instead of landing at a loss.
+- **Limits.** Maximum trade size, maximum daily loss, and the kill switch live in config. Code cannot bypass these limits.
+- **Arithmetic.** No `f64` on the price and amount path. Integers (u64/u128) with `checked_*`; overflow is an error, not a panic.
+- **Test order.** Localnet/LiteSVM first, then mainnet-fork (Surfpool), mainnet with a small amount last. Mainnet is never the first test environment.
 
-## Komutlar
+## Commands
 
 ```sh
 just check                     # cargo check --workspace --all-targets
 just fmt                       # cargo fmt --all
 just lint                      # fmt --check + clippy -D warnings
-just test-crate domain         # tek crate test (nextest)
-just test -p domain <filtre>   # isim filtresiyle test
+just test-crate domain         # single-crate tests (nextest)
+just test -p domain <filter>   # tests filtered by name
 just deny                      # cargo-deny
-just watch                     # .env ile read-only watch (config.toml)
-just ci                        # CI'daki her şey
+just watch                     # read-only watch with .env (config.toml)
+just ci                        # everything CI runs
 ```
 
-## Test
+## Tests
 
-- Runner `cargo-nextest` (`.config/nextest.toml`). Doc testleri için ayrıca `cargo test --doc`.
-- En dar koşuyu tercih et: tek crate (`-p`) veya isim filtresi. Tüm suite yalnızca gerektiğinde.
-- Test mantığın olduğu crate'te yazılır; app katmanına test yığılmaz.
+- **Read `.agents/skills/test-audit/SKILL.md` before writing, changing, or deleting a test.** No test is added until the four authoring-gate questions in the skill are answered.
+- In quote, fee, layout, and offset tests, the expected value comes from a source independent of the code under test: program simulation, a real mainnet fixture, or the official SDK. The port's own output can never be the expected value.
+- `crates/dex/src/tests/fixtures/accounts/` holds mainnet bytes; they are never hand-made or deleted. New ones are captured with `scripts/capture_accounts.py`.
+- Runner is `cargo-nextest` (`.config/nextest.toml`). Doc tests additionally need `cargo test --doc`.
+- Prefer the narrowest run: a single crate (`-p`) or a name filter. The full suite only when needed.
+- Tests are written in the crate that holds the logic; tests do not pile up in the app layer.
 
-## Kod kuralları
+## Code rules
 
-- Clippy pedantic açık, CI `-D warnings`. `unwrap()` uyarı verir: testler dışında `?` veya `expect("neden")` kullan.
-- `unsafe_code` yasak.
-- Yorum yalnızca "neden" için, bariz olmayan yerde. Kodu tekrar eden yorum yazma. İstisna: on-chain sabitlerin `// src:` kaynak kaydı zorunludur.
-- Değişiklikten sonra `just lint` temiz olmalı.
+- Clippy pedantic is on, CI runs with `-D warnings`. `unwrap()` warns: outside tests use `?` or `expect("reason")`.
+- `unsafe_code` is forbidden.
+- Comments only for "why", only where non-obvious. Never write a comment that restates the code. Exception: the `// src:` source record on on-chain constants is mandatory.
+- `just lint` must be clean after every change.
