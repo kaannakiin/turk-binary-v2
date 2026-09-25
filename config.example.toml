@@ -23,6 +23,7 @@ blocked_dexes = []
 commitment = "processed"   # processed | confirmed | finalized
 timeout_ms = 10000
 max_in_flight = 8
+max_rps = 8                # stay under the provider's quota; 0 = no pacing
 
 [rpc.retry]
 max_attempts = 5

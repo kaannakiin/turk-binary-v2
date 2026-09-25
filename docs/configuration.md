@@ -52,6 +52,7 @@ These are errors, not warnings:
 | `commitment`          | `"processed"` | See [Commitment values](#commitment-values)                                               |
 | `timeout_ms`          | `10000`       | Per-request timeout                                                                       |
 | `max_in_flight`       | `8`           | Max concurrent RPC requests                                                               |
+| `max_rps`             | `8`           | Requests per second, paced evenly across every method. `0` turns pacing off.              |
 | `retry.max_attempts`  | `5`           | Attempts for timeouts, 429s, 5xx and "node behind" errors. Other errors fail immediately. |
 | `retry.base_delay_ms` | `100`         | First backoff; doubles each attempt                                                       |
 | `retry.max_delay_ms`  | `5000`        | Backoff cap                                                                               |

@@ -29,6 +29,13 @@ pub enum RpcError {
     },
     #[error("{method}: response has no context slot")]
     MissingContext { method: &'static str },
+    #[error("{method}: {keys} keys exceed one request")]
+    TooManyKeys { method: &'static str, keys: usize },
+    #[error("{method}: malformed response: {reason}")]
+    Shape {
+        method: &'static str,
+        reason: String,
+    },
 }
 
 pub(crate) fn is_transient(err: &ClientError) -> bool {
@@ -47,6 +54,14 @@ pub(crate) fn is_transient(err: &ClientError) -> bool {
         ),
         _ => false,
     }
+}
+
+pub(crate) fn is_min_context_slot(err: &ClientError) -> bool {
+    matches!(
+        err.kind(),
+        ErrorKind::RpcError(JsonRpcError::RpcResponseError { code, .. })
+            if *code == JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED
+    )
 }
 
 /// Endpoints usually embed an API key and reqwest puts the full URL into its
