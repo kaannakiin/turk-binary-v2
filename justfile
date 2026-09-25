@@ -33,3 +33,6 @@ watch config="config.toml":
 probe kinds="" config="config.toml":
     cargo run -p turk-binary -- probe --config {{config}} {{kinds}}
 
+# Optimized build of `watch`, for profiling.
+watch-release config="config.toml":
+    cargo run --release -p turk-binary -- watch --config {{config}}

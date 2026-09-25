@@ -72,6 +72,7 @@ Account updates older than `max_message_delay_ms` make a stream reconnect, excep
 
 `reconnect.max_attempts = 0` retries forever. Only fatal errors (bad credentials, a request the server can never accept) stop the hub.
 
+To exercise this on a live stream, run `just watch-release` and, in another terminal, `sudo scripts/net_fault.sh drop 30` (packets vanish, the stream has to notice) or `sudo scripts/net_fault.sh reset 5` (connections are reset at once). The script cuts only that process's TCP connections, with pf, and restores them after the given seconds. Expect `downs` and `resumed` to rise, `gaps` and `drift` to stay at 0, and every pool to be ready again. With `replay = false` the same cut exercises the `Gap` path instead.
 
 ## Engine
 
