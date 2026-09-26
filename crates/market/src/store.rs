@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bytes::Bytes;
@@ -83,6 +84,9 @@ pub enum Applied {
     /// Its slot was already confirmed but is not known to be canonical;
     /// dropped, and the account should be re-read.
     Late,
+    /// Stored, but another stream wrote the same slot and `write_version`
+    /// cannot order the two; the account should be re-read.
+    Unordered,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -115,11 +119,76 @@ impl Pending {
             self.account.order.write_version.0,
         )
     }
+
+    const fn version(&self) -> Version {
+        Version {
+            order: self.account.order,
+            origin: Origin::Stream(self.source),
+        }
+    }
+}
+
+/// A confirmed RPC read is the frozen bank of its slot, so it holds every
+/// write of that slot; a streamed write may be any one of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    Snapshot,
+    Stream(Source),
+}
+
+#[derive(Debug, Clone)]
+struct Committed {
+    account: StoredAccount,
+    origin: Origin,
+}
+
+impl Committed {
+    const fn version(&self) -> Version {
+        Version {
+            order: self.account.order,
+            origin: self.origin,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Version {
+    order: UpdateOrder,
+    origin: Origin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Supersedes {
+    Yes,
+    No,
+    Unordered,
+}
+
+// Pre-Alpenglow: one slot is one bank. With several banks per slot this
+// has to compare `(slot, bank_id)` (docs/alpenglow.md).
+fn supersedes(new: Version, old: Version) -> Supersedes {
+    match new.order.slot.cmp(&old.order.slot) {
+        Ordering::Greater => Supersedes::Yes,
+        Ordering::Less => Supersedes::No,
+        Ordering::Equal => match (new.origin, old.origin) {
+            (Origin::Snapshot, Origin::Stream(_)) => Supersedes::Yes,
+            (_, Origin::Snapshot) => Supersedes::No,
+            (Origin::Stream(a), Origin::Stream(b)) if a.stream == b.stream => {
+                if (a.generation, new.order.write_version) > (b.generation, old.order.write_version)
+                {
+                    Supersedes::Yes
+                } else {
+                    Supersedes::No
+                }
+            }
+            (Origin::Stream(_), Origin::Stream(_)) => Supersedes::Unordered,
+        },
+    }
 }
 
 #[derive(Debug, Default)]
 struct Entry {
-    committed: Option<StoredAccount>,
+    committed: Option<Committed>,
     pending: Vec<Pending>,
 }
 
@@ -129,13 +198,19 @@ impl Entry {
             .iter()
             .max_by_key(|p| p.key())
             .map(|p| &p.account)
-            .or(self.committed.as_ref())
+            .or(self.committed.as_ref().map(|c| &c.account))
+    }
+
+    fn against_committed(&self, new: Version) -> Supersedes {
+        self.committed
+            .as_ref()
+            .map_or(Supersedes::Yes, |c| supersedes(new, c.version()))
     }
 }
 
-/// A replayed or slow update can arrive after its slot was confirmed; a
-/// pending version would then be rolled back by the next confirmation,
-/// canonical or not.
+/// A late transaction group or a slow update can arrive after its slot was
+/// confirmed; a pending version would then be rolled back by the next
+/// confirmation, canonical or not.
 #[derive(Debug, Default)]
 struct Settled {
     upto: Slot,
@@ -185,22 +260,33 @@ impl AccountStore {
         let key = update.pubkey;
         let slot = update.slot;
         let entry = entries.entry(key).or_default();
-        if entry
-            .committed
-            .as_ref()
-            .is_some_and(|c| c.order.slot >= slot)
-        {
-            return Applied::Stale;
-        }
+        let unordered = match entry.against_committed(Version {
+            order: update.order(),
+            origin: Origin::Stream(source),
+        }) {
+            Supersedes::No => return Applied::Stale,
+            Supersedes::Yes => false,
+            Supersedes::Unordered => true,
+        };
+        let stored = |applied| {
+            if unordered {
+                Applied::Unordered
+            } else {
+                applied
+            }
+        };
         if let Some(settled) = settled.get(&scope)
             && slot <= settled.upto
         {
             if !settled.canonical.contains(&slot) {
                 return Applied::Late;
             }
-            entry.committed = Some(update.into());
+            entry.committed = Some(Committed {
+                account: update.into(),
+                origin: Origin::Stream(source),
+            });
             entry.pending.retain(|p| p.account.order.slot > slot);
-            return Applied::Committed;
+            return stored(Applied::Committed);
         }
         // write_version is node-local, so it only orders versions of the
         // same slot that came over the same connection.
@@ -213,7 +299,7 @@ impl AccountStore {
                 return Applied::Stale;
             }
             same.account = update.into();
-            return Applied::Stored;
+            return stored(Applied::Stored);
         }
         entry.pending.push(Pending {
             source,
@@ -221,7 +307,7 @@ impl AccountStore {
         });
         pending_index.entry((scope, slot)).or_default().insert(key);
         if entry.pending.len() <= MAX_PENDING {
-            return Applied::Stored;
+            return stored(Applied::Stored);
         }
         if let Some(oldest) = entry
             .pending
@@ -244,15 +330,21 @@ impl AccountStore {
         account: Option<AccountUpdate>,
     ) -> bool {
         let entry = self.inner.entries.entry(pubkey).or_default();
-        if entry
-            .committed
-            .as_ref()
-            .is_some_and(|c| c.order.slot >= slot)
-        {
+        let account = account.map_or_else(|| StoredAccount::absent(slot), StoredAccount::from);
+        let snapshot = Version {
+            order: UpdateOrder {
+                slot,
+                write_version: WriteVersion::SNAPSHOT,
+            },
+            origin: Origin::Snapshot,
+        };
+        if entry.against_committed(snapshot) != Supersedes::Yes {
             return false;
         }
-        entry.committed =
-            Some(account.map_or_else(|| StoredAccount::absent(slot), StoredAccount::from));
+        entry.committed = Some(Committed {
+            account,
+            origin: Origin::Snapshot,
+        });
         entry.pending.retain(|p| p.account.order.slot > slot);
         true
     }
@@ -300,7 +392,11 @@ impl AccountStore {
                 if resolution.is_canonical(slot) {
                     resolved.promoted += 1;
                     unchecked |= resolution.is_unchecked(slot);
-                    if best.as_ref().is_none_or(|b| p.key() > b.key()) {
+                    let order = best
+                        .as_ref()
+                        .map_or(Supersedes::Yes, |b| supersedes(p.version(), b.version()));
+                    unchecked |= order == Supersedes::Unordered;
+                    if order != Supersedes::No {
                         best = Some(p.clone());
                     }
                 } else {
@@ -308,13 +404,15 @@ impl AccountStore {
                 }
                 false
             });
-            if let Some(best) = best
-                && entry
-                    .committed
-                    .as_ref()
-                    .is_none_or(|c| best.account.order.slot > c.order.slot)
-            {
-                entry.committed = Some(best.account);
+            if let Some(best) = best {
+                let order = entry.against_committed(best.version());
+                unchecked |= order == Supersedes::Unordered;
+                if order != Supersedes::No {
+                    entry.committed = Some(Committed {
+                        account: best.account,
+                        origin: Origin::Stream(best.source),
+                    });
+                }
             }
             if unchecked {
                 resolved.unchecked.push(key);
@@ -373,7 +471,12 @@ impl AccountStore {
 
     #[must_use]
     pub fn committed(&self, pubkey: &Pubkey) -> Option<StoredAccount> {
-        self.inner.entries.get(pubkey)?.committed.clone()
+        self.inner
+            .entries
+            .get(pubkey)?
+            .committed
+            .as_ref()
+            .map(|c| c.account.clone())
     }
 
     /// What the store holds for `pubkey` as of `slot`, if it can tell: the
@@ -381,7 +484,7 @@ impl AccountStore {
     /// version at or below `slot` could still replace it.
     pub(crate) fn settled(&self, pubkey: &Pubkey, slot: Slot) -> Option<StoredAccount> {
         let entry = self.inner.entries.get(pubkey)?;
-        let committed = entry.committed.as_ref()?;
+        let committed = &entry.committed.as_ref()?.account;
         let unsettled = committed.order.slot > slot
             || entry.pending.iter().any(|p| p.account.order.slot <= slot);
         (!unsettled).then(|| committed.clone())
@@ -493,6 +596,45 @@ mod tests {
         assert_eq!(
             data(store.head(&KEY)),
             Some(Bytes::from_static(b"replayed"))
+        );
+    }
+
+    fn confirmed_through_101() -> AccountStore {
+        let mut store = AccountStore::default();
+        let mut tree = SlotTree::default();
+        tree.confirm(Slot(100));
+        confirmed(&mut store, 100, b"base");
+        tree.record_parent(Slot(101), Slot(100), true);
+        store.resolve(SCOPE, &tree.confirm(Slot(101)).unwrap());
+        store
+    }
+
+    #[test]
+    fn late_writes_of_a_confirmed_slot_keep_the_stream_order() {
+        let first: (u64, &'static [u8]) = (5, b"first");
+        let second: (u64, &'static [u8]) = (6, b"second");
+        for writes in [[first, second], [second, first]] {
+            let mut store = confirmed_through_101();
+            for (write_version, data) in writes {
+                store.apply_stream(source(1), update(101, write_version, data));
+            }
+            assert_eq!(
+                data(store.head(&KEY)),
+                Some(Bytes::from_static(b"second")),
+                "{writes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_confirmed_read_holds_every_write_of_its_slot() {
+        let mut store = confirmed_through_101();
+        store.apply_stream(source(1), update(101, 5, b"mid slot"));
+        confirmed(&mut store, 101, b"end of slot");
+        store.apply_stream(source(1), update(101, 6, b"later write"));
+        assert_eq!(
+            data(store.head(&KEY)),
+            Some(Bytes::from_static(b"end of slot"))
         );
     }
 

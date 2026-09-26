@@ -15,7 +15,7 @@ use serde::Serialize;
 use domain::{ChainClock, DexKind, Pubkey};
 use graph::{GraphStats, Topology};
 use grpc::{Conn, Finding, GrpcStatsSnapshot, TraceKind, TraceRow};
-use market::{PoolView, Readiness, StatsSnapshot};
+use market::{PoolView, Readiness, StatsSnapshot, TimingsSnapshot};
 use route::{ProbeReport, RouteStatsSnapshot};
 
 pub fn log_grpc(s: &GrpcStatsSnapshot) {
@@ -53,14 +53,15 @@ pub fn log_stats(s: &StatsSnapshot) {
         gaps = s.gaps,
         gap_keys = s.gap_keys,
         downs = s.downs,
-        resumed = s.resumed,
         rejected = s.rejected,
         rolled_back = s.rolled_back,
         dead_dropped = s.dead_dropped,
         fork_gaps = s.fork_gaps,
         overflowed = s.overflowed,
+        unordered = s.unordered,
         late = s.late,
         txn_orphans = s.txn_orphans,
+        txn_superseded = s.txn_superseded,
         views_published = s.views_published,
         stale = s.stale,
         audited = s.audit_checked,
@@ -68,6 +69,24 @@ pub fn log_stats(s: &StatsSnapshot) {
         dependency_updates = s.dependency_updates,
         pool_updates = %pools,
         "stats"
+    );
+}
+
+pub fn log_engine(s: &TimingsSnapshot) {
+    tracing::info!(
+        events = s.event.count,
+        queued_p50 = ?s.queued.p50,
+        queued_p99 = ?s.queued.p99,
+        queued_max = ?s.queued.max,
+        event_p99 = ?s.event.p99,
+        event_max = ?s.event.max,
+        fetched_p99 = ?s.fetched.p99,
+        fetched_max = ?s.fetched.max,
+        tick_p99 = ?s.tick.p99,
+        tick_max = ?s.tick.max,
+        closures_max = ?s.closures.max,
+        readiness_max = ?s.readiness.max,
+        "engine"
     );
 }
 

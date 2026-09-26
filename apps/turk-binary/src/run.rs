@@ -32,7 +32,7 @@ impl Running {
     async fn start(path: &Path) -> anyhow::Result<Self> {
         let config = config::load(path)?;
         let secrets = config::Secrets::from_env()?;
-        let rpc = Arc::new(RpcGateway::new(secrets.rpc_url, &config.rpc));
+        let rpc = Arc::new(RpcGateway::new(secrets.rpc_url, &config.rpc)?);
 
         let universe = Universe::resolve(&config.universe, &rpc)
             .await
@@ -117,6 +117,7 @@ impl Running {
                 _ = ticker.tick() => {
                     output::log_grpc(&self.grpc.snapshot());
                     output::log_stats(&self.market.stats());
+                    output::log_engine(&self.market.timings());
                     output::log_route(&self.decoding.stats());
                     output::log_graph(&self.topology.stats());
                     output::log_not_ready(&self.reader.pools());
@@ -215,7 +216,7 @@ pub struct TxnProbeArgs<'a> {
 pub async fn txn_probe(path: &Path, args: TxnProbeArgs<'_>) -> anyhow::Result<()> {
     let config = config::load(path)?;
     let secrets = config::Secrets::from_env()?;
-    let rpc = RpcGateway::new(secrets.rpc_url, &config.rpc);
+    let rpc = RpcGateway::new(secrets.rpc_url, &config.rpc)?;
     let universe = Universe::resolve(&config.universe, &rpc)
         .await
         .context("resolving pool universe")?;

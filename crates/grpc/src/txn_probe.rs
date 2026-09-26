@@ -170,7 +170,6 @@ fn pool_request(
         Commitment::Processed,
         limits,
         1,
-        None,
     )?
     .request;
     if record {
@@ -194,7 +193,6 @@ fn shared_request(
         Commitment::Processed,
         limits,
         1,
-        None,
     )?
     .request)
 }

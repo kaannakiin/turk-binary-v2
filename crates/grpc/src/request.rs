@@ -117,7 +117,6 @@ pub(crate) fn build_request(
     commitment: Commitment,
     limits: &Limits,
     seq: u64,
-    from_slot: Option<u64>,
 ) -> Result<Built, LimitViolation> {
     let mut pubkeys: BTreeSet<Pubkey> = groups
         .values()
@@ -176,7 +175,6 @@ pub(crate) fn build_request(
         slots,
         transactions_status,
         commitment: Some(commitment_level(commitment) as i32),
-        from_slot,
         ..SubscribeRequest::default()
     };
     let bytes = request.encoded_len();
@@ -316,7 +314,6 @@ mod tests {
             Commitment::Processed,
             limits,
             1,
-            None,
         )
     }
 
@@ -421,7 +418,6 @@ mod tests {
             Commitment::Processed,
             &LIMITS,
             1,
-            None,
         )
         .unwrap();
         assert!(built.request.slots.is_empty());
@@ -446,13 +442,9 @@ mod tests {
             Commitment::Processed,
             &LIMITS,
             7,
-            Some(99),
         )
         .unwrap();
-        assert_eq!(
-            (built.request.ping, built.request.from_slot),
-            (None, Some(99))
-        );
+        assert_eq!(built.request.ping, None);
     }
 
     #[test]
@@ -468,7 +460,6 @@ mod tests {
             Commitment::Processed,
             &LIMITS,
             42,
-            None,
         )
         .unwrap();
         assert!(

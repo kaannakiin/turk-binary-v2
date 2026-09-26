@@ -51,9 +51,14 @@ impl SyncTable {
         Some(sync.epoch)
     }
 
+    /// A key whose filter is not effective yet stays `Subscribing`: its seed
+    /// has to wait for that filter's own barrier, which can be later.
     pub(crate) fn invalidate(&mut self, key: &Pubkey, barrier: Slot) -> Option<u64> {
         let sync = self.keys.get_mut(key)?;
         sync.epoch += 1;
+        if sync.state == KeyState::Subscribing {
+            return None;
+        }
         sync.state = KeyState::Seeding { barrier };
         Some(sync.epoch)
     }
@@ -128,6 +133,17 @@ mod tests {
         let mut table = seeding();
         let epoch = table.invalidate(&KEY, Slot(20)).unwrap();
         assert!(table.seeded(&KEY, epoch));
+    }
+
+    #[test]
+    fn a_gap_before_the_filter_is_effective_leaves_the_seed_to_the_filters_barrier() {
+        let mut table = SyncTable::default();
+        table.track(KEY);
+        table.invalidate(&KEY, Slot(20));
+        assert!(
+            table.effective(&KEY, Slot(30)).is_some()
+                && table.state(&KEY) == Some(KeyState::Seeding { barrier: Slot(30) })
+        );
     }
 
     #[test]

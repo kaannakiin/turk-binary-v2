@@ -20,7 +20,7 @@ pub use partition::{Market, pipeline_threads};
 pub use ports::{AccountSource, HubPort};
 pub use readiness::{Readiness, Reason};
 pub use sink::ViewSink;
-pub use stats::{Stats, StatsSnapshot};
+pub use stats::{Stats, StatsSnapshot, TimingsSnapshot};
 pub use store::{AccountStore, StoredAccount};
 pub use universe::{PoolInfo, Universe, UniverseConfig, effective_dexes};
 pub use view::{MarketReader, PoolChanged, PoolView};

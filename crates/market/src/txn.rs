@@ -1,41 +1,67 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use domain::{AccountUpdate, Slot, TxnSignature};
+use domain::{AccountUpdate, Pubkey, Slot, TxnSignature};
 use grpc::StreamId;
 
 use crate::store::Source;
 
 type GroupId = (Source, Slot, TxnSignature);
 
+// Agave replays sibling forks in parallel, so the next slot on a stream does
+// not yet prove an older slot finished.
+const PROGRESS_SLOTS: u64 = 2;
+
 struct Held {
     opened: Instant,
     updates: Vec<AccountUpdate>,
 }
 
-/// Holds a transaction's account writes until its status closes the group,
+/// Holds a transaction's account writes until they are known to be complete,
 /// so a pool never shows one vault after the swap and the other before it.
+///
+/// A group is complete once its status arrives, once a later write hits one
+/// of its keys, or once its stream is `PROGRESS_SLOTS` past its slot. Agave
+/// notifies every account write of a batch during commit, before the batch
+/// releases its locks, so a conflicting transaction cannot write before them.
+// src: anza-xyz/agave@825efd18292aff6ffcf9daa0f7612f21b3531a72 runtime/src/bank.rs (commit_transactions)
+// src: anza-xyz/agave@825efd18292aff6ffcf9daa0f7612f21b3531a72 accounts-db/src/accounts.rs (_store_accounts)
+// src: anza-xyz/agave@825efd18292aff6ffcf9daa0f7612f21b3531a72 runtime/src/transaction_batch.rs (Drop)
 #[derive(Default)]
 pub(crate) struct TxnBuffer {
     groups: HashMap<GroupId, Held>,
+    holder: HashMap<Pubkey, GroupId>,
     held: usize,
 }
 
 pub(crate) type Released = Vec<(Source, Vec<AccountUpdate>)>;
 
+pub(crate) struct Hold {
+    /// The open group that last wrote the same key; complete, and applied
+    /// before the new write.
+    pub superseded: Option<(Source, Vec<AccountUpdate>)>,
+    /// The write itself when no transaction status will close it.
+    pub unheld: Option<AccountUpdate>,
+}
+
 impl TxnBuffer {
-    /// Hands `update` back when no transaction status will close it.
-    pub(crate) fn hold(
-        &mut self,
-        source: Source,
-        update: AccountUpdate,
-        now: Instant,
-    ) -> Option<AccountUpdate> {
-        let Some(signature) = update.txn else {
-            return Some(update);
+    pub(crate) fn hold(&mut self, source: Source, update: AccountUpdate, now: Instant) -> Hold {
+        let own = update.txn.map(|signature| (source, update.slot, signature));
+        let superseded = self
+            .holder
+            .get(&update.pubkey)
+            .copied()
+            .filter(|id| Some(*id) != own)
+            .and_then(|id| Some((id.0, self.remove(&id)?)));
+        let Some(id) = own else {
+            return Hold {
+                superseded,
+                unheld: Some(update),
+            };
         };
+        self.holder.insert(update.pubkey, id);
         self.groups
-            .entry((source, update.slot, signature))
+            .entry(id)
             .or_insert_with(|| Held {
                 opened: now,
                 updates: Vec::new(),
@@ -43,7 +69,10 @@ impl TxnBuffer {
             .updates
             .push(update);
         self.held += 1;
-        None
+        Hold {
+            superseded,
+            unheld: None,
+        }
     }
 
     pub(crate) fn commit(
@@ -52,20 +81,15 @@ impl TxnBuffer {
         slot: Slot,
         signature: TxnSignature,
     ) -> Vec<AccountUpdate> {
-        self.groups
-            .remove(&(source, slot, signature))
-            .map(|held| self.release(held))
-            .unwrap_or_default()
+        self.remove(&(source, slot, signature)).unwrap_or_default()
     }
 
-    pub(crate) fn expired(&mut self, now: Instant, wait: Duration) -> Released {
-        self.take(|_, held| now.duration_since(held.opened) >= wait)
+    pub(crate) fn advanced(&mut self, stream: StreamId, slot: Slot) -> Released {
+        self.take(|id, _| id.0.stream == stream && id.1.0.saturating_add(PROGRESS_SLOTS) <= slot.0)
     }
 
-    /// A group still open when its slot is confirmed would land below the
-    /// confirmation; it goes out first.
-    pub(crate) fn through(&mut self, slot: Slot) -> Released {
-        self.take(|id, _| id.1 <= slot)
+    pub(crate) fn expired(&mut self, now: Instant, max_hold: Duration) -> Released {
+        self.take(|_, held| now.duration_since(held.opened) >= max_hold)
     }
 
     pub(crate) fn all(&mut self) -> Released {
@@ -73,11 +97,19 @@ impl TxnBuffer {
     }
 
     pub(crate) fn discard(&mut self, stream: StreamId) {
-        let before = self.groups.len();
-        self.groups.retain(|id, _| id.0.stream != stream);
-        if self.groups.len() != before {
-            self.held = self.groups.values().map(|h| h.updates.len()).sum();
+        let ids: Vec<GroupId> = self
+            .groups
+            .keys()
+            .filter(|id| id.0.stream == stream)
+            .copied()
+            .collect();
+        for id in ids {
+            self.remove(&id);
         }
+    }
+
+    pub(crate) fn holds(&self, key: &Pubkey, slot: Slot) -> bool {
+        self.holder.get(key).is_some_and(|id| id.1 <= slot)
     }
 
     pub(crate) const fn held(&self) -> usize {
@@ -93,10 +125,7 @@ impl TxnBuffer {
             .collect();
         let mut released: Vec<(Source, Slot, Vec<AccountUpdate>)> = ids
             .into_iter()
-            .filter_map(|id| {
-                let held = self.groups.remove(&id)?;
-                Some((id.0, id.1, self.release(held)))
-            })
+            .filter_map(|id| Some((id.0, id.1, self.remove(&id)?)))
             .collect();
         released
             .sort_by_key(|(_, slot, updates)| (*slot, updates.first().map(|u| u.write_version)));
@@ -106,9 +135,15 @@ impl TxnBuffer {
             .collect()
     }
 
-    fn release(&mut self, held: Held) -> Vec<AccountUpdate> {
+    fn remove(&mut self, id: &GroupId) -> Option<Vec<AccountUpdate>> {
+        let held = self.groups.remove(id)?;
+        for update in &held.updates {
+            if self.holder.get(&update.pubkey) == Some(id) {
+                self.holder.remove(&update.pubkey);
+            }
+        }
         self.held -= held.updates.len();
-        held.updates
+        Some(held.updates)
     }
 }
 
@@ -177,7 +212,13 @@ mod tests {
                         lamports: f[6].parse().unwrap(),
                         data: Bytes::from(hex(f[7])),
                     };
-                    buffer.hold(SHARD, update, now).into_iter().collect()
+                    let hold = buffer.hold(SHARD, update, now);
+                    hold.superseded
+                        .map(|(_, updates)| updates)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .chain(hold.unheld)
+                        .collect()
                 }
                 "status" => {
                     buffer.commit(SHARD, Slot(f[1].parse().unwrap()), signature(f[2]).unwrap())
@@ -231,12 +272,48 @@ mod tests {
     }
 
     #[test]
-    fn an_open_group_is_released_before_its_slot_is_confirmed() {
+    fn a_later_write_to_a_held_key_releases_the_whole_older_group_first() {
         let mut buffer = TxnBuffer::default();
         let now = Instant::now();
-        buffer.hold(SHARD, write(10, 1), now);
-        buffer.hold(SHARD, write(11, 2), now);
-        assert_eq!(held_slots(&buffer.through(Slot(10))), [10]);
+        let vault = write(10, 1);
+        let other_vault = write(10, 1);
+        buffer.hold(SHARD, vault.clone(), now);
+        buffer.hold(SHARD, other_vault.clone(), now);
+        let hold = buffer.hold(
+            SHARD,
+            AccountUpdate {
+                txn: Some(TxnSignature([2; 64])),
+                ..vault.clone()
+            },
+            now,
+        );
+        let released: Vec<Pubkey> = hold
+            .superseded
+            .into_iter()
+            .flat_map(|(_, updates)| updates)
+            .map(|u| u.pubkey)
+            .collect();
+        assert_eq!(
+            (released, hold.unheld.is_none(), buffer.held()),
+            (vec![vault.pubkey, other_vault.pubkey], true, 1)
+        );
+    }
+
+    #[test]
+    fn a_group_is_released_once_its_own_stream_is_two_slots_past_it() {
+        for (stream, slot, released) in [
+            (StreamId::Shard(0), 11, false),
+            (StreamId::Shard(1), 12, false),
+            (StreamId::Shard(0), 12, true),
+        ] {
+            let mut buffer = TxnBuffer::default();
+            buffer.hold(SHARD, write(10, 1), Instant::now());
+            assert_eq!(
+                held_slots(&buffer.advanced(stream, Slot(slot))) == [10],
+                released,
+                "{stream:?} at {slot}"
+            );
+        }
     }
 
     #[test]

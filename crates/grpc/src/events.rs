@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::time::Instant;
 
 use domain::{AccountFilter, AccountUpdate, Pubkey, Slot, TxnSignature};
 use yellowstone_grpc_proto::prelude::SlotStatus as ProtoSlotStatus;
@@ -61,16 +62,6 @@ impl From<i32> for SlotStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GapReason {
-    /// Replay is off in config, or was turned off after the server refused it.
-    ReplayDisabled,
-    ReplayUnsupported,
-    ReplayOutOfRange,
-    /// The server accepted `from_slot` but resumed later than asked.
-    ReplaySkipped,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LimitViolation {
     Pubkeys {
@@ -92,6 +83,14 @@ pub enum LimitViolation {
     },
 }
 
+/// An event with the time its stream handed it over, so the partition can
+/// see how long it sat in the queue.
+#[derive(Debug, Clone)]
+pub struct Stamped {
+    pub sent: Instant,
+    pub event: StreamEvent,
+}
+
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     /// `write_version` is node-local: it orders updates only within one
@@ -106,6 +105,12 @@ pub enum StreamEvent {
         slot: Slot,
         parent: Option<Slot>,
         status: SlotStatus,
+    },
+    /// A Clock write on a stream that does not forward the Clock: the
+    /// stream has reached `slot`.
+    Heartbeat {
+        stream: StreamId,
+        slot: Slot,
     },
     /// Every account write of `signature` on this stream was sent before it.
     TxnCommitted {
@@ -128,25 +133,15 @@ pub enum StreamEvent {
         stream: StreamId,
         generation: u64,
     },
-    /// A reconnect replayed what it missed, up to `at`. The plugin replays
-    /// only sealed slots and drops live writes until the new filters apply,
-    /// so writes to `keys` in the slot that was executing across the
-    /// reconnect may still be missing.
-    Resumed {
-        stream: StreamId,
-        generation: u64,
-        from_slot: Slot,
-        at: Slot,
-        keys: Vec<Pubkey>,
-    },
-    /// A reconnect could not replay what it missed. Every key and filter of
-    /// the stream may be stale; `since` is the last slot seen before the drop.
+    /// A reconnect: whatever was written while the stream was down is
+    /// missing, so every key and filter of the stream may be stale. The new
+    /// connection streams writes from `effective` on, a slot it delivered
+    /// itself; `since` is the last slot seen before the drop.
     Gap {
         stream: StreamId,
         generation: u64,
         since: Option<Slot>,
         effective: Slot,
-        reason: GapReason,
         keys: Vec<Pubkey>,
         filters: Vec<AccountFilter>,
     },

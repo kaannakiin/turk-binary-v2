@@ -41,7 +41,6 @@ recv_timeout_ms = 10000
 max_message_delay_ms = 10000
 connect_timeout_ms = 10000
 filter_flush_ms = 200
-replay = true
 
 [grpc.reconnect]
 max_attempts = 0           # 0 = retry forever
@@ -53,7 +52,7 @@ settle_slots = 4
 repair_concurrency = 2
 audit_interval_ms = 10000
 stream_swap_accounts = true
-txn_wait_ms = 400
+txn_max_hold_ms = 5000
 
 [route]
 probe_amount = 1000000    # watch quotes this raw amount both ways through every pool each stats tick; 0 = off

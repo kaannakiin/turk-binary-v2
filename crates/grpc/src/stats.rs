@@ -22,7 +22,7 @@ pub struct GrpcStatsSnapshot {
     pub statuses: u64,
     pub slots: u64,
     /// From the plugin first seeing an account or block update to its
-    /// arrival here; a replay catching up is left out.
+    /// arrival here.
     pub lag: LatencySnapshot,
     /// Time a stream waited to hand an event to its partition.
     pub blocked: LatencySnapshot,
@@ -39,8 +39,8 @@ impl GrpcStats {
             accounts: load(&stats.accounts),
             statuses: load(&stats.statuses),
             slots: load(&stats.slots),
-            lag: stats.lag.snapshot(),
-            blocked: stats.blocked.snapshot(),
+            lag: stats.lag.take_interval(),
+            blocked: stats.blocked.take_interval(),
             queued_peak: stats.queued_peak.swap(0, Ordering::Relaxed),
         }
     }

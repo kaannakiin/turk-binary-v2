@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, oneshot};
 
 use crate::engine::{Engine, SyncSettings};
 use crate::ports::AccountSource;
-use crate::stats::{Stats, StatsSnapshot};
+use crate::stats::{Stats, StatsSnapshot, Timings, TimingsSnapshot};
 use crate::view::{MarketReader, Snapshots};
 use crate::{MarketError, Universe, ViewSink};
 
@@ -18,6 +18,7 @@ use crate::{MarketError, Universe, ViewSink};
 pub struct Market {
     reader: MarketReader,
     stats: Vec<Arc<Stats>>,
+    timings: Arc<Timings>,
     stopped: Vec<oneshot::Receiver<Result<(), MarketError>>>,
 }
 
@@ -50,6 +51,7 @@ impl Market {
     ) -> Result<Self, MarketError> {
         let snapshots = Arc::new(Snapshots::default());
         let changes = broadcast::channel(4_096).0;
+        let timings = Arc::new(Timings::default());
         let mut stats = Vec::new();
         let mut stopped = Vec::new();
         for (
@@ -77,7 +79,7 @@ impl Market {
                 settings.clone(),
                 global_tree,
             );
-            engine.share_output(&snapshots, &changes);
+            engine.share_output(&snapshots, &changes, &timings);
             engine.set_sink(sinks(i));
             stats.push(engine.stats());
             let (done, stop) = oneshot::channel();
@@ -106,6 +108,7 @@ impl Market {
         Ok(Self {
             reader: MarketReader { snapshots, changes },
             stats,
+            timings,
             stopped,
         })
     }
@@ -119,6 +122,12 @@ impl Market {
     pub fn stats(&self) -> StatsSnapshot {
         let parts: Vec<StatsSnapshot> = self.stats.iter().map(|s| s.snapshot()).collect();
         StatsSnapshot::merge(&parts)
+    }
+
+    /// Engine step times since the previous call, over every partition.
+    #[must_use]
+    pub fn timings(&self) -> TimingsSnapshot {
+        self.timings.take_interval()
     }
 
     /// Resolves when a partition stops, with its result. Dropping the
@@ -153,6 +162,7 @@ mod tests {
                 changes: broadcast::channel(1).0,
             },
             stats: Vec::new(),
+            timings: Arc::default(),
             stopped: vec![stop],
         };
         let abandoned =

@@ -14,7 +14,7 @@ mod txn_probe;
 
 pub use error::GrpcError;
 pub use events::{
-    GapReason, Group, GroupChange, GroupKey, LimitViolation, Placement, SlotStatus, StreamEvent,
+    Group, GroupChange, GroupKey, LimitViolation, Placement, SlotStatus, Stamped, StreamEvent,
     StreamId,
 };
 pub use hub::{GeyserHub, HubHandle, Partition, Spawned, Streams};

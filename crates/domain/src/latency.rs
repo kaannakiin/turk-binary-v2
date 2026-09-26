@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 const SUB_BITS: u32 = 3;
@@ -7,10 +8,11 @@ const GROUPS: usize = 64 - SUB_BITS as usize + 1;
 
 /// Latencies in log-linear buckets: every power of two is split into eight,
 /// so a reported quantile is at most 12.5% above the true one. Any number of
-/// threads record at once without a lock.
+/// threads record at once without a lock; one reader takes intervals.
 pub struct LatencyHistogram {
     buckets: Box<[AtomicU64]>,
     max: AtomicU64,
+    taken: Mutex<Box<[u64]>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -26,6 +28,7 @@ impl Default for LatencyHistogram {
         Self {
             buckets: (0..GROUPS * SUB).map(|_| AtomicU64::new(0)).collect(),
             max: AtomicU64::new(0),
+            taken: Mutex::new(vec![0; GROUPS * SUB].into_boxed_slice()),
         }
     }
 }
@@ -37,17 +40,27 @@ impl LatencyHistogram {
         self.max.fetch_max(nanos, Ordering::Relaxed);
     }
 
+    /// Everything recorded since the previous call.
     #[must_use]
-    pub fn snapshot(&self) -> LatencySnapshot {
+    pub fn take_interval(&self) -> LatencySnapshot {
+        let mut taken = self.taken.lock().unwrap_or_else(PoisonError::into_inner);
+        let max = self.max.swap(0, Ordering::Relaxed);
         let counts: Vec<u64> = self
             .buckets
             .iter()
-            .map(|b| b.load(Ordering::Relaxed))
+            .zip(taken.iter_mut())
+            .map(|(bucket, taken)| {
+                let now = bucket.load(Ordering::Relaxed);
+                let delta = now.saturating_sub(*taken);
+                *taken = now;
+                delta
+            })
             .collect();
         let count = counts.iter().sum();
-        let max = self.max.load(Ordering::Relaxed);
-        let quantile =
-            |per_mille: u64| Duration::from_nanos(quantile(&counts, count, per_mille).min(max));
+        let quantile = |per_mille: u64| {
+            let q = quantile(&counts, count, per_mille);
+            Duration::from_nanos(if max == 0 { q } else { q.min(max) })
+        };
         LatencySnapshot {
             count,
             p50: quantile(500),
@@ -104,7 +117,7 @@ mod tests {
         for micros in 1..=1_000 {
             histogram.record(Duration::from_micros(micros));
         }
-        let snapshot = histogram.snapshot();
+        let snapshot = histogram.take_interval();
         let within = |got: Duration, want: Duration| got >= want && got <= want + want / 8;
         assert_eq!(snapshot.count, 1_000);
         assert!(
@@ -116,5 +129,22 @@ mod tests {
             "{snapshot:?}"
         );
         assert_eq!(snapshot.max, Duration::from_micros(1_000));
+    }
+
+    #[test]
+    fn an_interval_reports_only_what_was_recorded_since_the_previous_one() {
+        let histogram = LatencyHistogram::default();
+        for _ in 0..100 {
+            histogram.record(Duration::from_millis(500));
+        }
+        let _ = histogram.take_interval();
+        for _ in 0..100 {
+            histogram.record(Duration::from_micros(10));
+        }
+        let snapshot = histogram.take_interval();
+        assert!(
+            snapshot.count == 100 && snapshot.max == Duration::from_micros(10),
+            "{snapshot:?}"
+        );
     }
 }

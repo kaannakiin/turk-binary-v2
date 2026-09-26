@@ -2,8 +2,7 @@
 //! AMM pool; a fresh `VenueState` fed the same bytes is the oracle for what
 //! the decoder's incremental decode must reach.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -17,16 +16,10 @@ use quoter::{AccountRef, QuoteInput, VenueState};
 
 use crate::{Decoder, Decoding, PoolFeed, Quote, QuoteReader, RouteError};
 
-#[derive(Clone, Default)]
-struct FakeFeed {
-    views: Arc<Mutex<HashMap<Pubkey, Arc<PoolView>>>>,
-}
+#[derive(Clone)]
+struct FakeFeed;
 
 impl PoolFeed for FakeFeed {
-    fn pool_view(&self, pool: &Pubkey) -> Option<Arc<PoolView>> {
-        self.views.lock().expect("views").get(pool).cloned()
-    }
-
     fn clock(&self) -> Option<ChainClock> {
         Some(ChainClock {
             slot: Slot(437_000_000),
@@ -176,7 +169,7 @@ struct Rig {
 fn rig(pools: &[(Pubkey, DexKind)]) -> Rig {
     let topology = topology_of(pools);
     let mut decoding = Decoding::new(Arc::clone(&topology));
-    let feed = FakeFeed::default();
+    let feed = FakeFeed;
     Rig {
         decoder: decoding.decoder(),
         reader: decoding.reader(feed.clone()),
@@ -186,15 +179,8 @@ fn rig(pools: &[(Pubkey, DexKind)]) -> Rig {
 }
 
 impl Rig {
-    /// In the market's order: the decoder sees a view before readers can.
     fn publish(&mut self, view: PoolView) {
-        let view = Arc::new(view);
-        self.decoder.publish(&view);
-        self.feed
-            .views
-            .lock()
-            .expect("views")
-            .insert(view.pool, view);
+        self.decoder.publish(&Arc::new(view));
     }
 
     fn quote(&self, pool: &Pubkey) -> Result<Quote, RouteError> {
@@ -245,18 +231,6 @@ fn a_pool_that_stops_being_ready_is_refused() {
         Err(RouteError::NotReady(Reason::Syncing))
     ));
     assert!(!rig.active(&recorded.pool));
-}
-
-#[test]
-fn a_view_the_decoder_has_not_seen_is_refused_as_stale() {
-    let recorded = recorded();
-    let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);
-    rig.publish(view(&recorded, Readiness::Ready, 50));
-    rig.feed.views.lock().expect("views").insert(
-        recorded.pool,
-        Arc::new(view(&recorded, Readiness::Ready, 51)),
-    );
-    assert!(matches!(rig.quote(&recorded.pool), Err(RouteError::Stale)));
 }
 
 #[test]

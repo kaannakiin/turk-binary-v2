@@ -193,7 +193,7 @@ impl Decoding {
     pub fn stats(&self) -> RouteStatsSnapshot {
         let parts: Vec<RouteStatsSnapshot> = self.stats.iter().map(|s| s.snapshot()).collect();
         RouteStatsSnapshot {
-            decode: self.decode.snapshot(),
+            decode: self.decode.take_interval(),
             ..RouteStatsSnapshot::merge(&parts)
         }
     }

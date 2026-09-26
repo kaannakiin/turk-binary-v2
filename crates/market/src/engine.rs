@@ -6,7 +6,7 @@ use bytes::Bytes;
 use dex::{Dependency, PoolAccount, Presence, Role};
 use domain::chain::CLOCK_SYSVAR;
 use domain::{AccountUpdate, ChainClock, DexKind, Pubkey, RetryPolicy, Slot};
-use grpc::{GroupKey, Placement, SlotStatus, StreamEvent, StreamId};
+use grpc::{GroupKey, Placement, SlotStatus, Stamped, StreamEvent, StreamId};
 use rpc::RpcError;
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
@@ -18,7 +18,7 @@ use crate::ports::{AccountSource, HubPort};
 use crate::readiness::{Inputs, Readiness, Reason, evaluate};
 use crate::repair::{Priority, RepairQueue, Ticket};
 use crate::sink::{NoSink, ViewSink};
-use crate::stats::{Counter, Stats};
+use crate::stats::{Counter, Stats, Timings};
 use crate::store::{AccountStore, Applied, Source, StoredAccount, TreeScope};
 use crate::sync::{KeyState, SyncTable};
 use crate::txn::{Released, TxnBuffer};
@@ -38,7 +38,7 @@ pub struct SyncSettings {
     pub audit_interval_ms: u64,
     pub stream_swap_accounts: bool,
     pub tick_ms: u64,
-    pub txn_wait_ms: u64,
+    pub txn_max_hold_ms: u64,
 }
 
 impl Default for SyncSettings {
@@ -55,7 +55,7 @@ impl Default for SyncSettings {
             audit_interval_ms: 10_000,
             stream_swap_accounts: true,
             tick_ms: 50,
-            txn_wait_ms: 400,
+            txn_max_hold_ms: 5_000,
         }
     }
 }
@@ -91,6 +91,7 @@ pub struct Engine<S, H> {
     settings: SyncSettings,
     store: AccountStore,
     stats: Arc<Stats>,
+    timings: Arc<Timings>,
     table: PoolTable,
     snapshots: Arc<Snapshots>,
     changes: broadcast::Sender<PoolChanged>,
@@ -113,9 +114,9 @@ pub struct Engine<S, H> {
     fetched_rx: mpsc::Receiver<Fetched>,
     txns: TxnBuffer,
     batch: Option<BTreeMap<Pubkey, Slot>>,
-    /// Keys read again after a replayed reconnect; a read that changes one
-    /// found a write the replay missed.
-    tail_repairs: HashSet<Pubkey>,
+    /// Streams between a drop and the `Gap` of their new connection: up again
+    /// but not re-read, so their pools are not ready.
+    reconnecting: HashSet<StreamId>,
     sink: Box<dyn ViewSink>,
 }
 
@@ -149,6 +150,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             hub,
             store: AccountStore::new(global_tree),
             stats: Arc::default(),
+            timings: Arc::default(),
             table: PoolTable::new(),
             snapshots: Arc::default(),
             changes: broadcast::channel(4_096).0,
@@ -171,7 +173,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             fetched_rx,
             txns: TxnBuffer::default(),
             batch: None,
-            tail_repairs: HashSet::new(),
+            reconnecting: HashSet::new(),
             sink: Box::new(NoSink),
             settings,
         }
@@ -181,9 +183,11 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         &mut self,
         snapshots: &Arc<Snapshots>,
         changes: &broadcast::Sender<PoolChanged>,
+        timings: &Arc<Timings>,
     ) {
         self.snapshots = Arc::clone(snapshots);
         self.changes = changes.clone();
+        self.timings = Arc::clone(timings);
     }
 
     pub(crate) fn set_sink(&mut self, sink: Box<dyn ViewSink>) {
@@ -203,10 +207,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         Arc::clone(&self.stats)
     }
 
-    pub async fn run(
-        mut self,
-        events: &mut mpsc::Receiver<StreamEvent>,
-    ) -> Result<(), MarketError> {
+    pub async fn run(mut self, events: &mut mpsc::Receiver<Stamped>) -> Result<(), MarketError> {
         self.on_tick()?;
         let mut tick = interval(self.settings.tick_ms.max(1));
         let mut audit = (self.settings.audit_interval_ms > 0)
@@ -214,10 +215,19 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         loop {
             tokio::select! {
                 biased;
-                Some(fetched) = self.fetched_rx.recv() => self.on_fetched(fetched),
+                Some(fetched) = self.fetched_rx.recv() => {
+                    let started = Instant::now();
+                    self.on_fetched(fetched);
+                    self.timings.fetched.record(started.elapsed());
+                }
                 _ = tick.tick() => self.on_tick()?,
                 event = events.recv() => match event {
-                    Some(event) => self.on_event(event),
+                    Some(Stamped { sent, event }) => {
+                        let started = Instant::now();
+                        self.timings.queued.record(started.saturating_duration_since(sent));
+                        self.on_event(event);
+                        self.timings.event.record(started.elapsed());
+                    }
                     None => return Err(MarketError::StreamClosed),
                 },
                 () = next_tick(audit.as_mut()) => self.start_audit(),
@@ -248,6 +258,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                 parent,
                 status,
             } => self.on_slot(stream, slot, parent, status),
+            StreamEvent::Heartbeat { stream, slot } => self.stream_advanced(stream, slot),
             StreamEvent::Effective {
                 stream,
                 slot,
@@ -267,6 +278,9 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                 self.stats.add(Counter::Downs, 1);
                 self.txns.discard(stream);
                 self.set_up(stream, false);
+                if stream != StreamId::SlotFeed {
+                    self.reconnecting.insert(stream);
+                }
                 let scope = match (self.global_tree, stream) {
                     (false, _) => Some(TreeScope::Stream(stream)),
                     (true, StreamId::SlotFeed) => Some(TreeScope::Global),
@@ -276,37 +290,35 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                     tree.restart();
                 }
             }
-            StreamEvent::Resumed { at, keys, .. } => {
-                self.stats.add(Counter::Resumed, 1);
-                let barrier = Slot(at.0 + self.settings.settle_slots);
-                for key in keys {
-                    if let Some(epoch) = self.sync.epoch(&key) {
-                        self.repair.want(key, barrier, epoch, self.priority(&key));
-                        self.tail_repairs.insert(key);
-                    }
-                }
-            }
             StreamEvent::Gap {
                 stream,
                 effective,
-                reason,
                 keys,
                 ..
             } => {
                 tracing::warn!(
                     ?stream,
-                    ?reason,
                     keys = keys.len(),
-                    "grpc gap, re-reading the stream's accounts"
+                    "grpc reconnect, re-reading the stream's accounts"
                 );
                 self.stats.add(Counter::Gaps, 1);
                 self.txns.discard(stream);
                 self.stats.add(Counter::GapKeys, keys.len());
                 self.set_up(stream, true);
+                if self.reconnecting.remove(&stream) {
+                    self.all_dirty = true;
+                }
                 let barrier = Slot(effective.0 + self.settings.settle_slots);
+                // Every pool of the partition waits on the shared stream.
+                let shared = matches!(stream, StreamId::Shared(_));
                 for key in keys {
                     if let Some(epoch) = self.sync.invalidate(&key, barrier) {
-                        self.repair.want(key, barrier, epoch, self.priority(&key));
+                        let priority = if shared {
+                            Priority::Structural
+                        } else {
+                            self.priority(&key)
+                        };
+                        self.repair.want(key, barrier, epoch, priority);
                         self.mark_ready(&key);
                     }
                 }
@@ -332,13 +344,27 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             self.on_account(source, update);
             return;
         }
-        if let Some(update) = self.txns.hold(source, update, Instant::now()) {
+        let hold = self.txns.hold(source, update, Instant::now());
+        if let Some((held_by, updates)) = hold.superseded {
+            self.stats.add(Counter::TxnSuperseded, 1);
+            self.apply_group(held_by, updates);
+        }
+        if let Some(update) = hold.unheld {
             self.on_account(source, update);
         }
         if self.txns.held() > MAX_HELD_WRITES {
             let released = self.txns.all();
+            tracing::warn!(
+                groups = released.len(),
+                "too many held transaction writes; applying them all"
+            );
             self.release_orphans(released);
         }
+    }
+
+    fn stream_advanced(&mut self, stream: StreamId, slot: Slot) {
+        let released = self.txns.advanced(stream, slot);
+        self.release_orphans(released);
     }
 
     fn apply_group(&mut self, source: Source, updates: Vec<AccountUpdate>) {
@@ -367,6 +393,9 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
     }
 
     fn release_orphans(&mut self, released: Released) {
+        if released.is_empty() {
+            return;
+        }
         self.stats.add(Counter::TxnOrphans, released.len());
         for (source, updates) in released {
             self.apply_group(source, updates);
@@ -394,7 +423,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                 }
                 return;
             }
-            Applied::Overflowed => {
+            Applied::Overflowed | Applied::Unordered => {
                 if let Some(epoch) = self.sync.epoch(&key) {
                     self.repair.want(key, slot, epoch, self.priority(&key));
                 }
@@ -409,9 +438,13 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
     }
 
     fn on_slot(&mut self, stream: StreamId, slot: Slot, parent: Option<Slot>, status: SlotStatus) {
-        if matches!(status, SlotStatus::Confirmed | SlotStatus::Finalized) {
-            let released = self.txns.through(slot);
-            self.release_orphans(released);
+        // Shreds of a later slot arrive while an older one still executes;
+        // only a frozen bank shows this stream is past `slot`.
+        if matches!(
+            status,
+            SlotStatus::Processed | SlotStatus::Confirmed | SlotStatus::Finalized
+        ) {
+            self.stream_advanced(stream, slot);
         }
         let scope = if self.global_tree {
             TreeScope::Global
@@ -460,18 +493,30 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
     }
 
     fn on_tick(&mut self) -> Result<(), MarketError> {
+        let started = Instant::now();
         let released = self.txns.expired(
-            Instant::now(),
-            Duration::from_millis(self.settings.txn_wait_ms),
+            started,
+            Duration::from_millis(self.settings.txn_max_hold_ms),
         );
+        if !released.is_empty() {
+            tracing::warn!(
+                groups = released.len(),
+                "transaction writes held past txn_max_hold_ms; applying them"
+            );
+        }
         self.release_orphans(released);
+        let closures = Instant::now();
         self.refresh_closures()?;
+        self.timings.closures.record(closures.elapsed());
         self.dispatch_repairs();
+        let readiness = Instant::now();
         self.refresh_readiness();
+        self.timings.readiness.record(readiness.elapsed());
         self.stats.set(Counter::Keys, self.index.len());
         self.stats
             .set(Counter::RepairBacklog, self.repair.backlog());
         self.sink.on_tick();
+        self.timings.tick.record(started.elapsed());
         Ok(())
     }
 
@@ -589,17 +634,8 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                     continue;
                 }
                 let before = engine.before(key);
-                let repairing = engine
-                    .tail_repairs
-                    .remove(key)
-                    .then(|| engine.store.head(key));
                 engine.store.apply_confirmed(*key, slot, account);
                 engine.stats.add(Counter::AccountsSeeded, 1);
-                if let Some(prior) = repairing
-                    && !same_state(prior.as_ref(), engine.store.head(key).as_ref())
-                {
-                    engine.stats.add(Counter::ReplayRepaired, 1);
-                }
                 if engine.sync.seeded(key, epoch) {
                     engine.mark_ready(key);
                 }
@@ -653,7 +689,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
 
     fn apply_audit(&mut self, keys: &[Pubkey], slot: Slot, accounts: Vec<Option<AccountUpdate>>) {
         for (key, account) in keys.iter().zip(accounts) {
-            if !self.stream_confirmed(key, slot) {
+            if self.txns.holds(key, slot) || !self.stream_confirmed(key, slot) {
                 continue;
             }
             let Some(stored) = self.store.settled(key, slot) else {
@@ -933,7 +969,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
     }
 
     fn is_up(&self, stream: StreamId) -> bool {
-        self.up.get(&stream).copied().unwrap_or(false)
+        self.up.get(&stream).copied().unwrap_or(false) && !self.reconnecting.contains(&stream)
     }
 }
 
@@ -953,14 +989,6 @@ fn changed(
     ranges
         .iter()
         .any(|r| old.data.get(r.clone()) != new.data.get(r.clone()))
-}
-
-fn same_state(a: Option<&StoredAccount>, b: Option<&StoredAccount>) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => a.owner == b.owner && a.lamports == b.lamports && a.data == b.data,
-        (None, None) => true,
-        _ => false,
-    }
 }
 
 fn interval(ms: u64) -> Interval {

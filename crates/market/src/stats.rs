@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use domain::{DexKind, Slot};
+use domain::{DexKind, LatencyHistogram, LatencySnapshot, Slot};
 
 use crate::store::{Applied, Resolved};
 
@@ -55,6 +55,7 @@ counters!(
     dependency_updates,
     stale,
     overflowed,
+    unordered,
     late,
     last_slot,
     confirmed_slot,
@@ -62,7 +63,6 @@ counters!(
     dead_dropped,
     fork_gaps,
     downs,
-    resumed,
     gaps,
     gap_keys,
     rejected,
@@ -76,8 +76,8 @@ counters!(
     pools_not_ready,
     repair_backlog,
     txn_orphans,
+    txn_superseded,
     views_published,
-    replay_repaired,
 );
 
 impl Stats {
@@ -93,6 +93,9 @@ impl Stats {
             }
             Applied::Overflowed => {
                 self.overflowed.fetch_add(1, Ordering::Relaxed);
+            }
+            Applied::Unordered => {
+                self.unordered.fetch_add(1, Ordering::Relaxed);
             }
             Applied::Stored | Applied::Committed => {}
         }
@@ -125,7 +128,6 @@ impl Stats {
         match counter {
             Counter::DeadDropped => &self.dead_dropped,
             Counter::Downs => &self.downs,
-            Counter::Resumed => &self.resumed,
             Counter::Gaps => &self.gaps,
             Counter::GapKeys => &self.gap_keys,
             Counter::Rejected => &self.rejected,
@@ -139,8 +141,42 @@ impl Stats {
             Counter::PoolsNotReady => &self.pools_not_ready,
             Counter::RepairBacklog => &self.repair_backlog,
             Counter::TxnOrphans => &self.txn_orphans,
+            Counter::TxnSuperseded => &self.txn_superseded,
             Counter::ViewsPublished => &self.views_published,
-            Counter::ReplayRepaired => &self.replay_repaired,
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Timings {
+    pub(crate) queued: LatencyHistogram,
+    pub(crate) event: LatencyHistogram,
+    pub(crate) fetched: LatencyHistogram,
+    pub(crate) tick: LatencyHistogram,
+    pub(crate) closures: LatencyHistogram,
+    pub(crate) readiness: LatencyHistogram,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TimingsSnapshot {
+    /// From a stream handing an event over to the engine taking it.
+    pub queued: LatencySnapshot,
+    pub event: LatencySnapshot,
+    pub fetched: LatencySnapshot,
+    pub tick: LatencySnapshot,
+    pub closures: LatencySnapshot,
+    pub readiness: LatencySnapshot,
+}
+
+impl Timings {
+    pub(crate) fn take_interval(&self) -> TimingsSnapshot {
+        TimingsSnapshot {
+            queued: self.queued.take_interval(),
+            event: self.event.take_interval(),
+            fetched: self.fetched.take_interval(),
+            tick: self.tick.take_interval(),
+            closures: self.closures.take_interval(),
+            readiness: self.readiness.take_interval(),
         }
     }
 }
@@ -149,7 +185,6 @@ impl Stats {
 pub(crate) enum Counter {
     DeadDropped,
     Downs,
-    Resumed,
     Gaps,
     GapKeys,
     Rejected,
@@ -163,8 +198,8 @@ pub(crate) enum Counter {
     PoolsNotReady,
     RepairBacklog,
     TxnOrphans,
+    TxnSuperseded,
     ViewsPublished,
-    ReplayRepaired,
 }
 
 #[cfg(test)]

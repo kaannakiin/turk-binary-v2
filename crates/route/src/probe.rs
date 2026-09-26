@@ -28,7 +28,6 @@ impl RouteError {
         match self {
             Self::UnknownPool(_) => "unknown_pool",
             Self::NotReady(_) => "not_ready",
-            Self::Stale => "stale",
             Self::NoClock => "no_clock",
             Self::Decode(_) => "decode",
             Self::DecodePanicked | Self::QuotePanicked => "panic",

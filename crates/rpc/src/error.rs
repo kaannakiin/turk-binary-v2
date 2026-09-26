@@ -36,6 +36,10 @@ pub enum RpcError {
         method: &'static str,
         reason: String,
     },
+    #[error("cannot start the rpc runtime: {0}")]
+    Runtime(#[source] std::io::Error),
+    #[error("the rpc runtime stopped")]
+    Stopped,
 }
 
 pub(crate) fn is_transient(err: &ClientError) -> bool {

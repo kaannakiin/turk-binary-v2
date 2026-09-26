@@ -87,14 +87,11 @@ Every stream also subscribes to the Clock sysvar, which updates every slot. The 
 
 | Key                       | Default | Meaning                                                               |
 | ------------------------- | ------- | --------------------------------------------------------------------- |
-| `replay`                  | `true`  | Reconnect with `from_slot` to replay what was missed                  |
-| `replay_margin_slots`     | `4`     | Replay starts this many slots before the last slot seen               |
-| `replay_skip_tolerance`   | `8`     | A replay that starts more than this many slots late counts as a gap   |
 | `reconnect.max_attempts`  | `0`     | Failed reconnects in a row before `watch` exits. `0` retries forever. |
 | `reconnect.base_delay_ms` | `500`   | First reconnect delay                                                 |
 | `reconnect.max_delay_ms`  | `30000` | Reconnect delay cap                                                   |
 
-When a reconnect cannot replay, only that stream's accounts are read again over RPC (see [architecture.md](architecture.md#reconnects-and-replay)).
+After a reconnect, only that stream's accounts are read again over RPC (see [architecture.md](architecture.md#reconnects)).
 
 **Removed keys.** `recover_missed_data`, `slot_retention`, `stream_reconnect_attempts`, `stream_reconnect_base_ms` and `command_buffer` no longer exist. Unknown keys are an error, so delete them from older configs.
 
@@ -124,7 +121,7 @@ When a reconnect cannot replay, only that stream's accounts are read again over 
 | `audit_interval_ms`          | `10000` | One drift check of up to 100 accounts per interval. `0` turns it off.                                |
 | `stream_swap_accounts`       | `true`  | Also subscribe accounts only the swap instruction needs (vaults the math does not read, DLMM oracle) |
 | `tick_ms`                    | `50`    | How often closures, reads and readiness are brought up to date                                       |
-| `txn_wait_ms`                | `400`   | How long a shard's transaction writes wait for the transaction status before they are applied anyway |
+| `txn_max_hold_ms`            | `5000`  | Safety cap: a shard's transaction writes held this long without being closed are applied anyway      |
 
 ## `[route]`
 

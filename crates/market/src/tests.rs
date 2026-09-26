@@ -9,7 +9,7 @@ use bytes::Bytes;
 use domain::chain::{CLOCK_SYSVAR, SYSTEM_PROGRAM, SYSVAR_OWNER, TOKEN_PROGRAM};
 use domain::{AccountUpdate, DexKind, Pubkey, Slot, TxnSignature, WriteVersion};
 use grpc::{
-    GapReason, GroupChange, GroupKey, GrpcError, Placement, SlotStatus, StreamEvent, StreamId,
+    GroupChange, GroupKey, GrpcError, Placement, SlotStatus, Stamped, StreamEvent, StreamId,
 };
 use rpc::RpcError;
 use tokio::sync::{broadcast, mpsc};
@@ -179,7 +179,7 @@ fn clmm_pool(bitmap_bits: &[usize]) -> Pool {
 }
 
 struct Rig {
-    events: mpsc::Sender<StreamEvent>,
+    events: mpsc::Sender<Stamped>,
     reader: MarketReader,
     chain: FakeSource,
     hub: FakeHub,
@@ -254,7 +254,13 @@ fn start_with(pool: &Pool, audit_interval_ms: u64) -> Rig {
 
 impl Rig {
     async fn send(&self, event: StreamEvent) {
-        self.events.send(event).await.unwrap();
+        self.events
+            .send(Stamped {
+                sent: std::time::Instant::now(),
+                event,
+            })
+            .await
+            .unwrap();
     }
 
     async fn effective_all(&self, slot: u64) {
@@ -415,7 +421,6 @@ async fn a_gap_rereads_only_that_streams_keys() {
         generation: 2,
         since: Some(Slot(150)),
         effective: Slot(200),
-        reason: GapReason::ReplayOutOfRange,
         keys: shard_keys.clone(),
         filters: Vec::new(),
     })
@@ -465,48 +470,50 @@ async fn a_readiness_change_without_a_write_is_announced() {
 }
 
 #[tokio::test]
-async fn a_resumed_stream_rereads_its_keys_and_repairs_a_missed_write() {
+async fn a_reconnected_stream_stays_not_ready_until_its_keys_are_read_past_the_gap() {
     let pool = cpmm_pool();
     let rig = subscribed(&pool).await;
     rig.effective_all(100).await;
     rig.ready().await;
-    let before = rig.reads().len();
     let shard_keys: Vec<Pubkey> = rig.hub.keys_on(Placement::Pool).into_iter().collect();
-    let missed = shard_keys[0];
-    rig.chain
-        .0
-        .lock()
-        .unwrap()
-        .accounts
-        .get_mut(&missed)
-        .unwrap()
-        .data = Bytes::from(vec![7; 165]);
-    rig.send(StreamEvent::Resumed {
+    rig.send(StreamEvent::Down {
+        stream: SHARD,
+        generation: 1,
+    })
+    .await;
+    rig.send(StreamEvent::Effective {
         stream: SHARD,
         generation: 2,
-        from_slot: Slot(150),
-        at: Slot(200),
-        keys: shard_keys.clone(),
+        slot: Slot(200),
+        added: Vec::new(),
+        removed: Vec::new(),
+        filters_added: Vec::new(),
     })
     .await;
-    rig.until("the missed write", |r| {
-        r.head_data(&missed).as_deref() == Some(&[7; 165][..])
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let between = rig.readiness();
+    rig.chain.0.lock().unwrap().hang = true;
+    let before = rig.reads().len();
+    rig.send(StreamEvent::Gap {
+        stream: SHARD,
+        generation: 2,
+        since: Some(Slot(150)),
+        effective: Slot(200),
+        keys: shard_keys,
+        filters: Vec::new(),
     })
     .await;
-    let reread: Vec<(Vec<Pubkey>, Slot)> = rig.reads()[before..].to_vec();
-    assert!(
-        reread.iter().all(|(_, min)| *min == Slot(204)),
-        "{reread:?}"
-    );
+    rig.until("the re-read", |r| r.reads().len() > before).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let barriers: BTreeSet<Slot> = rig.reads()[before..].iter().map(|(_, s)| *s).collect();
     assert_eq!(
-        reread
-            .iter()
-            .flat_map(|(k, _)| k.clone())
-            .collect::<BTreeSet<_>>(),
-        shard_keys.into_iter().collect()
+        (between, rig.readiness(), barriers),
+        (
+            Some(Readiness::NotReady(Reason::StreamDown(SHARD))),
+            Some(Readiness::NotReady(Reason::Syncing)),
+            BTreeSet::from([Slot(204)])
+        )
     );
-    assert_eq!(rig.readiness(), Some(Readiness::Ready));
-    assert_eq!(rig.stats.snapshot().replay_repaired, 1);
 }
 
 #[tokio::test]
@@ -703,6 +710,86 @@ async fn a_shard_write_is_applied_only_once_its_transaction_status_arrives() {
     .await;
 }
 
+fn signed_write(
+    (key, owner): (Pubkey, Pubkey),
+    slot: u64,
+    data: &[u8],
+    txn: Option<TxnSignature>,
+) -> StreamEvent {
+    StreamEvent::Account {
+        stream: SHARD,
+        generation: 1,
+        update: AccountUpdate {
+            slot: Slot(slot),
+            txn,
+            ..account(key, owner, data.to_vec())
+        },
+    }
+}
+
+#[tokio::test]
+async fn a_confirmation_on_another_stream_does_not_release_a_held_transaction() {
+    let pool = cpmm_pool();
+    let rig = subscribed(&pool).await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    let (vault_a, vault_b) = (pool.deps[1], pool.deps[2]);
+    rig.send(signed_write(
+        vault_a,
+        200,
+        b"after swap",
+        Some(TxnSignature([7; 64])),
+    ))
+    .await;
+    confirm(&rig, StreamId::Shared(0), 200).await;
+    rig.send(signed_write(vault_b, 200, b"marker", None)).await;
+    rig.until("the marker", |r| {
+        r.head_data(&vault_b.0).as_deref() == Some(b"marker".as_slice())
+    })
+    .await;
+    assert_ne!(
+        rig.head_data(&vault_a.0).as_deref(),
+        Some(b"after swap".as_slice())
+    );
+}
+
+#[tokio::test]
+async fn a_held_transaction_is_released_by_a_frozen_later_slot_not_by_its_shreds() {
+    let pool = cpmm_pool();
+    let rig = subscribed(&pool).await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    let (vault_a, vault_b) = (pool.deps[1], pool.deps[2]);
+    rig.send(signed_write(
+        vault_a,
+        200,
+        b"after swap",
+        Some(TxnSignature([7; 64])),
+    ))
+    .await;
+    let later = |status| StreamEvent::Slot {
+        stream: SHARD,
+        slot: Slot(202),
+        parent: Some(Slot(201)),
+        status,
+    };
+    rig.send(later(SlotStatus::Other)).await;
+    rig.send(signed_write(vault_b, 200, b"marker", None)).await;
+    rig.until("the marker", |r| {
+        r.head_data(&vault_b.0).as_deref() == Some(b"marker".as_slice())
+    })
+    .await;
+    assert_ne!(
+        rig.head_data(&vault_a.0).as_deref(),
+        Some(b"after swap".as_slice())
+    );
+    rig.send(later(SlotStatus::Processed)).await;
+    rig.until("the released write", |r| {
+        r.head_data(&vault_a.0).as_deref() == Some(b"after swap".as_slice())
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn a_dead_slot_write_is_withdrawn_from_the_view_and_announced() {
     let pool = cpmm_pool();
@@ -798,6 +885,36 @@ async fn a_key_is_not_audited_past_what_its_own_stream_confirmed() {
         .unwrap()
         .data = Bytes::from_static(b"written at 150, not streamed yet");
     confirm(&rig, SHARD, 120).await;
+    confirm(&rig, StreamId::Shared(0), 200).await;
+    rig.until("an audit", |r| r.stats.snapshot().audit_checked > 0)
+        .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(rig.stats.snapshot().audit_mismatches, 0);
+}
+
+#[tokio::test]
+async fn a_key_with_a_held_transaction_is_not_audited() {
+    let pool = cpmm_pool();
+    let rig = audited_ready(&pool).await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    let vault = pool.deps[1];
+    rig.chain
+        .0
+        .lock()
+        .unwrap()
+        .accounts
+        .get_mut(&vault.0)
+        .unwrap()
+        .data = Bytes::from_static(b"after swap");
+    rig.send(signed_write(
+        vault,
+        199,
+        b"after swap",
+        Some(TxnSignature([7; 64])),
+    ))
+    .await;
+    confirm(&rig, SHARD, 200).await;
     confirm(&rig, StreamId::Shared(0), 200).await;
     rig.until("an audit", |r| r.stats.snapshot().audit_checked > 0)
         .await;

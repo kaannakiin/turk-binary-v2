@@ -25,7 +25,7 @@ enum Command {
     Probe {
         #[arg(long, default_value = "config.toml")]
         config: PathBuf,
-        /// slots, clock, ping-only, replay, limits, slot-backlog. Empty runs them all.
+        /// slots, clock, ping-only, limits, slot-backlog. Empty runs them all.
         #[arg(value_delimiter = ',')]
         kinds: Vec<grpc::ProbeKind>,
     },

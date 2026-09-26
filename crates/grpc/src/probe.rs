@@ -28,17 +28,15 @@ pub enum ProbeKind {
     Slots,
     Clock,
     PingOnly,
-    Replay,
     Limits,
     SlotBacklog,
 }
 
 impl ProbeKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::Slots,
         Self::Clock,
         Self::PingOnly,
-        Self::Replay,
         Self::Limits,
         Self::SlotBacklog,
     ];
@@ -52,7 +50,6 @@ impl FromStr for ProbeKind {
             "slots" => Ok(Self::Slots),
             "clock" => Ok(Self::Clock),
             "ping-only" => Ok(Self::PingOnly),
-            "replay" => Ok(Self::Replay),
             "limits" => Ok(Self::Limits),
             "slot-backlog" => Ok(Self::SlotBacklog),
             other => Err(format!("unknown probe `{other}`")),
@@ -92,7 +89,6 @@ pub async fn probe(
             ProbeKind::Slots => findings.push(slots(&connector).await),
             ProbeKind::Clock => findings.extend(clock(&connector).await),
             ProbeKind::PingOnly => findings.push(ping_only(&connector).await),
-            ProbeKind::Replay => findings.extend(replay(&connector).await),
             ProbeKind::Limits => findings.extend(limits(&connector).await),
             ProbeKind::SlotBacklog => findings.push(slot_backlog(&connector).await),
         }
@@ -118,7 +114,7 @@ pub async fn resolve_slot_source(
     })
 }
 
-fn clock_request(heartbeat: Heartbeat, seq: u64, from_slot: Option<u64>) -> SubscribeRequest {
+fn clock_request(heartbeat: Heartbeat, seq: u64) -> SubscribeRequest {
     let limits = Limits {
         request_bytes: usize::MAX,
         ..Limits::from_settings(&GrpcSettings::default())
@@ -130,7 +126,6 @@ fn clock_request(heartbeat: Heartbeat, seq: u64, from_slot: Option<u64>) -> Subs
         Commitment::Processed,
         &limits,
         seq,
-        from_slot,
     )
     .map(|built| built.request)
     .unwrap_or_default()
@@ -164,7 +159,7 @@ fn clock_slot(update: &SubscribeUpdate) -> Option<u64> {
 
 async fn slots(connector: &TonicConnector) -> Finding {
     let (_sink, mut stream) = match connector
-        .subscribe(clock_request(Heartbeat::Slots, 1, None))
+        .subscribe(clock_request(Heartbeat::Slots, 1))
         .await
     {
         Ok(opened) => opened,
@@ -198,7 +193,7 @@ async fn slots(connector: &TonicConnector) -> Finding {
 async fn slot_backlog(connector: &TonicConnector) -> Finding {
     const CHECK: &str = "slot backlog on connect";
     let (_sink, mut stream) = match connector
-        .subscribe(clock_request(Heartbeat::Slots, 1, None))
+        .subscribe(clock_request(Heartbeat::Slots, 1))
         .await
     {
         Ok(opened) => opened,
@@ -251,7 +246,7 @@ async fn slot_backlog(connector: &TonicConnector) -> Finding {
 
 async fn clock(connector: &TonicConnector) -> Vec<Finding> {
     let (_sink, mut stream) = match connector
-        .subscribe(clock_request(Heartbeat::Clock, 7, None))
+        .subscribe(clock_request(Heartbeat::Clock, 7))
         .await
     {
         Ok(opened) => opened,
@@ -298,7 +293,7 @@ async fn clock(connector: &TonicConnector) -> Vec<Finding> {
 
 async fn ping_only(connector: &TonicConnector) -> Finding {
     let (mut sink, mut stream) = match connector
-        .subscribe(clock_request(Heartbeat::Clock, 1, None))
+        .subscribe(clock_request(Heartbeat::Clock, 1))
         .await
     {
         Ok(opened) => opened,
@@ -336,106 +331,6 @@ async fn ping_only(connector: &TonicConnector) -> Finding {
         "no pong within 5 s"
     };
     Finding::new("ping-only request", false, detail)
-}
-
-async fn replay(connector: &TonicConnector) -> Vec<Finding> {
-    let first = match connector.replay_info().await {
-        Ok(Some(first)) => first,
-        Ok(None) => {
-            return vec![Finding::new(
-                "replay",
-                false,
-                "server reports no replay support",
-            )];
-        }
-        Err(status) => {
-            return vec![Finding::new(
-                "replay",
-                false,
-                format!("replay info refused: {status}"),
-            )];
-        }
-    };
-    let mut findings = vec![Finding::new(
-        "replay window",
-        true,
-        format!("first available slot {first}"),
-    )];
-    let (_sink, mut stream) = match connector
-        .subscribe(clock_request(Heartbeat::Clock, 1, None))
-        .await
-    {
-        Ok(opened) => opened,
-        Err(status) => return vec![Finding::new("replay", false, format!("refused: {status}"))],
-    };
-    let tip = loop {
-        match next(&mut stream, Instant::now() + WAIT).await {
-            Some(Ok(update)) => {
-                if let Some(slot) = clock_slot(&update) {
-                    break slot;
-                }
-            }
-            _ => {
-                return vec![Finding::new(
-                    "replay",
-                    false,
-                    "no clock update to anchor the replay",
-                )];
-            }
-        }
-    };
-    let from = tip.saturating_sub(20).max(first);
-    findings.push(
-        match connector
-            .subscribe(clock_request(Heartbeat::Clock, 1, Some(from)))
-            .await
-        {
-            Ok((_sink, mut replayed)) => match next(&mut replayed, Instant::now() + WAIT).await {
-                Some(Ok(update)) => {
-                    let slot = clock_slot(&update).unwrap_or(0);
-                    Finding::new(
-                        "replay from a recent slot",
-                        slot <= from + 8,
-                        format!("asked {from}, first clock {slot}"),
-                    )
-                }
-                Some(Err(status)) => Finding::new(
-                    "replay from a recent slot",
-                    false,
-                    format!("refused: {status}"),
-                ),
-                None => Finding::new("replay from a recent slot", false, "nothing within 10 s"),
-            },
-            Err(status) => Finding::new(
-                "replay from a recent slot",
-                false,
-                format!("refused: {status}"),
-            ),
-        },
-    );
-    let out_of_range = match connector
-        .subscribe(clock_request(Heartbeat::Clock, 1, Some(1)))
-        .await
-    {
-        Ok((_sink, mut stream)) => match next(&mut stream, Instant::now() + WAIT).await {
-            Some(Err(status)) => Some(status),
-            _ => None,
-        },
-        Err(status) => Some(status),
-    };
-    findings.push(match out_of_range {
-        Some(status) => Finding::new(
-            "replay out of range",
-            classify(&status) == Failure::ReplayOutOfRange,
-            format!("{:?}: {}", status.code(), status.message()),
-        ),
-        None => Finding::new(
-            "replay out of range",
-            false,
-            "from_slot = 1 was not refused",
-        ),
-    });
-    findings
 }
 
 async fn limits(connector: &TonicConnector) -> Vec<Finding> {

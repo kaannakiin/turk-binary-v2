@@ -65,7 +65,9 @@ pub struct Quote {
 }
 
 /// Quotes on the caller's thread against the latest decoded state. Never
-/// takes a lock.
+/// takes a lock. One load gives the readiness, the view and the state
+/// decoded from it together; the decoder publishes before the market, so
+/// the market's own copy is never newer.
 #[derive(Clone)]
 pub struct QuoteReader<F> {
     pub(crate) feed: F,
@@ -86,13 +88,6 @@ impl<F: PoolFeed> QuoteReader<F> {
             .ok_or(RouteError::UnknownPool(*pool))?;
         if let Readiness::NotReady(reason) = decoded.readiness {
             return Err(RouteError::NotReady(reason));
-        }
-        let current = self
-            .feed
-            .pool_view(pool)
-            .ok_or(RouteError::UnknownPool(*pool))?;
-        if !Arc::ptr_eq(&current, &decoded.view) {
-            return Err(RouteError::Stale);
         }
         if decoded.panicked {
             return Err(RouteError::DecodePanicked);

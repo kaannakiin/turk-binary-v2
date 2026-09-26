@@ -8,8 +8,6 @@ pub enum RouteError {
     UnknownPool(Pubkey),
     #[error("pool is not ready: {0:?}")]
     NotReady(Reason),
-    #[error("the pool changed since it was last decoded")]
-    Stale,
     #[error("no Clock sysvar yet")]
     NoClock,
     #[error("decoding the pool failed: {0}")]

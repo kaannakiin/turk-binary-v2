@@ -20,4 +20,4 @@ just watch
 
 `watch` is read-only. It never signs or sends a transaction.
 
-Run `just probe` once per gRPC provider to see which features it supports (`slots`, Clock streaming, replay, filter limits); see [architecture.md](architecture.md#provider-probes). `just txn-probe` measures how transaction writes and their statuses arrive on the provider's streams.
+Run `just probe` once per gRPC provider to see which features it supports (`slots`, Clock streaming, filter limits); see [architecture.md](architecture.md#provider-probes). `just txn-probe` measures how transaction writes and their statuses arrive on the provider's streams.

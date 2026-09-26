@@ -8,7 +8,7 @@ use yellowstone_grpc_client::{
     SubscribeRequestSink,
 };
 use yellowstone_grpc_proto::prelude::{SubscribeRequest, SubscribeUpdate};
-use yellowstone_grpc_proto::tonic::{Code, Status};
+use yellowstone_grpc_proto::tonic::Status;
 
 use crate::settings::non_zero_ms;
 use crate::{GrpcError, GrpcSettings};
@@ -16,9 +16,6 @@ use crate::{GrpcError, GrpcSettings};
 pub(crate) trait Connector: Send + Sync + 'static {
     type Sink: Sink<SubscribeRequest, Error: Display + Send> + Unpin + Send;
     type Stream: Stream<Item = Result<SubscribeUpdate, Status>> + Unpin + Send;
-
-    /// Oldest slot the server can replay from; `None` when it cannot replay.
-    fn replay_info(&self) -> impl Future<Output = Result<Option<u64>, Status>> + Send;
 
     fn subscribe(
         &self,
@@ -48,8 +45,8 @@ impl TonicConnector {
     }
 
     // No `set_reconnect_config`: the client's own reconnects would inject
-    // `slots` filters, count against filter limits and resume silently from
-    // the head when replay is out of range. The actor owns reconnects instead.
+    // `slots` filters and count against filter limits. The actor owns
+    // reconnects instead.
     fn builder(&self) -> Result<GeyserGrpcBuilder, GrpcError> {
         let t = &self.settings.transport;
         let mut builder = GeyserGrpcClient::build_from_shared(self.endpoint.clone())?
@@ -99,18 +96,6 @@ impl TonicConnector {
 impl Connector for TonicConnector {
     type Sink = SubscribeRequestSink;
     type Stream = GeyserStream;
-
-    async fn replay_info(&self) -> Result<Option<u64>, Status> {
-        match self.client().await?.subscribe_replay_info().await {
-            Ok(info) => Ok(info.first_available),
-            Err(GeyserGrpcClientError::TonicStatus(status))
-                if status.code() == Code::Unimplemented =>
-            {
-                Ok(None)
-            }
-            Err(err) => Err(into_status(err)),
-        }
-    }
 
     async fn subscribe(
         &self,

@@ -17,7 +17,7 @@ use crate::classify::{Failure, classify};
 use crate::connector::Connector;
 use crate::convert::{account_update, message_lag};
 use crate::events::{
-    GapReason, Group, GroupChange, GroupKey, LimitViolation, SlotStatus, StreamEvent, StreamId,
+    Group, GroupChange, GroupKey, LimitViolation, SlotStatus, Stamped, StreamEvent, StreamId,
 };
 use crate::request::{
     Built, Heartbeat, Limits, build_request, ping_request, seq_of, shape, slot_feed_request,
@@ -36,8 +36,8 @@ pub(crate) enum Role {
 
 /// The slot feed serves every partition's global slot tree.
 pub(crate) enum EventSink {
-    One(mpsc::Sender<StreamEvent>),
-    All(Vec<mpsc::Sender<StreamEvent>>),
+    One(mpsc::Sender<Stamped>),
+    All(Vec<mpsc::Sender<Stamped>>),
 }
 
 pub(crate) struct StreamActor<C> {
@@ -62,7 +62,6 @@ pub(crate) struct State {
     sent_filters: BTreeSet<AccountFilter>,
     pending: VecDeque<Pending>,
     last_slot: Option<Slot>,
-    replay_off: Option<GapReason>,
     connected_before: bool,
 }
 
@@ -79,15 +78,14 @@ struct Session {
     received: bool,
     flush_at: Option<Instant>,
     connect_seq: u64,
-    gap: Option<(GapReason, Option<Slot>)>,
-    replay: Option<ReplayWatch>,
-    catching_up: bool,
+    gap: Option<Reconnect>,
+    /// Newest slot this connection delivered. The effective slot of a
+    /// reconnect must come from here, never from before the drop.
+    last_slot: Option<Slot>,
 }
 
-struct ReplayWatch {
-    from_slot: Slot,
-    tip: Option<Slot>,
-    checked: bool,
+struct Reconnect {
+    since: Option<Slot>,
 }
 
 enum End {
@@ -108,9 +106,9 @@ impl<C: Connector> StreamActor<C> {
             if !self.drain_commands().await {
                 return Ok(());
             }
+            let reconnect = self.state.connected_before && self.role != Role::SlotFeed;
             let since = self.state.last_slot;
-            let (from_slot, gap) = self.plan_replay().await;
-            let request = match self.connect_request(from_slot) {
+            let request = match self.connect_request() {
                 Ok(request) => request,
                 Err(violation) => {
                     self.fit_limits(violation).await;
@@ -127,16 +125,10 @@ impl<C: Connector> StreamActor<C> {
                     }
                     self.state.generation += 1;
                     self.state.connected_before = true;
-                    tracing::info!(stream = ?self.id, groups = self.state.groups.len(), from_slot, "grpc stream connected");
+                    tracing::info!(stream = ?self.id, groups = self.state.groups.len(), "grpc stream connected");
                     let mut session = Session {
                         connect_seq: self.state.seq,
-                        gap: gap.map(|reason| (reason, since)),
-                        replay: from_slot.map(|slot| ReplayWatch {
-                            from_slot: Slot(slot),
-                            tip: since,
-                            checked: false,
-                        }),
-                        catching_up: from_slot.is_some(),
+                        gap: reconnect.then_some(Reconnect { since }),
                         ..Session::default()
                     };
                     let end = self.pump(sink, stream, &mut session).await;
@@ -169,10 +161,7 @@ impl<C: Connector> StreamActor<C> {
                         });
                     }
                     Failure::Limit(violation) => self.fit_limits(violation).await,
-                    Failure::ReplayUnsupported => {
-                        self.state.replay_off = Some(GapReason::ReplayUnsupported);
-                    }
-                    Failure::ReplayOutOfRange | Failure::Transient => {}
+                    Failure::Transient => {}
                 }
             }
             failures += 1;
@@ -206,48 +195,17 @@ impl<C: Connector> StreamActor<C> {
         }
     }
 
-    async fn plan_replay(&mut self) -> (Option<u64>, Option<GapReason>) {
-        if !self.state.connected_before || self.role == Role::SlotFeed {
-            return (None, None);
-        }
-        if !self.settings.replay {
-            return (None, Some(GapReason::ReplayDisabled));
-        }
-        if let Some(reason) = self.state.replay_off {
-            return (None, Some(reason));
-        }
-        let Some(checkpoint) = self
-            .state
-            .last_slot
-            .map(|slot| slot.0.saturating_sub(self.settings.replay_margin_slots))
-        else {
-            return (None, Some(GapReason::ReplayOutOfRange));
-        };
-        match self.connector.replay_info().await {
-            Ok(Some(first)) if checkpoint >= first => (Some(checkpoint), None),
-            Ok(Some(_)) => (None, Some(GapReason::ReplayOutOfRange)),
-            Ok(None) => {
-                self.state.replay_off = Some(GapReason::ReplayUnsupported);
-                (None, Some(GapReason::ReplayUnsupported))
-            }
-            Err(_) => (Some(checkpoint), None),
-        }
-    }
-
-    fn connect_request(
-        &mut self,
-        from_slot: Option<u64>,
-    ) -> Result<SubscribeRequest, LimitViolation> {
+    fn connect_request(&mut self) -> Result<SubscribeRequest, LimitViolation> {
         if self.role == Role::SlotFeed {
             return Ok(slot_feed_request());
         }
         let seq = self.state.seq + 1;
-        let built = self.build(seq, from_slot)?;
+        let built = self.build(seq)?;
         self.record_send(seq);
         Ok(built.request)
     }
 
-    fn build(&self, seq: u64, from_slot: Option<u64>) -> Result<Built, LimitViolation> {
+    fn build(&self, seq: u64) -> Result<Built, LimitViolation> {
         let txn_status = matches!(
             self.role,
             Role::Accounts {
@@ -262,7 +220,6 @@ impl<C: Connector> StreamActor<C> {
             self.settings.commitment,
             &self.limits,
             seq,
-            from_slot,
         )?;
         if built.bytes > self.settings.warn_request_bytes {
             tracing::warn!(stream = ?self.id, bytes = built.bytes, "grpc subscribe request is large; consider more streams");
@@ -333,7 +290,7 @@ impl<C: Connector> StreamActor<C> {
                 }
                 GroupChange::Upsert { key, group, .. } => {
                     let previous = self.state.groups.insert(key, group);
-                    if let Err(reason) = self.build(self.state.seq + 1, None) {
+                    if let Err(reason) = self.build(self.state.seq + 1) {
                         match previous {
                             Some(previous) => self.state.groups.insert(key, previous),
                             None => self.state.groups.remove(&key),
@@ -371,7 +328,7 @@ impl<C: Connector> StreamActor<C> {
             }
             LimitViolation::RequestBytes { .. } | LimitViolation::TxnFilters { .. } => {}
         }
-        while let Err(reason) = self.build(self.state.seq + 1, None) {
+        while let Err(reason) = self.build(self.state.seq + 1) {
             let Some(largest) = self
                 .state
                 .groups
@@ -413,7 +370,7 @@ impl<C: Connector> StreamActor<C> {
                 () = sleep_until(session.flush_at) => {
                     session.flush_at = None;
                     let seq = self.state.seq + 1;
-                    let Ok(built) = self.build(seq, None) else { continue };
+                    let Ok(built) = self.build(seq) else { continue };
                     if let Err(err) = sink.send(built.request).await {
                         tracing::warn!(stream = ?self.id, %err, "grpc filter update failed");
                         return End::Dropped(None);
@@ -421,7 +378,7 @@ impl<C: Connector> StreamActor<C> {
                     self.record_send(seq);
                 }
                 () = sleep_until(ack_deadline) => {
-                    if let Some(slot) = self.state.last_slot {
+                    if let Some(slot) = session.last_slot {
                         tracing::warn!(stream = ?self.id, "no update tagged with the new filters; assuming they apply");
                         let seq = self.state.pending.back().map_or(self.state.seq, |p| p.seq);
                         if !self.acknowledge(seq, slot, session).await {
@@ -457,17 +414,22 @@ impl<C: Connector> StreamActor<C> {
     where
         Si: futures::Sink<SubscribeRequest, Error: std::fmt::Display> + Unpin,
     {
-        if !self.check_lag(&update, session) {
+        if !self.check_lag(&update) {
             return Some(End::Dropped(None));
         }
         let tagged = update.filters.iter().filter_map(|name| seq_of(name)).max();
         let (slot, event) = match update.update_oneof {
             Some(UpdateOneof::Account(account)) => {
                 self.stats.accounts.fetch_add(1, Ordering::Relaxed);
-                let Some(update) = account_update(account) else {
+                let Some(mut update) = account_update(account) else {
                     tracing::warn!(stream = ?self.id, "dropping malformed grpc account update");
                     return None;
                 };
+                // No status ever arrives for a key left out of the status
+                // filter, so its writes must not wait for one.
+                if self.limits.txn_excluded.contains(&update.pubkey) {
+                    update.txn = None;
+                }
                 let slot = update.slot;
                 let forward = update.pubkey != CLOCK_SYSVAR
                     || matches!(
@@ -477,12 +439,19 @@ impl<C: Connector> StreamActor<C> {
                             ..
                         }
                     );
-                let event = forward.then_some(StreamEvent::Account {
-                    stream: self.id,
-                    generation: self.state.generation,
-                    update,
-                });
-                (Some(slot), event)
+                let event = if forward {
+                    StreamEvent::Account {
+                        stream: self.id,
+                        generation: self.state.generation,
+                        update,
+                    }
+                } else {
+                    StreamEvent::Heartbeat {
+                        stream: self.id,
+                        slot,
+                    }
+                };
+                (Some(slot), Some(event))
             }
             Some(UpdateOneof::Slot(slot)) => {
                 self.stats.slots.fetch_add(1, Ordering::Relaxed);
@@ -530,9 +499,7 @@ impl<C: Connector> StreamActor<C> {
             _ => return None,
         };
         if let Some(slot) = slot {
-            if !self.observe_slot(slot, session).await {
-                return Some(End::Shutdown);
-            }
+            self.observe_slot(slot, session);
             if let Some(seq) = tagged
                 && !self.acknowledge(seq, slot, session).await
             {
@@ -548,11 +515,9 @@ impl<C: Connector> StreamActor<C> {
     }
 
     /// `false` when the stream fell too far behind and must reconnect.
-    fn check_lag(&self, update: &SubscribeUpdate, session: &mut Session) -> bool {
-        // The plugin stamps replayed slot statuses and pings with the time
-        // it sends them; only account and block updates keep the time the
-        // plugin first saw them. A replay also carries everything written
-        // while the stream was down, so lag counts once it is current again.
+    fn check_lag(&self, update: &SubscribeUpdate) -> bool {
+        // Slot statuses and pings carry the time the plugin sends them; only
+        // account and block updates keep the time the plugin first saw them.
         let stamped = matches!(
             update.update_oneof,
             Some(UpdateOneof::Account(_) | UpdateOneof::BlockMeta(_))
@@ -565,53 +530,21 @@ impl<C: Connector> StreamActor<C> {
         else {
             return true;
         };
-        if let Some(max) = self.settings.max_message_delay() {
-            if lag <= max {
-                session.catching_up = false;
-            } else if !session.catching_up {
-                tracing::warn!(stream = ?self.id, ?lag, "grpc stream lagging, reconnecting");
-                return false;
-            }
+        if self
+            .settings
+            .max_message_delay()
+            .is_some_and(|max| lag > max)
+        {
+            tracing::warn!(stream = ?self.id, ?lag, "grpc stream lagging, reconnecting");
+            return false;
         }
-        if !session.catching_up {
-            self.stats.lag.record(lag);
-        }
+        self.stats.lag.record(lag);
         true
     }
 
-    /// The first slot after a replayed connect must be close to `from_slot`;
-    /// a server that silently resumed from its head instead has skipped the
-    /// gap. Once the replay reaches the pre-drop tip, nothing was lost.
-    async fn observe_slot(&mut self, slot: Slot, session: &mut Session) -> bool {
-        self.state.last_slot = Some(self.state.last_slot.map_or(slot, |s| s.max(slot)));
-        let Some(mut watch) = session.replay.take() else {
-            return true;
-        };
-        if !watch.checked {
-            watch.checked = true;
-            if slot.0
-                > watch
-                    .from_slot
-                    .0
-                    .saturating_add(self.settings.replay_skip_tolerance)
-            {
-                tracing::warn!(stream = ?self.id, from_slot = watch.from_slot.0, slot = slot.0, "grpc replay resumed later than asked");
-                session.gap = Some((GapReason::ReplaySkipped, watch.tip));
-                return self.flush_gap_if_effective(session).await;
-            }
-        }
-        if watch.tip.is_none_or(|tip| slot >= tip) {
-            let resumed = StreamEvent::Resumed {
-                stream: self.id,
-                generation: self.state.generation,
-                from_slot: watch.from_slot,
-                at: slot,
-                keys: self.state.sent_keys.iter().copied().collect(),
-            };
-            return self.emit(resumed).await;
-        }
-        session.replay = Some(watch);
-        true
+    fn observe_slot(&mut self, slot: Slot, session: &mut Session) {
+        self.state.last_slot = self.state.last_slot.max(Some(slot));
+        session.last_slot = session.last_slot.max(Some(slot));
     }
 
     async fn acknowledge(&mut self, seq: u64, slot: Slot, session: &mut Session) -> bool {
@@ -651,15 +584,8 @@ impl<C: Connector> StreamActor<C> {
         true
     }
 
-    async fn flush_gap_if_effective(&mut self, session: &mut Session) -> bool {
-        match (session.connect_seq, self.state.last_slot) {
-            (0, Some(slot)) => self.flush_gap(session, slot).await,
-            _ => true,
-        }
-    }
-
     async fn flush_gap(&mut self, session: &mut Session, effective: Slot) -> bool {
-        let Some((reason, since)) = session.gap.take() else {
+        let Some(Reconnect { since }) = session.gap.take() else {
             return true;
         };
         let gap = StreamEvent::Gap {
@@ -667,7 +593,6 @@ impl<C: Connector> StreamActor<C> {
             generation: self.state.generation,
             since,
             effective,
-            reason,
             keys: self.state.sent_keys.iter().copied().collect(),
             filters: self.state.sent_filters.iter().cloned().collect(),
         };
@@ -676,12 +601,16 @@ impl<C: Connector> StreamActor<C> {
 
     async fn emit(&self, event: StreamEvent) -> bool {
         let started = Instant::now();
+        let stamped = Stamped {
+            sent: started.into_std(),
+            event,
+        };
         let sent = match &self.events {
-            EventSink::One(tx) => self.send(tx, event).await,
+            EventSink::One(tx) => self.send(tx, stamped).await,
             EventSink::All(txs) => {
                 let mut sent = true;
                 for tx in txs {
-                    if !self.send(tx, event.clone()).await {
+                    if !self.send(tx, stamped.clone()).await {
                         sent = false;
                         break;
                     }
@@ -693,7 +622,7 @@ impl<C: Connector> StreamActor<C> {
         sent
     }
 
-    async fn send(&self, tx: &mpsc::Sender<StreamEvent>, event: StreamEvent) -> bool {
+    async fn send(&self, tx: &mpsc::Sender<Stamped>, event: Stamped) -> bool {
         let queued = tx.max_capacity() - tx.capacity();
         self.stats
             .queued_peak

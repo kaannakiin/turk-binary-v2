@@ -24,9 +24,6 @@ pub struct GrpcSettings {
     pub event_buffer: usize,
     pub filter_flush_ms: u64,
     pub filter_ack_timeout_ms: u64,
-    pub replay: bool,
-    pub replay_margin_slots: u64,
-    pub replay_skip_tolerance: u64,
     pub reconnect: RetryPolicy,
     pub transport: TransportSettings,
 }
@@ -51,9 +48,6 @@ impl Default for GrpcSettings {
             event_buffer: 16_384,
             filter_flush_ms: 200,
             filter_ack_timeout_ms: 2_000,
-            replay: true,
-            replay_margin_slots: 4,
-            replay_skip_tolerance: 8,
             reconnect: RetryPolicy {
                 max_attempts: 0,
                 base_delay_ms: 500,

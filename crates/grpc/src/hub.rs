@@ -8,7 +8,7 @@ use tokio::task::{JoinHandle, JoinSet};
 
 use crate::actor::{EventSink, Role, State, StreamActor};
 use crate::connector::{Connector, TonicConnector};
-use crate::events::{GroupChange, GroupKey, Placement, StreamEvent, StreamId};
+use crate::events::{GroupChange, GroupKey, Placement, Stamped, StreamId};
 use crate::request::{Heartbeat, Limits};
 use crate::routing::stream_for;
 use crate::settings::SlotSource;
@@ -80,7 +80,7 @@ const fn partition_of(shard: u16, partitions: u16) -> u16 {
 
 pub struct Partition {
     pub hub: HubHandle,
-    pub events: mpsc::Receiver<StreamEvent>,
+    pub events: mpsc::Receiver<Stamped>,
     pub streams: Streams,
 }
 

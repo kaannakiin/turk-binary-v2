@@ -66,9 +66,8 @@ impl SlotTree {
         self.confirmed
     }
 
-    /// After a drop the chain resumes at the next session's first live slot:
-    /// a replayed session continues it, an unreplayed one leaves a hole that
-    /// the stream's `Gap` already re-reads.
+    /// After a drop the chain resumes at the next session's first live slot;
+    /// the hole it leaves is what the stream's `Gap` re-reads.
     pub fn restart(&mut self) {
         self.first_seen = None;
     }

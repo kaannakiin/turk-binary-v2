@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use domain::{AccountFilter, AccountUpdate, Commitment, Pubkey, RetryPolicy, Slot};
@@ -7,16 +8,20 @@ use serde_json::json;
 use solana_account_decoder_client_types::UiAccountEncoding;
 use solana_commitment_config::CommitmentConfig;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+use solana_rpc_client::rpc_client::RpcClientConfig;
 use solana_rpc_client_api::client_error::Error as ClientError;
 use solana_rpc_client_api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_rpc_client_api::request::RpcRequest;
 use solana_rpc_client_api::response::{OptionalContext, RpcKeyedAccount};
-use tokio::sync::Semaphore;
+use tokio::runtime::Handle;
+use tokio::sync::{Semaphore, oneshot};
+use tokio::task::JoinHandle;
 
 use crate::RpcError;
 use crate::convert::{account_update, commitment_config, rpc_filters};
 use crate::error::{is_min_context_slot, is_transient, redact};
 use crate::rate::RateLimiter;
+use crate::sender::PacedSender;
 
 pub const MAX_MULTIPLE_ACCOUNTS: usize = 100;
 
@@ -42,37 +47,53 @@ impl Default for RpcSettings {
     }
 }
 
+/// Every request runs on the gateway's own `rpc-io` runtime, whatever
+/// runtime calls it. hyper drives each pooled connection from a task on the
+/// runtime that opened it, so a connection opened from a busy pipeline
+/// thread would stall every other caller that reuses it; the limiter's and
+/// retries' timers would be late the same way.
 pub struct RpcGateway {
+    inner: Arc<Inner>,
+    io: Handle,
+    _stop: oneshot::Sender<()>,
+}
+
+struct Inner {
     client: RpcClient,
     commitment: CommitmentConfig,
     permits: Semaphore,
-    rate: RateLimiter,
+    rate: Arc<RateLimiter>,
     retry: RetryPolicy,
 }
 
+const IO_THREADS: usize = 2;
+
 impl RpcGateway {
-    #[must_use]
-    pub fn new(url: String, settings: &RpcSettings) -> Self {
+    pub fn new(url: String, settings: &RpcSettings) -> Result<Self, RpcError> {
         let commitment = commitment_config(settings.commitment);
-        Self {
-            client: RpcClient::new_with_timeout_and_commitment(
-                url,
-                Duration::from_millis(settings.timeout_ms),
+        let rate = Arc::new(RateLimiter::new(settings.max_rps));
+        let sender = PacedSender::new(
+            url,
+            Duration::from_millis(settings.timeout_ms),
+            Arc::clone(&rate),
+        );
+        let (io, stop) = spawn_io().map_err(RpcError::Runtime)?;
+        Ok(Self {
+            inner: Arc::new(Inner {
+                client: RpcClient::new_sender(sender, RpcClientConfig::with_commitment(commitment)),
                 commitment,
-            ),
-            commitment,
-            permits: Semaphore::new(settings.max_in_flight.max(1)),
-            rate: RateLimiter::new(settings.max_rps),
-            retry: settings.retry,
-        }
+                permits: Semaphore::new(settings.max_in_flight.max(1)),
+                rate,
+                retry: settings.retry,
+            }),
+            io,
+            _stop: stop,
+        })
     }
 
     pub async fn get_slot(&self) -> Result<Slot, RpcError> {
-        self.call("getSlot", || {
-            self.client.get_slot_with_commitment(self.commitment)
-        })
-        .await
-        .map(Slot)
+        self.on_io(|inner| async move { inner.get_slot().await })
+            .await
     }
 
     /// Result is aligned with `pubkeys`. Chunks after the first are pinned to
@@ -82,7 +103,9 @@ impl RpcGateway {
         &self,
         pubkeys: &[Pubkey],
     ) -> Result<Vec<Option<AccountUpdate>>, RpcError> {
-        self.fetch_multiple(pubkeys, self.commitment).await
+        let pubkeys = pubkeys.to_vec();
+        self.on_io(|inner| async move { inner.fetch_multiple(&pubkeys, inner.commitment).await })
+            .await
     }
 
     pub async fn get_multiple_accounts_at(
@@ -90,8 +113,91 @@ impl RpcGateway {
         pubkeys: &[Pubkey],
         commitment: Commitment,
     ) -> Result<Vec<Option<AccountUpdate>>, RpcError> {
-        self.fetch_multiple(pubkeys, commitment_config(commitment))
+        let pubkeys = pubkeys.to_vec();
+        self.on_io(|inner| async move {
+            inner
+                .fetch_multiple(&pubkeys, commitment_config(commitment))
+                .await
+        })
+        .await
+    }
+
+    /// One request of at most [`MAX_MULTIPLE_ACCOUNTS`] keys, answered at a
+    /// context slot no older than `min_context_slot`. The slot is returned
+    /// because it also dates the accounts that came back absent.
+    pub async fn get_multiple_accounts_with(
+        &self,
+        pubkeys: &[Pubkey],
+        commitment: Commitment,
+        min_context_slot: Option<Slot>,
+    ) -> Result<(Slot, Vec<Option<AccountUpdate>>), RpcError> {
+        let pubkeys = pubkeys.to_vec();
+        self.on_io(|inner| async move {
+            inner
+                .get_multiple_accounts_with(&pubkeys, commitment, min_context_slot)
+                .await
+        })
+        .await
+    }
+
+    pub async fn get_program_accounts(
+        &self,
+        filter: &AccountFilter,
+    ) -> Result<Vec<AccountUpdate>, RpcError> {
+        let filter = filter.clone();
+        self.on_io(|inner| async move { inner.get_program_accounts(&filter).await })
             .await
+    }
+
+    async fn on_io<T, Fut>(&self, work: impl FnOnce(Arc<Inner>) -> Fut) -> Result<T, RpcError>
+    where
+        T: Send + 'static,
+        Fut: Future<Output = Result<T, RpcError>> + Send + 'static,
+    {
+        let mut task = AbortOnDrop(self.io.spawn(work(Arc::clone(&self.inner))));
+        match (&mut task.0).await {
+            Ok(result) => result,
+            Err(err) if err.is_panic() => std::panic::resume_unwind(err.into_panic()),
+            Err(_) => Err(RpcError::Stopped),
+        }
+    }
+}
+
+struct AbortOnDrop<T>(JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// The runtime lives on its own thread until the gateway drops its sender;
+/// dropping a runtime from inside another async context would panic.
+fn spawn_io() -> std::io::Result<(Handle, oneshot::Sender<()>)> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(IO_THREADS)
+        .thread_name("rpc-io")
+        .enable_all()
+        .build()?;
+    let handle = runtime.handle().clone();
+    let (stop, stopped) = oneshot::channel::<()>();
+    std::thread::Builder::new()
+        .name("rpc-io".to_owned())
+        .spawn(move || {
+            runtime.block_on(async {
+                let _ = stopped.await;
+            });
+        })?;
+    Ok((handle, stop))
+}
+
+impl Inner {
+    async fn get_slot(&self) -> Result<Slot, RpcError> {
+        self.call("getSlot", || {
+            self.client.get_slot_with_commitment(self.commitment)
+        })
+        .await
+        .map(Slot)
     }
 
     async fn fetch_multiple(
@@ -126,7 +232,7 @@ impl RpcGateway {
     /// One request of at most [`MAX_MULTIPLE_ACCOUNTS`] keys, answered at a
     /// context slot no older than `min_context_slot`. The slot is returned
     /// because it also dates the accounts that came back absent.
-    pub async fn get_multiple_accounts_with(
+    async fn get_multiple_accounts_with(
         &self,
         pubkeys: &[Pubkey],
         commitment: Commitment,
@@ -166,7 +272,7 @@ impl RpcGateway {
         Ok((slot, accounts))
     }
 
-    pub async fn get_program_accounts(
+    async fn get_program_accounts(
         &self,
         filter: &AccountFilter,
     ) -> Result<Vec<AccountUpdate>, RpcError> {

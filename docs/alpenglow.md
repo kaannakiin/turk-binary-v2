@@ -15,12 +15,11 @@ Sources read on 2026-09-25: rpcpool/yellowstone-grpc tag `v15.2.1+solana.4.2.2` 
 ## Changes
 
 - **`bank_id` on updates.** Proto 14 adds an optional `bank_id` to account updates and to slot updates. Under Alpenglow one slot can carry more than one bank, so a slot number alone no longer names a fork. Proto 12.7 drops the field without any error: we would silently merge banks.
-- **Fork tracking keys.** Pending versions in the store and the slot trees key on `slot` today (`crates/market/src/store.rs`, `crates/market/src/fork.rs`). They have to key on `(slot, bank_id)`, and confirmation has to promote one bank of a slot and drop its siblings.
+- **Fork tracking keys.** Pending versions in the store and the slot trees key on `slot` today (`crates/market/src/store.rs`, `crates/market/src/fork.rs`). They have to key on `(slot, bank_id)`, and confirmation has to promote one bank of a slot and drop its siblings. The store's same-slot rule (`supersedes`: a confirmed read beats a streamed write of its slot) assumes one bank per slot and has to compare `(slot, bank_id)` too.
 - **Two Clock writes per slot.** The yellowstone CHANGELOG says the Clock sysvar is written twice per slot under Alpenglow. `Snapshots::set_clock` (`crates/market/src/view.rs`) keeps the current Clock when its slot is not older, so the second write of a slot is ignored. If that write moves `unix_timestamp`, fees by time and activation checks read a stale timestamp. TODO(verify): read the Agave 4.3 source for what the second write changes before fixing the ordering.
-- **Clock as heartbeat.** Every stream uses Clock as its heartbeat and replay checkpoint (`docs/architecture.md` → gRPC hub). Two writes per slot are harmless for that, but the per-slot assumptions there need a second look.
+- **Clock as heartbeat.** Every stream uses Clock as its heartbeat, and shards pass it on as a `Heartbeat` that releases transaction groups two slots behind (`docs/architecture.md` → gRPC hub, Engine). Two writes per slot are harmless for that, but the per-slot assumptions there need a second look.
 - **Client 14 `subscribe` no longer reconnects.** We already disable the client's own reconnect and reconnect per stream ourselves, so this needs no behaviour change, only the API migration.
 - **`DiscardBanks` (plugin 16).** The v16 tag adds a way to discard banks that lost. Check how it is delivered and whether it replaces rolling back on the next confirmation.
-- **Replay.** Re-check the replay rules (sealed slots only, accounts reduced to the last write per slot, no lifecycle statuses) against plugin 16 with banks in the picture.
 
 ## Order of work
 
