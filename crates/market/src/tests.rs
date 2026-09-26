@@ -465,6 +465,72 @@ async fn a_readiness_change_without_a_write_is_announced() {
 }
 
 #[tokio::test]
+async fn a_resumed_stream_rereads_its_keys_and_repairs_a_missed_write() {
+    let pool = cpmm_pool();
+    let rig = subscribed(&pool).await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    let before = rig.reads().len();
+    let shard_keys: Vec<Pubkey> = rig.hub.keys_on(Placement::Pool).into_iter().collect();
+    let missed = shard_keys[0];
+    rig.chain
+        .0
+        .lock()
+        .unwrap()
+        .accounts
+        .get_mut(&missed)
+        .unwrap()
+        .data = Bytes::from(vec![7; 165]);
+    rig.send(StreamEvent::Resumed {
+        stream: SHARD,
+        generation: 2,
+        from_slot: Slot(150),
+        at: Slot(200),
+        keys: shard_keys.clone(),
+    })
+    .await;
+    rig.until("the missed write", |r| {
+        r.head_data(&missed).as_deref() == Some(&[7; 165][..])
+    })
+    .await;
+    let reread: Vec<(Vec<Pubkey>, Slot)> = rig.reads()[before..].to_vec();
+    assert!(
+        reread.iter().all(|(_, min)| *min == Slot(204)),
+        "{reread:?}"
+    );
+    assert_eq!(
+        reread
+            .iter()
+            .flat_map(|(k, _)| k.clone())
+            .collect::<BTreeSet<_>>(),
+        shard_keys.into_iter().collect()
+    );
+    assert_eq!(rig.readiness(), Some(Readiness::Ready));
+    assert_eq!(rig.stats.snapshot().replay_repaired, 1);
+}
+
+#[tokio::test]
+async fn a_seed_read_announces_each_pool_once() {
+    let pool = cpmm_pool();
+    let rig = subscribed(&pool).await;
+    let mut changes = rig.reader.subscribe();
+    rig.effective_all(100).await;
+    rig.ready().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut announced = 0;
+    while let Ok(change) = changes.try_recv() {
+        announced += usize::from(change.pool == rig.pool);
+    }
+    let reads = rig.reads().len();
+    // Two of them are readiness changes: the streams coming up, then the
+    // seeds landing.
+    assert!(
+        announced <= reads + 2,
+        "{announced} announcements for {reads} seed reads"
+    );
+}
+
+#[tokio::test]
 async fn a_flap_on_an_unrelated_stream_keeps_the_published_view() {
     let pool = cpmm_pool();
     let rig = subscribed(&pool).await;

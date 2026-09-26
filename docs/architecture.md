@@ -2,17 +2,17 @@
 
 ## Crates
 
-| Crate              | Job                                                                                         | Talks to the network?      |
-| ------------------ | ------------------------------------------------------------------------------------------- | -------------------------- |
-| `apps/turk-binary` | CLI, config loading, logging                                                                | No (uses the crates below) |
-| `domain`           | Shared types: `DexKind`, `Slot`, `AccountUpdate`, `AccountFilter`, `ChainClock`             | No                         |
-| `dex`              | What each DEX looks like on chain: program ID, pool filter, and every account a quote needs | No                         |
-| `rpc`              | Every JSON-RPC call, rate-limited                                                           | Yes, JSON-RPC only         |
-| `grpc`             | Every Yellowstone gRPC stream: subscriptions, reconnects, replay, provider probes           | Yes, gRPC only             |
-| `market`           | Picks the pools, keeps every account they depend on subscribed and in sync, answers reads   | Through `rpc` and `grpc`   |
-| `quoter`           | Decodes a pool's accounts and computes swap quotes (DEX math and SDK binds); pure           | No                         |
-| `graph`            | Token graph built once from the universe: mints, pools, edges, per-pool activity bits       | No                         |
-| `route`            | Route threads: decode each pool as the market changes it, publish state for quotes          | No (reads `market`)        |
+| Crate              | Job                                                                                          | Talks to the network?      |
+| ------------------ | -------------------------------------------------------------------------------------------- | -------------------------- |
+| `apps/turk-binary` | CLI, config loading, logging                                                                 | No (uses the crates below) |
+| `domain`           | Shared types: `DexKind`, `Slot`, `AccountUpdate`, `AccountFilter`, `ChainClock`              | No                         |
+| `dex`              | What each DEX looks like on chain: program ID, pool filter, and every account a quote needs  | No                         |
+| `rpc`              | Every JSON-RPC call, rate-limited                                                            | Yes, JSON-RPC only         |
+| `grpc`             | Every Yellowstone gRPC stream: subscriptions, reconnects, replay, provider probes            | Yes, gRPC only             |
+| `market`           | Picks the pools, keeps every account they depend on subscribed and in sync, answers reads    | Through `rpc` and `grpc`   |
+| `quoter`           | Decodes a pool's accounts and computes swap quotes (DEX math and SDK binds); pure            | No                         |
+| `graph`            | Token graph built once from the universe: mints, pools, edges, per-pool activity bits        | No                         |
+| `route`            | Decodes each pool on the pipeline thread that publishes it; quotes against the decoded state | No (reads `market`)        |
 
 Dependencies point one way:
 
@@ -62,8 +62,8 @@ When a structural account changes (a bitmap bit flips, an extension is created),
 
 ## gRPC hub
 
-- **Groups and sharding.** A pool's group lands on one of `streams` shards by rendezvous hashing of the pool address. The group holds the pool's pool-scoped accounts (vaults, arrays, oracle), so they share a stream, a connection generation and a slot tree. Shared accounts (Clock, mints, configs, DAMM v1 vault state, any account two pools use) go to the partition's own `Shared` stream (see [Partitions](#partitions)), so a pool's accounts can arrive over two streams with no order between them. Streams without groups never connect.
-- **Transaction statuses on shards.** Each shard also subscribes `transactions_status` for its group accounts (Clock excluded; vote and failed transactions excluded). The plugin sends a transaction's status after every account write of that transaction on the same stream, so the status closes the group of writes that carry its signature. Measured 2026-09-25 with `just txn-probe` (30 min, 280 pools, Yellowstone 15.2.1 on Agave 4.2.2): of 44,434 statuses none arrived before one of its writes or after its slot's `processed` status, and no group went 2 s without one. A 45-minute rerun on an otherwise idle machine put the status 15–133 µs after the group's last write at p50 and under 0.6 ms at p99 for every DEX (max 48 ms). The first run, taken while the same machine was compiling, showed a p99 of 107–169 ms for Whirlpool and DLMM, most likely the probe itself waiting for CPU. In the rerun, a new transaction never wrote a pool before the previous transaction's status arrived, so releasing a group early on the next write would gain nothing.
+- **Groups and sharding.** A pool's group lands on one of `streams` shards by rendezvous hashing of the pool address. The group holds the pool's pool-scoped accounts (vaults, arrays, oracle), so they share a stream, a connection generation and a slot tree. Shared accounts (Clock, mints, configs, DAMM v1 vault state, any account two pools use) go to the partition's own `Shared` stream (see [Pipeline threads](#pipeline-threads)), so a pool's accounts can arrive over two streams with no order between them. Streams without groups never connect.
+- **Transaction statuses on shards.** Each shard also subscribes `transactions_status` for its group accounts (Clock excluded; vote and failed transactions excluded). The plugin sends a transaction's status after every account write of that transaction on the same stream, so the status closes the group of writes that carry its signature. Agave guarantees that order, not the plugin: a batch is committed, which notifies every account write, before it is handed to the single transaction-status thread (agave `v4.2.2` `ledger/src/blockstore_processor.rs`, `rpc/src/transaction_status_service.rs`). Nothing orders writes of other transactions in between. Measured 2026-09-25 with `just txn-probe` (30 min, 280 pools, Yellowstone 15.2.1 on Agave 4.2.2): of 44,434 statuses none arrived before one of its writes or after its slot's `processed` status, and no group went 2 s without one. A 45-minute rerun on an otherwise idle machine put the status 15–133 µs after the group's last write at p50 and under 0.6 ms at p99 for every DEX (max 48 ms). The first run, taken while the same machine was compiling, showed a p99 of 107–169 ms for Whirlpool and DLMM, most likely the probe itself waiting for CPU. In the rerun, a new transaction never wrote a pool before the previous transaction's status arrived, so releasing a group early on the next write would gain nothing.
 - **Every request is the full filter set**, because Yellowstone replaces filters on each send. Pubkeys are split into filters of at most `max_pubkeys_per_filter`. Changes are coalesced for `filter_flush_ms` and sent on the open stream; no reconnect.
 - **Confirming a filter change.** The plugin sends no acknowledgement, so filter names carry a sequence number and the server tags every update with the names it matched. The first update tagged with a new sequence proves the switch; its slot is the effective slot. A request never carries `ping`: the plugin treats a request with `ping` as a keepalive and leaves its filters unchanged. Server pings are answered with a ping-only request.
 - **Clock on every stream.** `SysvarC1ock11111111111111111111111111111111` updates every slot, so every stream subscribes it. It is the heartbeat, the evidence of the stream's current slot, the replay checkpoint, and (on the shared stream only) the chain clock readers use.
@@ -76,32 +76,42 @@ The Yellowstone client's own reconnect is off: it injects filters of its own and
 1. On a drop the stream emits `Down`, and its pools stop being ready.
 2. It asks the server for its oldest replayable slot. If the last slot seen minus `replay_margin_slots` is still in range, it reconnects with `from_slot`.
 3. If the replay starts more than `replay_skip_tolerance` slots late, or replay is off, unsupported or out of range, the stream emits `Gap` with all its keys once the new connection is effective. Only those keys are re-seeded, at the new barrier. Nothing else is touched.
-4. If the replay reaches the pre-drop tip, the stream emits `Resumed` and nothing needs a read.
+4. If the replay reaches the pre-drop tip, the stream emits `Resumed` with that slot and its keys. The replay is not complete: the plugin replays only sealed slots, and a new connection drops live writes until its filters apply, so writes in the slot that was executing across the reconnect never arrive (yellowstone `v15.2.1+solana.4.2.2` `yellowstone-grpc-geyser/src/grpc.rs`). The market therefore reads every key of the stream again at that slot plus `settle_slots`, at `confirmed`, without dropping readiness or open transaction groups. A read never undoes a newer streamed write; one that changes a key counts as `replay_repaired`.
+
+A replay also sends each account only once per slot, as its last write in that slot, and sends no lifecycle slot statuses (first shred, completed, created bank, dead). Transaction groups rebuilt from a replay may therefore miss writes; the slot's final state is still right, and a fork that died during the outage is dropped at the next confirmation instead.
 
 Account updates older than `max_message_delay_ms` make a stream reconnect, except while a replayed connection catches up: replayed account updates keep the time the plugin first saw them, and the replay also carries everything written while the stream was down. Lag counts again from the first current account update. Slot statuses and pings are not used, because the plugin stamps replayed ones with the time it sends them.
 
 `reconnect.max_attempts = 0` retries forever. Only fatal errors (bad credentials, a request the server can never accept) stop the hub.
 
-To exercise this on a live stream, run `just watch-release` and, in another terminal, `sudo scripts/net_fault.sh drop 30` (packets vanish, the stream has to notice) or `sudo scripts/net_fault.sh reset 5` (connections are reset at once). The script cuts only that process's TCP connections, with pf, and restores them after the given seconds. Expect `downs` and `resumed` to rise, `gaps` and `drift` to stay at 0, and every pool to be ready again. With `replay = false` the same cut exercises the `Gap` path instead.
+To exercise this on a live stream, run `just watch-release` and, in another terminal, `sudo scripts/net_fault.sh drop 30` (packets vanish, the stream has to notice) or `sudo scripts/net_fault.sh reset 5` (connections are reset at once). The script cuts only that process's TCP connections, with pf, and restores them after the given seconds. Expect `downs`, `resumed` and usually `replay_repaired` to rise, `gaps` and `drift` to stay at 0, and every pool to stay or become ready again. With `replay = false` the same cut exercises the `Gap` path instead.
 
-## Partitions
+## Pipeline threads
 
-`sync.pipeline_threads` (default 2) splits the writers. Shard `i` feeds partition `i % pipeline_threads`, so a pool's partition follows from its shard. Each partition is one `Engine` on its own OS thread (`market-p{i}`, with a single-threaded tokio runtime) and owns its pools' store, closures, sync state, repairs, audit and slot trees.
+`threads.pipeline` (`0` = automatic, see [configuration.md](configuration.md#threads)) sets the pipeline threads, one per partition. Shard `i` feeds partition `i % pipeline`, so a pool's partition follows from its shard. Each partition runs on one OS thread (`pipe-p{i}`, with a single-threaded tokio runtime) and does the whole path from bytes to decoded state for its own pools:
+
+1. **Streams.** Its shard streams and its shared stream run on this thread's runtime: TLS, HTTP/2, gzip and protobuf decoding happen here, and tonic's connection tasks with them.
+2. **Engine.** Store, forks, transaction groups, readiness, seeds, repairs and the audit. RPC reads are spawned on the same runtime.
+3. **Decoding.** Every view the engine publishes is decoded here before any reader can load it (see [Decoding](#decoding)).
+
+Metis and Pallas run this path in one pool too (`ROUTER_UPDATE_THREADS`, `PIPELINE_THREADS`); the route search will get a pool of its own. Besides the pipeline, `watch` runs a fixed two-thread runtime (`app`) for startup, the stats line and, in `blocks_meta` mode, the slot feed.
 
 Partitions share nothing but the read side:
 
 - Each partition has its own shared stream, so Clock, mints and configs are subscribed once per partition. A shared account's `Effective`, seeds and fork state therefore never cross a partition.
-- The slot feed (`blocks_meta` mode) sends its slot statuses to every partition.
-- All partitions publish into one lock-free snapshot table and one `PoolChanged` feed, and their stats are summed (slots: the newest).
+- The slot feed (`blocks_meta` mode) sends its slot statuses to every partition, one after the other, so a slow partition delays the others' slot statuses.
+- All partitions publish into one lock-free snapshot table, one decoded-state table and one `PoolChanged` feed, and their stats are summed (slots: the newest).
 - RPC load stays bounded by the `rpc` gateway's global `max_in_flight` and `max_rps`. `repair_concurrency` applies per partition.
 
-With `pipeline_threads = 1` everything runs on one writer thread, as before.
+A stream that fails for good (bad credentials, a request the server can never accept) stops its partition, and a panic outside a venue's own guard does too; either way `watch` exits.
 
 ## Engine
 
-`market::Engine` owns one partition's state in one task and never waits on RPC. Seeds, repairs and audits run in spawned tasks and report back, so a slow endpoint delays seeds but never the stream.
+`market::Engine` owns one partition's state in one task and never waits on RPC. Seeds, repairs and audits run in spawned tasks and report back, so a slow endpoint delays seeds but never the stream. The tick (every `tick_ms`) is polled before stream events, so transaction expiry, repairs and readiness keep running under a steady event flow.
 
-- **Transaction groups.** A swap writes the pool and both vaults in separate messages. Applied one by one, a reader could see one vault after the swap and the other before it. The txn probe measured this at 66–86% of pool updates. So a shard write that carries a transaction signature is held until that transaction's status arrives, then the whole group is applied at once and each affected pool gets one `PoolChanged`. Writes without a signature (sysvars) and shared-stream writes are applied at once. A group whose status never comes is applied after `txn_wait_ms`, or before its slot is confirmed, whichever is first, and counted as `txn_orphans`. A dropped stream discards its open groups; replay or the `Gap` re-read brings them back. Pools whose state spans both streams (DAMM v1, accounts shared by two pools) get no such guarantee.
+- **One publish per step.** A transaction group, a seed ticket, an audit batch and a fork revert each publish every pool they change once, at the newest slot of their writes, instead of once per account.
+
+- **Transaction groups.** A swap writes the pool and both vaults in separate messages. Applied one by one, a reader could see one vault after the swap and the other before it. The txn probe measured this at 66–86% of pool updates. So a shard write that carries a transaction signature is held until that transaction's status arrives, then the whole group is applied at once and each affected pool gets one `PoolChanged`. Writes without a signature (sysvars, fee payouts and `SlotHistory` when a slot freezes, epoch rewards) and shared-stream writes are applied at once. A group whose status never comes is applied after `txn_wait_ms`, or before its slot is confirmed, whichever is first, and counted as `txn_orphans`. A dropped stream discards its open groups; replay or the `Gap` re-read brings them back. Pools whose state spans both streams (DAMM v1, accounts shared by two pools) get no such guarantee.
 - **Repair queue.** Keys needing a read are batched into tickets of up to 100 keys, pool and structural accounts first, speculative ones (Whirlpool tick arrays that may not exist) last. At most `repair_concurrency` tickets are in flight, and a key is never read twice at once.
 - **Epochs.** A gap bumps each affected key's epoch; a read dispatched before the gap cannot mark the key live.
 - **Drift audit.** Every `audit_interval_ms`, up to 100 live keys are read and compared with what the store held at that slot. A key is compared only once its own stream has confirmed that slot, so every write up to it has arrived. Owner, lamports and data are compared as they are, so a funded but uninitialized address has to match too. A difference replaces the stored copy and is counted.
@@ -116,7 +126,7 @@ An address the System program owns with no data counts as absent even when it ho
 
 - `pool_view(pool)`: the pool as the engine last published it: every dependency except the Clock, its readiness, and `cross_stream` when an account a swap writes rides the shared stream (DAMM v1, accounts two pools share), so the view may hold part of a transaction. Reads take no lock: the engine publishes an immutable view per pool (`arc-swap`) after each applied transaction group, seed, audit fix or readiness change.
 - `clock()`: the Clock sysvar, never the host clock. It has its own cell, so a Clock update rebuilds no pool view and sends no `PoolChanged`. Every partition writes its own stream's Clock into that cell, so only a newer slot replaces it; a partition behind another, or a rolled-back fork, never moves the clock back.
-- `subscribe()`: a `PoolChanged` for each published change to a pool: once per transaction group, when a fork rollback or a dead slot moves an account back, and when the pool's readiness, dependencies or `cross_stream` change without any write (a stream drop, a closure change). A readiness event carries the partition's newest confirmed slot. A view is replaced only when its content, readiness, dependencies or `cross_stream` changed, and every replacement is followed by a `PoolChanged`: route decides freshness by comparing view pointers, so a silent replacement would leave a quiet pool `Stale` until its next write.
+- `subscribe()`: a `PoolChanged` for each published change to a pool: once per transaction group, when a fork rollback or a dead slot moves an account back, and when the pool's readiness, dependencies or `cross_stream` change without any write (a stream drop, a closure change). A readiness event carries the partition's newest confirmed slot. A view is replaced only when its content, readiness, dependencies or `cross_stream` changed, and every replacement is decoded first and followed by a `PoolChanged`: route decides freshness by comparing view pointers, so a silent replacement would leave a quiet pool `Stale` until its next write.
 
 ## Fork tracking
 
@@ -127,7 +137,7 @@ Updates stream at `processed` so they arrive as early as possible. A `processed`
 
 Slot statuses come from `slot_source`:
 
-- **`slots`**: every stream carries its own slot updates and keeps its own slot tree, because `write_version` only has meaning within one connection.
+- **`slots`**: every stream carries its own slot updates and keeps its own slot tree, because `write_version` is one counter per validator process: a reconnect can land on another node behind a load balancer, so the store only compares it within one `(stream, generation)`.
 - **`blocks_meta`**: for providers that refuse `slots`. One extra connection streams confirmed block metadata into one global tree. Dead slots are not reported there, so losing forks are rolled back when the next slot is confirmed rather than when they die.
 - **`auto`**: a probe at start picks `slots` if the provider accepts it.
 
@@ -142,19 +152,18 @@ Resolution:
 
 If a parent link is missing, slots below the hole are promoted as if canonical, `fork_gaps` is counted, and the promoted accounts are re-read. The chain starts at the first `processed` slot a stream sees, and again after every drop; the older statuses resent on connect fill in parents but do not move that start, so the hole below it is not a gap. A drop without replay leaves a hole that the stream's `Gap` re-reads anyway.
 
-**Alpenglow.** The design already follows the official recipe (buffer unconfirmed data, promote the confirmed bank, drop the rest). Once the Yellowstone proto ships `bank_id`, pending versions and the slot tree key on `(slot, bank_id)` instead of `slot`, because one slot may then carry more than one bank.
+**Alpenglow.** The design already follows the official recipe (buffer unconfirmed data, promote the confirmed bank, drop the rest). Yellowstone proto 14 now ships `bank_id`; pending versions and the slot tree have to key on `(slot, bank_id)` instead of `slot`, because one slot may carry more than one bank. [alpenglow.md](alpenglow.md) lists everything the upgrade touches.
 
-## Route threads
+## Decoding
 
-`route.route_threads` (default 4) sets the decode and quote threads, separate from the `pipeline_threads` writers. Each is one OS thread (`route-r{i}`) and owns the pools whose address hashes to it.
+Pools are decoded on their partition's pipeline thread, inside the engine's publish: the engine builds a pool's view, hands it to its `route::Decoder` (a `market::ViewSink`), then publishes the view and sends `PoolChanged`. Decoded state is therefore never behind the view a reader loads, and a `PoolChanged` always finds decoded state.
 
-- **Input.** Every thread subscribes to `MarketReader::subscribe()`, drains whatever `PoolChanged` events are queued into one set, and handles each of its pools once per batch. A thread that falls behind the feed (`Lagged`) rescans all its pools instead.
-- **Incremental decode.** Per pool the thread remembers, for every dependency, the update order, owner, lamports and data buffer it last decoded. Any difference counts as a change: a fork rollback moves the order back and RPC seeds share one write version, so "newer" would miss them. Only changed accounts go through `quoter::VenueState::apply`; a dependency that leaves the closure is applied as absent.
+- **Incremental decode.** Per pool the decoder remembers, for every dependency, the update order, owner, lamports and data buffer it last decoded. Any difference counts as a change: a fork rollback moves the order back and RPC seeds share one write version, so "newer" would miss them. Only changed accounts go through `quoter::VenueState::apply`; a dependency that leaves the closure is applied as absent. The state is shared with what was published, so a publish that changes nothing copies nothing.
 - **Readiness.** Only `Ready` pools are decoded. `Closed` and `Invalid` pools drop their state.
-- **Output.** Each pool's state is published into a lock-free table together with the `PoolView` it was decoded from. `route::QuoteReader::quote` runs on the caller's thread and refuses when the market has published a newer view than the one decoded (`Stale`), the pool is not ready, a dependency failed to decode, or no Clock is known yet. Time-dependent inputs (fees by epoch, activation times) come from the Clock sysvar at quote time, so a Clock update needs no re-decode.
-- **Activity.** Right after decoding a pool, its thread writes the pool's activity bit in the [graph](#graph).
+- **Output.** Each pool's state is published into a lock-free table together with the `PoolView` it was decoded from. `route::QuoteReader::quote` runs on the caller's thread and refuses when the pool is not ready, a dependency failed to decode, no Clock is known yet, or the market's view is not the one decoded (`Stale`). Since decoding happens before the view is published, `Stale` only shows a read that raced a publish. Time-dependent inputs (fees by epoch, activation times) come from the Clock sysvar at quote time, so a Clock update needs no re-decode.
+- **Activity.** Right after decoding a pool, the decoder writes the pool's activity bit in the [graph](#graph).
 - **Panics.** A venue panic while decoding or quoting is caught: the pool's state is discarded and rebuilt on its next change, and `panics` counts it.
-- **Batch time.** Every drained batch (or rescan) is timed into one lock-free histogram shared by all threads; the `route` line reports its p50, p99 and max.
+- **Decode time.** Every publish is timed into one lock-free histogram shared by all partitions; the `route` line reports its p50, p99 and max.
 - **Probe.** `watch` exercises the quote path on live state: each stats tick it quotes `route.probe_amount` both ways through every decoded pool on a blocking thread (`QuoteReader::probe`) and logs, per DEX, how many quoted and why the rest refused (`quote probe`), with the sweep time and the slowest quote.
 
 ## Graph
@@ -163,8 +172,8 @@ If a parent link is missing, slots below the hole are promoted as if canonical, 
 
 - **Layout.** Mints and pools get dense `u32` ids (`MintId`, `PoolId`), valid for one process. An edge is `PoolId << 1 | b_to_a`, so it needs no table of its own. Outgoing edges are stored per mint, grouped by the mint they lead to: every pool between the same two mints sits in one run, which a search quotes together. Incoming edges are grouped the same way, for closing cycles.
 - **Left out.** A pool without two known mints (a Pump bonding curve given by address) or with the same mint on both sides gets no edge. `graph built` counts them as `unplaced` and lists them at debug level.
-- **Activity.** One bit per pool: the pool is `Ready`, its DEX has a quoter venue, and every account decoded. The route thread that owns the pool writes the bit right after decoding it, so each bit has one writer and never runs ahead of the decoded state. A route rescan after `Lagged` rewrites every bit it owns.
-- **The bit is coarse on purpose.** An active pool can still refuse a quote: a transfer-hook mint, one direction disabled, or `Stale` between a market publish and its decode. A search treats any refused quote as a dead edge for that search.
+- **Activity.** One bit per pool: the pool is `Ready`, its DEX has a quoter venue, and every account decoded. The pool's pipeline thread writes the bit right after decoding it, so each bit has one writer and never runs ahead of the decoded state.
+- **The bit is coarse on purpose.** An active pool can still refuse a quote: a transfer-hook mint, one direction disabled, or a read racing a publish (`Stale`). A search treats any refused quote as a dead edge for that search.
 - **Stats.** `graph built` at start (mints, pools, pairs, edges, unplaced, build time); each stats tick, `graph` (active pools, flips). `just bench graph` measures building the graph and scanning a hub on synthetic power-law universes of 10k and 100k pools.
 
 ### Search (next phase)

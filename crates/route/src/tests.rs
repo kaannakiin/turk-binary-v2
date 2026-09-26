@@ -1,10 +1,9 @@
-//! The route threads against a fake market feed. Pool state is a recorded
-//! pump AMM pool; a fresh `VenueState` fed the same bytes is the oracle for
-//! what the threads' incremental decode must reach.
+//! The decoder against a fake market feed. Pool state is a recorded pump
+//! AMM pool; a fresh `VenueState` fed the same bytes is the oracle for what
+//! the decoder's incremental decode must reach.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -13,30 +12,17 @@ use dex::{Dependency, OwnerRule, Role, Scope, Side};
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 use domain::{ChainClock, DexKind, Pubkey, Slot, UpdateOrder, WriteVersion};
 use graph::{PoolSeed, Topology};
-use market::{PoolChanged, PoolView, Readiness, Reason, StoredAccount};
+use market::{PoolView, Readiness, Reason, StoredAccount, ViewSink};
 use quoter::{AccountRef, QuoteInput, VenueState};
-use tokio::sync::broadcast;
 
-use crate::{PoolFeed, RouteError, RouteSettings, Router};
+use crate::{Decoder, Decoding, PoolFeed, Quote, QuoteReader, RouteError};
 
-const WAIT: Duration = Duration::from_secs(2);
-
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct FakeFeed {
     views: Arc<Mutex<HashMap<Pubkey, Arc<PoolView>>>>,
-    changes: broadcast::Sender<PoolChanged>,
 }
 
 impl PoolFeed for FakeFeed {
-    fn pools(&self) -> Vec<(Pubkey, DexKind, Readiness)> {
-        self.views
-            .lock()
-            .expect("views")
-            .values()
-            .map(|v| (v.pool, v.dex, v.readiness))
-            .collect()
-    }
-
     fn pool_view(&self, pool: &Pubkey) -> Option<Arc<PoolView>> {
         self.views.lock().expect("views").get(pool).cloned()
     }
@@ -49,31 +35,6 @@ impl PoolFeed for FakeFeed {
             leader_schedule_epoch: 0,
             unix_timestamp: 1_785_840_058,
         })
-    }
-
-    fn subscribe(&self) -> broadcast::Receiver<PoolChanged> {
-        self.changes.subscribe()
-    }
-}
-
-impl FakeFeed {
-    fn new() -> Self {
-        Self {
-            views: Arc::default(),
-            changes: broadcast::channel(64).0,
-        }
-    }
-
-    fn publish(&self, view: PoolView) {
-        let pool = view.pool;
-        self.views
-            .lock()
-            .expect("views")
-            .insert(pool, Arc::new(view));
-        let _ = self.changes.send(PoolChanged {
-            pool,
-            slot: Slot(0),
-        });
     }
 }
 
@@ -194,17 +155,6 @@ fn oracle(recorded: &Recorded, feed: &FakeFeed, amount_in: u64) -> u64 {
         .amount_out
 }
 
-fn until<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> T {
-    let deadline = Instant::now() + WAIT;
-    loop {
-        if let Some(v) = f() {
-            return v;
-        }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 fn topology_of(pools: &[(Pubkey, DexKind)]) -> Arc<Topology> {
     Arc::new(
         Topology::build(pools.iter().map(|&(pubkey, dex)| PoolSeed {
@@ -216,92 +166,101 @@ fn topology_of(pools: &[(Pubkey, DexKind)]) -> Arc<Topology> {
     )
 }
 
-fn active(topology: &Topology, pool: &Pubkey) -> bool {
-    topology
-        .activity()
-        .is_active(topology.pool_id(pool).expect("placed pool"))
+struct Rig {
+    feed: FakeFeed,
+    decoder: Decoder,
+    reader: QuoteReader<FakeFeed>,
+    topology: Arc<Topology>,
 }
 
-fn settings(route_threads: u16) -> RouteSettings {
-    RouteSettings {
-        route_threads,
-        ..RouteSettings::default()
+fn rig(pools: &[(Pubkey, DexKind)]) -> Rig {
+    let topology = topology_of(pools);
+    let mut decoding = Decoding::new(Arc::clone(&topology));
+    let feed = FakeFeed::default();
+    Rig {
+        decoder: decoding.decoder(),
+        reader: decoding.reader(feed.clone()),
+        feed,
+        topology,
+    }
+}
+
+impl Rig {
+    /// In the market's order: the decoder sees a view before readers can.
+    fn publish(&mut self, view: PoolView) {
+        let view = Arc::new(view);
+        self.decoder.publish(&view);
+        self.feed
+            .views
+            .lock()
+            .expect("views")
+            .insert(view.pool, view);
+    }
+
+    fn quote(&self, pool: &Pubkey) -> Result<Quote, RouteError> {
+        self.reader.quote(pool, 1_000_000, false, 0)
+    }
+
+    fn active(&self, pool: &Pubkey) -> bool {
+        self.topology
+            .activity()
+            .is_active(self.topology.pool_id(pool).expect("placed pool"))
     }
 }
 
 #[test]
 fn a_ready_pool_is_decoded_and_quoted_through_the_reader() {
-    let feed = FakeFeed::new();
     let recorded = recorded();
-    let topology = topology_of(&[(recorded.pool, DexKind::PumpAmm)]);
-    let router = Router::start(feed.clone(), &settings(2), &topology).expect("router");
-    let reader = router.reader();
-    feed.publish(view(&recorded, Readiness::Ready, 10));
-    let expected = oracle(&recorded, &feed, 1_000_000);
-    let got = until("a quote", || {
-        reader.quote(&recorded.pool, 1_000_000, false, 0).ok()
-    });
-    assert_eq!(got.out.amount_out, expected);
-    until("the pool to turn active", || {
-        active(&topology, &recorded.pool).then_some(())
-    });
-    router.shutdown();
+    let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);
+    rig.publish(view(&recorded, Readiness::Ready, 10));
+    let expected = oracle(&recorded, &rig.feed, 1_000_000);
+    assert_eq!(rig.quote(&recorded.pool).unwrap().out.amount_out, expected);
+    assert!(rig.active(&recorded.pool));
 }
 
 #[test]
 fn an_account_moved_back_by_a_rollback_is_decoded_again() {
-    let feed = FakeFeed::new();
     let mut recorded = recorded();
-    let topology = topology_of(&[(recorded.pool, DexKind::PumpAmm)]);
-    let router = Router::start(feed.clone(), &settings(1), &topology).expect("router");
-    let reader = router.reader();
-    feed.publish(view(&recorded, Readiness::Ready, 20));
-    until("the first quote", || {
-        reader.quote(&recorded.pool, 1_000_000, false, 0).ok()
-    });
+    let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);
+    rig.publish(view(&recorded, Readiness::Ready, 20));
+    rig.quote(&recorded.pool).unwrap();
 
     let vault = &mut recorded.accounts[1].2;
     let amount = u64::from_le_bytes(vault[64..72].try_into().expect("amount"));
     vault[64..72].copy_from_slice(&(amount / 2).to_le_bytes());
-    feed.publish(view(&recorded, Readiness::Ready, 19));
-    let expected = oracle(&recorded, &feed, 1_000_000);
-    until("the rolled-back vault", || {
-        reader
-            .quote(&recorded.pool, 1_000_000, false, 0)
-            .ok()
-            .filter(|q| q.out.amount_out == expected)
-    });
-    router.shutdown();
+    rig.publish(view(&recorded, Readiness::Ready, 19));
+    let expected = oracle(&recorded, &rig.feed, 1_000_000);
+    assert_eq!(rig.quote(&recorded.pool).unwrap().out.amount_out, expected);
 }
 
 #[test]
 fn a_pool_that_stops_being_ready_is_refused() {
-    let feed = FakeFeed::new();
     let recorded = recorded();
-    let topology = topology_of(&[(recorded.pool, DexKind::PumpAmm)]);
-    let router = Router::start(feed.clone(), &settings(1), &topology).expect("router");
-    let reader = router.reader();
-    feed.publish(view(&recorded, Readiness::Ready, 30));
-    until("the first quote", || {
-        reader.quote(&recorded.pool, 1_000_000, false, 0).ok()
-    });
-    feed.publish(view(&recorded, Readiness::NotReady(Reason::Syncing), 30));
-    until("the refusal", || {
-        matches!(
-            reader.quote(&recorded.pool, 1_000_000, false, 0),
-            Err(RouteError::NotReady(Reason::Syncing))
-        )
-        .then_some(())
-    });
-    until("the pool to turn inactive", || {
-        (!active(&topology, &recorded.pool)).then_some(())
-    });
-    router.shutdown();
+    let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);
+    rig.publish(view(&recorded, Readiness::Ready, 30));
+    rig.quote(&recorded.pool).unwrap();
+    rig.publish(view(&recorded, Readiness::NotReady(Reason::Syncing), 30));
+    assert!(matches!(
+        rig.quote(&recorded.pool),
+        Err(RouteError::NotReady(Reason::Syncing))
+    ));
+    assert!(!rig.active(&recorded.pool));
+}
+
+#[test]
+fn a_view_the_decoder_has_not_seen_is_refused_as_stale() {
+    let recorded = recorded();
+    let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);
+    rig.publish(view(&recorded, Readiness::Ready, 50));
+    rig.feed.views.lock().expect("views").insert(
+        recorded.pool,
+        Arc::new(view(&recorded, Readiness::Ready, 51)),
+    );
+    assert!(matches!(rig.quote(&recorded.pool), Err(RouteError::Stale)));
 }
 
 #[test]
 fn a_ready_pool_that_cannot_be_quoted_stays_inactive() {
-    let feed = FakeFeed::new();
     let mut broken = recorded();
     broken.accounts[3].2.truncate(10);
     let unsupported = PoolView {
@@ -311,34 +270,22 @@ fn a_ready_pool_that_cannot_be_quoted_stays_inactive() {
         accounts: Vec::new(),
         cross_stream: false,
     };
-    let healthy = recorded();
-    let topology = topology_of(&[
+    let mut rig = rig(&[
         (broken.pool, DexKind::PumpAmm),
         (unsupported.pool, DexKind::PumpBondingCurve),
-        (healthy.pool, DexKind::PumpAmm),
     ]);
-    let router = Router::start(feed.clone(), &settings(1), &topology).expect("router");
-    let reader = router.reader();
-    feed.publish(view(&broken, Readiness::Ready, 40));
-    feed.publish(unsupported.clone());
-    until("both pools decoded", || {
-        let broken_refused = matches!(
-            reader.quote(&broken.pool, 1_000_000, false, 0),
-            Err(RouteError::Decode(_))
-        );
-        let unsupported_refused = matches!(
-            reader.quote(&unsupported.pool, 1_000_000, false, 0),
-            Err(RouteError::Quote(quoter::QuoteError::Unsupported(
-                DexKind::PumpBondingCurve
-            )))
-        );
-        (broken_refused && unsupported_refused).then_some(())
-    });
-    feed.publish(view(&healthy, Readiness::Ready, 41));
-    until("a later batch to finish", || {
-        active(&topology, &healthy.pool).then_some(())
-    });
-    assert!(!active(&topology, &broken.pool));
-    assert!(!active(&topology, &unsupported.pool));
-    router.shutdown();
+    rig.publish(view(&broken, Readiness::Ready, 40));
+    rig.publish(unsupported.clone());
+    assert!(matches!(
+        rig.quote(&broken.pool),
+        Err(RouteError::Decode(_))
+    ));
+    assert!(matches!(
+        rig.quote(&unsupported.pool),
+        Err(RouteError::Quote(quoter::QuoteError::Unsupported(
+            DexKind::PumpBondingCurve
+        )))
+    ));
+    assert!(!rig.active(&broken.pool));
+    assert!(!rig.active(&unsupported.pool));
 }

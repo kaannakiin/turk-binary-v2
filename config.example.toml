@@ -54,11 +54,12 @@ repair_concurrency = 2
 audit_interval_ms = 10000
 stream_swap_accounts = true
 txn_wait_ms = 400
-pipeline_threads = 2
 
 [route]
-route_threads = 4         # decode + quote threads, separate from the pipeline (writer) threads
 probe_amount = 1000000    # watch quotes this raw amount both ways through every pool each stats tick; 0 = off
+
+[threads]
+pipeline = 0              # threads that read the gRPC streams, apply writes and decode pools; 0 = automatic
 
 [grpc.transport]
 http2_keep_alive_interval_ms = 15000

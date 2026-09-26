@@ -4,12 +4,6 @@ use quoter::{DecodeError, QuoteError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RouteError {
-    #[error("route.route_threads must be at least 1")]
-    Threads,
-    #[error("starting a route thread: {0}")]
-    Thread(#[source] std::io::Error),
-    #[error("a route thread panicked")]
-    ThreadPanicked,
     #[error("{0} is not in the universe")]
     UnknownPool(Pubkey),
     #[error("pool is not ready: {0:?}")]

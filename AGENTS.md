@@ -15,7 +15,7 @@ crates/grpc/        # lib: all Yellowstone gRPC streams (sharded hub)
 crates/market/      # lib: pool universe resolution, account store, ingestion
 crates/quoter/      # lib: account decode and swap quotes per DEX (SDK binds), no I/O
 crates/graph/       # lib: token graph built from the universe (mints, pools, edges), per-pool activity bits, no I/O
-crates/route/       # lib: route threads: incremental decode, published quote state, activity bits
+crates/route/       # lib: decoder run on the pipeline threads (incremental decode, activity bits), quote reader
 docs/               # user docs: architecture, config, DEX table
 oracle/             # separate workspace: LiteSVM replay of snapshot swaps on mainnet's deployed programs
 ```

@@ -61,13 +61,13 @@ pub(crate) struct Snapshots {
 }
 
 impl Snapshots {
-    pub(crate) fn publish(&self, view: PoolView) {
+    pub(crate) fn publish(&self, view: Arc<PoolView>) {
         if let Some(cell) = self.pools.load().get(&view.pool) {
-            cell.store(Arc::new(view));
+            cell.store(view);
             return;
         }
         let pool = view.pool;
-        let cell = Arc::new(ArcSwap::from_pointee(view));
+        let cell = Arc::new(ArcSwap::new(view));
         self.pools.rcu(|pools| {
             let mut pools = Cells::clone(pools);
             pools.insert(pool, Arc::clone(&cell));

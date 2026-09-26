@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::time::Instant;
@@ -7,21 +7,12 @@ use bytes::Bytes;
 use dex::Role;
 use domain::{DexKind, LatencyHistogram, Pubkey, UpdateOrder};
 use graph::Topology;
-use market::{PoolChanged, PoolView, Readiness, Reason, StoredAccount};
+use market::{PoolView, Readiness, Reason, StoredAccount, ViewSink};
 use quoter::{AccountRef, DecodeError, VenueState};
-use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-use tokio::sync::watch;
 
 use crate::feed::PoolFeed;
-use crate::reader::{Decoded, Table};
-use crate::stats::Stats;
-
-pub(crate) fn owner_of(pool: &Pubkey, threads: usize) -> usize {
-    let bytes = pool.to_bytes();
-    let mut word = [0u8; 8];
-    word.copy_from_slice(&bytes[..8]);
-    usize::try_from(u64::from_le_bytes(word) % u64::try_from(threads).unwrap_or(1)).unwrap_or(0)
-}
+use crate::reader::{Decoded, QuoteReader, Table};
+use crate::stats::{RouteStatsSnapshot, Stats};
 
 /// What was last decoded for one account. A fork rollback moves the order
 /// back and RPC seeds share one write version, so any difference counts as
@@ -61,7 +52,9 @@ impl Seen {
 }
 
 struct Entry {
-    state: VenueState,
+    /// Shared with the published `Decoded`: a publish that changes nothing
+    /// copies nothing, and the first change after a publish copies once.
+    state: Arc<VenueState>,
     supported: bool,
     seen: HashMap<Pubkey, Seen, ahash::RandomState>,
     errors: HashMap<Pubkey, DecodeError, ahash::RandomState>,
@@ -71,7 +64,7 @@ struct Entry {
 impl Entry {
     fn new(dex: DexKind) -> Self {
         Self {
-            state: VenueState::new(dex),
+            state: Arc::new(VenueState::new(dex)),
             supported: VenueState::supports(dex),
             seen: HashMap::default(),
             errors: HashMap::default(),
@@ -85,7 +78,8 @@ impl Entry {
 
     /// `Err` when the venue panicked; the state is then discarded.
     fn apply(&mut self, account: &AccountRef<'_>, stats: &Stats) -> Result<(), ()> {
-        match catch_unwind(AssertUnwindSafe(|| self.state.apply(account))) {
+        let venue = Arc::make_mut(&mut self.state);
+        match catch_unwind(AssertUnwindSafe(|| venue.apply(account))) {
             Ok(Ok(())) => {
                 self.errors.remove(&account.key);
                 Stats::add(&stats.decoded, 1);
@@ -154,107 +148,84 @@ impl Entry {
     }
 }
 
-pub(crate) struct Worker<F> {
-    pub index: usize,
-    pub threads: usize,
-    pub feed: F,
-    pub table: Arc<Table>,
-    pub stats: Arc<Stats>,
+/// Decodes pools on the market partition thread that publishes them, so the
+/// decoded state is published before the view it came from.
+pub struct Decoding {
+    table: Arc<Table>,
     topology: Arc<Topology>,
-    batch: Arc<LatencyHistogram>,
-    pools: HashMap<Pubkey, Entry, ahash::RandomState>,
+    decode: Arc<LatencyHistogram>,
+    stats: Vec<Arc<Stats>>,
 }
 
-impl<F: PoolFeed> Worker<F> {
-    pub(crate) fn new(
-        index: usize,
-        threads: usize,
-        feed: F,
-        table: Arc<Table>,
-        stats: Arc<Stats>,
-        topology: Arc<Topology>,
-        batch: Arc<LatencyHistogram>,
-    ) -> Self {
+impl Decoding {
+    #[must_use]
+    pub fn new(topology: Arc<Topology>) -> Self {
         Self {
-            index,
-            threads,
-            feed,
-            table,
-            stats,
+            table: Arc::new(Table::default()),
             topology,
-            batch,
+            decode: Arc::new(LatencyHistogram::default()),
+            stats: Vec::new(),
+        }
+    }
+
+    /// One per market partition.
+    pub fn decoder(&mut self) -> Decoder {
+        let stats = Arc::new(Stats::default());
+        self.stats.push(Arc::clone(&stats));
+        Decoder {
+            table: Arc::clone(&self.table),
+            topology: Arc::clone(&self.topology),
+            decode: Arc::clone(&self.decode),
+            stats,
             pools: HashMap::default(),
         }
     }
 
-    fn owns(&self, pool: &Pubkey) -> bool {
-        owner_of(pool, self.threads) == self.index
-    }
-
-    pub(crate) async fn run(mut self, mut stop: watch::Receiver<bool>) {
-        // Subscribed before the first scan, so nothing published in between
-        // is missed.
-        let mut changes = self.feed.subscribe();
-        self.rescan();
-        loop {
-            let first = tokio::select! {
-                _ = stop.changed() => return,
-                change = changes.recv() => change,
-            };
-            let mut dirty = BTreeSet::new();
-            let mut rescan = false;
-            match first {
-                Ok(PoolChanged { pool, .. }) => {
-                    dirty.insert(pool);
-                }
-                Err(RecvError::Lagged(_)) => rescan = true,
-                Err(RecvError::Closed) => return,
-            }
-            loop {
-                match changes.try_recv() {
-                    Ok(PoolChanged { pool, .. }) => {
-                        dirty.insert(pool);
-                    }
-                    Err(TryRecvError::Lagged(_)) => rescan = true,
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Closed) => return,
-                }
-            }
-            let started = Instant::now();
-            if rescan {
-                Stats::add(&self.stats.lagged, 1);
-                self.rescan();
-            } else {
-                let owned: Vec<Pubkey> = dirty.into_iter().filter(|p| self.owns(p)).collect();
-                for pool in owned {
-                    self.process(pool);
-                }
-                self.gauges();
-            }
-            self.batch.record(started.elapsed());
+    #[must_use]
+    pub fn reader<F: PoolFeed>(&self, feed: F) -> QuoteReader<F> {
+        QuoteReader {
+            feed,
+            table: Arc::clone(&self.table),
         }
     }
 
-    fn rescan(&mut self) {
-        let owned: Vec<Pubkey> = self
-            .feed
-            .pools()
-            .into_iter()
-            .map(|(pool, _, _)| pool)
-            .filter(|pool| self.owns(pool))
-            .collect();
-        for pool in owned {
-            self.process(pool);
+    #[must_use]
+    pub fn stats(&self) -> RouteStatsSnapshot {
+        let parts: Vec<RouteStatsSnapshot> = self.stats.iter().map(|s| s.snapshot()).collect();
+        RouteStatsSnapshot {
+            decode: self.decode.snapshot(),
+            ..RouteStatsSnapshot::merge(&parts)
         }
-        self.gauges();
+    }
+}
+
+pub struct Decoder {
+    table: Arc<Table>,
+    topology: Arc<Topology>,
+    decode: Arc<LatencyHistogram>,
+    stats: Arc<Stats>,
+    pools: HashMap<Pubkey, Entry, ahash::RandomState>,
+}
+
+impl ViewSink for Decoder {
+    fn publish(&mut self, view: &Arc<PoolView>) {
+        let started = Instant::now();
+        self.process(view);
+        self.decode.record(started.elapsed());
     }
 
-    pub(crate) fn process(&mut self, pool: Pubkey) {
-        let Some(view) = self.feed.pool_view(&pool) else {
-            self.pools.remove(&pool);
-            self.mark(&pool, false);
-            return;
-        };
+    fn on_tick(&mut self) {
+        let quotable = self.pools.values().filter(|e| e.quotable()).count();
+        let unsupported = self.pools.values().filter(|e| !e.supported).count();
+        Stats::set(&self.stats.pools, self.pools.len());
+        Stats::set(&self.stats.quotable, quotable);
+        Stats::set(&self.stats.unsupported, unsupported);
+    }
+}
+
+impl Decoder {
+    fn process(&mut self, view: &Arc<PoolView>) {
+        let pool = view.pool;
         if matches!(
             view.readiness,
             Readiness::NotReady(Reason::Closed | Reason::Invalid)
@@ -264,8 +235,8 @@ impl<F: PoolFeed> Worker<F> {
                 pool,
                 Decoded {
                     readiness: view.readiness,
-                    state: VenueState::new(view.dex),
-                    view,
+                    state: Arc::new(VenueState::new(view.dex)),
+                    view: Arc::clone(view),
                     error: None,
                     panicked: false,
                 },
@@ -278,14 +249,14 @@ impl<F: PoolFeed> Worker<F> {
             .entry(pool)
             .or_insert_with(|| Entry::new(view.dex));
         entry.ready = view.readiness == Readiness::Ready;
-        let panicked = entry.ready && entry.sync(&view, &self.stats).is_err();
+        let panicked = entry.ready && entry.sync(view, &self.stats).is_err();
         let active = !panicked && entry.quotable();
         let decoded = Decoded {
             readiness: view.readiness,
-            state: entry.state.clone(),
+            state: Arc::clone(&entry.state),
             error: entry.errors.values().next().cloned(),
             panicked,
-            view,
+            view: Arc::clone(view),
         };
         if panicked {
             self.pools.remove(&pool);
@@ -298,13 +269,5 @@ impl<F: PoolFeed> Worker<F> {
         if let Some(id) = self.topology.pool_id(pool) {
             self.topology.activity().set(id, active);
         }
-    }
-
-    fn gauges(&self) {
-        let quotable = self.pools.values().filter(|e| e.quotable()).count();
-        let unsupported = self.pools.values().filter(|e| !e.supported).count();
-        Stats::set(&self.stats.pools, self.pools.len());
-        Stats::set(&self.stats.quotable, quotable);
-        Stats::set(&self.stats.unsupported, unsupported);
     }
 }

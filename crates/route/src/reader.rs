@@ -15,7 +15,7 @@ pub(crate) struct Decoded {
     pub readiness: Readiness,
     /// The market view the state was decoded from.
     pub view: Arc<PoolView>,
-    pub state: VenueState,
+    pub state: Arc<VenueState>,
     pub error: Option<DecodeError>,
     pub panicked: bool,
 }

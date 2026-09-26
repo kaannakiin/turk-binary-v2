@@ -10,7 +10,7 @@ use crate::engine::{Engine, SyncSettings};
 use crate::ports::AccountSource;
 use crate::stats::{Stats, StatsSnapshot};
 use crate::view::{MarketReader, Snapshots};
-use crate::{MarketError, Universe};
+use crate::{MarketError, Universe, ViewSink};
 
 /// One engine per hub partition, each on its own thread, sharing nothing
 /// but the read side: a pool's shard decides its partition, and every
@@ -21,6 +21,24 @@ pub struct Market {
     stopped: Vec<oneshot::Receiver<Result<(), MarketError>>>,
 }
 
+/// How many pipeline threads (partitions) to run. `0` picks the largest
+/// divisor of `streams` up to half the cores: shard `i` feeds partition
+/// `i % partitions`, so a divisor gives every partition as many shards.
+pub fn pipeline_threads(requested: u16, streams: u16, cores: usize) -> Result<u16, MarketError> {
+    if requested == 0 {
+        let cap = u16::try_from((cores / 2).max(1)).unwrap_or(u16::MAX);
+        return Ok((1..=streams.min(cap))
+            .rev()
+            .find(|n| streams.is_multiple_of(*n))
+            .unwrap_or(1));
+    }
+    if (1..=streams).contains(&requested) {
+        Ok(requested)
+    } else {
+        Err(MarketError::Partitions { requested, streams })
+    }
+}
+
 impl Market {
     pub fn start<S: AccountSource>(
         universe: &Universe,
@@ -28,12 +46,21 @@ impl Market {
         partitions: Vec<Partition>,
         settings: &SyncSettings,
         global_tree: bool,
+        mut sinks: impl FnMut(usize) -> Box<dyn ViewSink>,
     ) -> Result<Self, MarketError> {
         let snapshots = Arc::new(Snapshots::default());
         let changes = broadcast::channel(4_096).0;
         let mut stats = Vec::new();
         let mut stopped = Vec::new();
-        for (i, Partition { hub, mut events }) in partitions.into_iter().enumerate() {
+        for (
+            i,
+            Partition {
+                hub,
+                mut events,
+                streams,
+            },
+        ) in partitions.into_iter().enumerate()
+        {
             let owned = Universe {
                 dexes: universe.dexes.clone(),
                 pools: universe
@@ -51,16 +78,26 @@ impl Market {
                 global_tree,
             );
             engine.share_output(&snapshots, &changes);
+            engine.set_sink(sinks(i));
             stats.push(engine.stats());
             let (done, stop) = oneshot::channel();
             std::thread::Builder::new()
-                .name(format!("market-p{i}"))
+                .name(format!("pipe-p{i}"))
                 .spawn(move || {
                     let result = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
                         .map_err(MarketError::Partition)
-                        .and_then(|runtime| runtime.block_on(engine.run(&mut events)));
+                        .and_then(|runtime| {
+                            runtime.block_on(async move {
+                                tokio::select! {
+                                    result = engine.run(&mut events) => result,
+                                    result = streams.run() => Err(result
+                                        .err()
+                                        .map_or(MarketError::StreamClosed, MarketError::Grpc)),
+                                }
+                            })
+                        });
                     let _ = done.send(result);
                 })
                 .map_err(MarketError::Partition)?;
@@ -129,19 +166,23 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_threads_defaults_to_two_and_must_fit_the_streams() {
-        let with = |pipeline_threads| SyncSettings {
-            pipeline_threads,
-            ..SyncSettings::default()
-        };
-        assert_eq!(
-            [
-                SyncSettings::default().partitions(12).ok(),
-                with(0).partitions(12).ok(),
-                with(13).partitions(12).ok(),
-                with(12).partitions(12).ok(),
-            ],
-            [Some(2), None, None, Some(12)]
-        );
+    fn pipeline_threads_divide_the_streams_when_automatic_and_must_fit_them_otherwise() {
+        let cases = [
+            ((0, 12, 8), Some(4)),
+            ((0, 12, 10), Some(4)),
+            ((0, 12, 64), Some(12)),
+            ((0, 7, 8), Some(1)),
+            ((0, 12, 1), Some(1)),
+            ((5, 12, 8), Some(5)),
+            ((12, 12, 8), Some(12)),
+            ((13, 12, 8), None),
+        ];
+        for ((requested, streams, cores), expected) in cases {
+            assert_eq!(
+                pipeline_threads(requested, streams, cores).ok(),
+                expected,
+                "requested {requested}, {streams} streams, {cores} cores"
+            );
+        }
     }
 }
