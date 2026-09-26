@@ -11,7 +11,7 @@ use domain::{DexKind, Pubkey};
 use graph::Topology;
 use grpc::{GeyserHub, ProbeKind, SlotSource, TraceRow, TxnProbeOptions};
 use market::{Market, MarketError, MarketReader, Readiness, Universe};
-use route::{ProbeReport, Router};
+use route::{Decoding, ProbeReport, QuoteReader};
 use rpc::RpcGateway;
 use tokio::task::JoinHandle;
 
@@ -19,8 +19,10 @@ use crate::{config, output};
 
 struct Running {
     hub: JoinHandle<Result<(), grpc::GrpcError>>,
+    grpc: grpc::GrpcStats,
     market: Market,
-    router: Router<MarketReader>,
+    decoding: Decoding,
+    quotes: QuoteReader<MarketReader>,
     reader: MarketReader,
     topology: Arc<Topology>,
     config: config::AppConfig,
@@ -54,7 +56,15 @@ impl Running {
         )
         .await?;
         tracing::info!(?slot_source, "slot statuses");
-        let partitions = config.sync.partitions(config.grpc.streams)?;
+        let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+        let partitions =
+            market::pipeline_threads(config.threads.pipeline, config.grpc.streams, cores)?;
+        tracing::info!(
+            pipeline = partitions,
+            streams = config.grpc.streams,
+            cores,
+            "threads"
+        );
         let hub = GeyserHub::spawn(
             secrets.grpc_url,
             secrets.grpc_x_token,
@@ -62,21 +72,22 @@ impl Running {
             slot_source,
             partitions,
         )?;
+        let mut decoding = Decoding::new(Arc::clone(&topology));
         let market = Market::start(
             &universe,
             &rpc,
             hub.partitions,
             &config.sync,
             slot_source == SlotSource::BlocksMeta,
+            |_| Box::new(decoding.decoder()),
         )?;
-        tracing::info!(partitions, "market partitions");
         let reader = market.reader();
-        let router = Router::start(reader.clone(), &config.route, &topology)?;
-        tracing::info!(threads = config.route.route_threads, "route threads");
         Ok(Self {
             hub: hub.task,
+            grpc: hub.stats,
             market,
-            router,
+            quotes: decoding.reader(reader.clone()),
+            decoding,
             reader,
             topology,
             config,
@@ -89,7 +100,7 @@ impl Running {
         tokio::pin!(shutdown, until);
         let period = Duration::from_secs(self.config.stats_interval_secs.max(1));
         let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
-        let quotes = self.router.reader();
+        let quotes = self.quotes.clone();
         let probe_amount = self.config.route.probe_amount;
         let mut probing: Option<JoinHandle<ProbeReport>> = None;
         loop {
@@ -103,12 +114,10 @@ impl Running {
                         other => other.context("market sync failed"),
                     };
                 }
-                result = self.router.stopped() => {
-                    return result.context("route thread stopped");
-                }
                 _ = ticker.tick() => {
+                    output::log_grpc(&self.grpc.snapshot());
                     output::log_stats(&self.market.stats());
-                    output::log_route(&self.router.stats());
+                    output::log_route(&self.decoding.stats());
                     output::log_graph(&self.topology.stats());
                     output::log_not_ready(&self.reader.pools());
                     if probe_amount > 0 && probing.as_ref().is_none_or(JoinHandle::is_finished) {
@@ -128,12 +137,6 @@ impl Running {
                 }
             }
         }
-    }
-}
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        self.router.shutdown();
     }
 }
 

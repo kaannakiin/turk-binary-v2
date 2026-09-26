@@ -14,9 +14,24 @@ use serde::Serialize;
 
 use domain::{ChainClock, DexKind, Pubkey};
 use graph::{GraphStats, Topology};
-use grpc::{Conn, Finding, TraceKind, TraceRow};
+use grpc::{Conn, Finding, GrpcStatsSnapshot, TraceKind, TraceRow};
 use market::{PoolView, Readiness, StatsSnapshot};
 use route::{ProbeReport, RouteStatsSnapshot};
+
+pub fn log_grpc(s: &GrpcStatsSnapshot) {
+    tracing::info!(
+        accounts = s.accounts,
+        statuses = s.statuses,
+        slots = s.slots,
+        lag_p50 = ?s.lag.p50,
+        lag_p99 = ?s.lag.p99,
+        lag_max = ?s.lag.max,
+        blocked_p99 = ?s.blocked.p99,
+        blocked_max = ?s.blocked.max,
+        queued_peak = s.queued_peak,
+        "grpc"
+    );
+}
 
 pub fn log_stats(s: &StatsSnapshot) {
     let pools = s
@@ -46,6 +61,7 @@ pub fn log_stats(s: &StatsSnapshot) {
         overflowed = s.overflowed,
         late = s.late,
         txn_orphans = s.txn_orphans,
+        views_published = s.views_published,
         stale = s.stale,
         audited = s.audit_checked,
         drift = s.audit_mismatches,
@@ -63,10 +79,9 @@ pub fn log_route(s: &RouteStatsSnapshot) {
         decoded = s.decoded,
         decode_errors = s.decode_errors,
         panics = s.panics,
-        lagged = s.lagged,
-        batch_p50 = ?s.batch.p50,
-        batch_p99 = ?s.batch.p99,
-        batch_max = ?s.batch.max,
+        decode_p50 = ?s.decode.p50,
+        decode_p99 = ?s.decode.p99,
+        decode_max = ?s.decode.max,
         "route"
     );
 }

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::PoolId;
 
 /// Which pools may be quoted right now, one bit per pool. Each pool has a
-/// single writer (the route thread that owns it); bits sharing a word are
+/// single writer (the pipeline thread of its partition); bits sharing a word are
 /// set with atomic or/and, so writers never lose each other's flips.
 pub struct Activity {
     words: Box<[AtomicU64]>,

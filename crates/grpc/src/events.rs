@@ -128,10 +128,16 @@ pub enum StreamEvent {
         stream: StreamId,
         generation: u64,
     },
+    /// A reconnect replayed what it missed, up to `at`. The plugin replays
+    /// only sealed slots and drops live writes until the new filters apply,
+    /// so writes to `keys` in the slot that was executing across the
+    /// reconnect may still be missing.
     Resumed {
         stream: StreamId,
         generation: u64,
         from_slot: Slot,
+        at: Slot,
+        keys: Vec<Pubkey>,
     },
     /// A reconnect could not replay what it missed. Every key and filter of
     /// the stream may be stale; `since` is the last slot seen before the drop.

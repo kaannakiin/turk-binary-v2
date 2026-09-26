@@ -76,6 +76,8 @@ counters!(
     pools_not_ready,
     repair_backlog,
     txn_orphans,
+    views_published,
+    replay_repaired,
 );
 
 impl Stats {
@@ -137,6 +139,8 @@ impl Stats {
             Counter::PoolsNotReady => &self.pools_not_ready,
             Counter::RepairBacklog => &self.repair_backlog,
             Counter::TxnOrphans => &self.txn_orphans,
+            Counter::ViewsPublished => &self.views_published,
+            Counter::ReplayRepaired => &self.replay_repaired,
         }
     }
 }
@@ -159,6 +163,8 @@ pub(crate) enum Counter {
     PoolsNotReady,
     RepairBacklog,
     TxnOrphans,
+    ViewsPublished,
+    ReplayRepaired,
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 
 use domain::chain::CLOCK_SYSVAR;
@@ -21,6 +22,7 @@ use crate::events::{
 use crate::request::{
     Built, Heartbeat, Limits, build_request, ping_request, seq_of, shape, slot_feed_request,
 };
+use crate::stats::Stats;
 use crate::{GrpcError, GrpcSettings};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +50,7 @@ pub(crate) struct StreamActor<C> {
     pub(crate) commands: mpsc::UnboundedReceiver<Vec<GroupChange>>,
     pub(crate) events: EventSink,
     pub(crate) state: State,
+    pub(crate) stats: Arc<Stats>,
 }
 
 #[derive(Default)]
@@ -454,29 +457,13 @@ impl<C: Connector> StreamActor<C> {
     where
         Si: futures::Sink<SubscribeRequest, Error: std::fmt::Display> + Unpin,
     {
-        // The plugin stamps replayed slot statuses and pings with the time
-        // it sends them; only account and block updates keep the time the
-        // plugin first saw them. A replay also carries everything written
-        // while the stream was down, so lag counts once it is current again.
-        let stamped = matches!(
-            update.update_oneof,
-            Some(UpdateOneof::Account(_) | UpdateOneof::BlockMeta(_))
-        );
-        if stamped
-            && let (Some(max), Some(created)) =
-                (self.settings.max_message_delay(), &update.created_at)
-            && let Some(lag) = message_lag(created, SystemTime::now())
-        {
-            if lag <= max {
-                session.catching_up = false;
-            } else if !session.catching_up {
-                tracing::warn!(stream = ?self.id, ?lag, "grpc stream lagging, reconnecting");
-                return Some(End::Dropped(None));
-            }
+        if !self.check_lag(&update, session) {
+            return Some(End::Dropped(None));
         }
         let tagged = update.filters.iter().filter_map(|name| seq_of(name)).max();
         let (slot, event) = match update.update_oneof {
             Some(UpdateOneof::Account(account)) => {
+                self.stats.accounts.fetch_add(1, Ordering::Relaxed);
                 let Some(update) = account_update(account) else {
                     tracing::warn!(stream = ?self.id, "dropping malformed grpc account update");
                     return None;
@@ -497,16 +484,20 @@ impl<C: Connector> StreamActor<C> {
                 });
                 (Some(slot), event)
             }
-            Some(UpdateOneof::Slot(slot)) => (
-                Some(Slot(slot.slot)),
-                Some(StreamEvent::Slot {
-                    stream: self.id,
-                    slot: Slot(slot.slot),
-                    parent: slot.parent.map(Slot),
-                    status: SlotStatus::from(slot.status),
-                }),
-            ),
+            Some(UpdateOneof::Slot(slot)) => {
+                self.stats.slots.fetch_add(1, Ordering::Relaxed);
+                (
+                    Some(Slot(slot.slot)),
+                    Some(StreamEvent::Slot {
+                        stream: self.id,
+                        slot: Slot(slot.slot),
+                        parent: slot.parent.map(Slot),
+                        status: SlotStatus::from(slot.status),
+                    }),
+                )
+            }
             Some(UpdateOneof::TransactionStatus(status)) => {
+                self.stats.statuses.fetch_add(1, Ordering::Relaxed);
                 let Ok(signature) = <[u8; 64]>::try_from(status.signature.as_slice()) else {
                     tracing::warn!(stream = ?self.id, "dropping malformed grpc transaction status");
                     return None;
@@ -556,6 +547,38 @@ impl<C: Connector> StreamActor<C> {
         None
     }
 
+    /// `false` when the stream fell too far behind and must reconnect.
+    fn check_lag(&self, update: &SubscribeUpdate, session: &mut Session) -> bool {
+        // The plugin stamps replayed slot statuses and pings with the time
+        // it sends them; only account and block updates keep the time the
+        // plugin first saw them. A replay also carries everything written
+        // while the stream was down, so lag counts once it is current again.
+        let stamped = matches!(
+            update.update_oneof,
+            Some(UpdateOneof::Account(_) | UpdateOneof::BlockMeta(_))
+        );
+        let Some(lag) = update
+            .created_at
+            .as_ref()
+            .filter(|_| stamped)
+            .and_then(|created| message_lag(created, SystemTime::now()))
+        else {
+            return true;
+        };
+        if let Some(max) = self.settings.max_message_delay() {
+            if lag <= max {
+                session.catching_up = false;
+            } else if !session.catching_up {
+                tracing::warn!(stream = ?self.id, ?lag, "grpc stream lagging, reconnecting");
+                return false;
+            }
+        }
+        if !session.catching_up {
+            self.stats.lag.record(lag);
+        }
+        true
+    }
+
     /// The first slot after a replayed connect must be close to `from_slot`;
     /// a server that silently resumed from its head instead has skipped the
     /// gap. Once the replay reaches the pre-drop tip, nothing was lost.
@@ -582,6 +605,8 @@ impl<C: Connector> StreamActor<C> {
                 stream: self.id,
                 generation: self.state.generation,
                 from_slot: watch.from_slot,
+                at: slot,
+                keys: self.state.sent_keys.iter().copied().collect(),
             };
             return self.emit(resumed).await;
         }
@@ -650,17 +675,30 @@ impl<C: Connector> StreamActor<C> {
     }
 
     async fn emit(&self, event: StreamEvent) -> bool {
-        match &self.events {
-            EventSink::One(tx) => tx.send(event).await.is_ok(),
+        let started = Instant::now();
+        let sent = match &self.events {
+            EventSink::One(tx) => self.send(tx, event).await,
             EventSink::All(txs) => {
+                let mut sent = true;
                 for tx in txs {
-                    if tx.send(event.clone()).await.is_err() {
-                        return false;
+                    if !self.send(tx, event.clone()).await {
+                        sent = false;
+                        break;
                     }
                 }
-                true
+                sent
             }
-        }
+        };
+        self.stats.blocked.record(started.elapsed());
+        sent
+    }
+
+    async fn send(&self, tx: &mpsc::Sender<StreamEvent>, event: StreamEvent) -> bool {
+        let queued = tx.max_capacity() - tx.capacity();
+        self.stats
+            .queued_peak
+            .fetch_max(u64::try_from(queued).unwrap_or(u64::MAX), Ordering::Relaxed);
+        tx.send(event).await.is_ok()
     }
 }
 

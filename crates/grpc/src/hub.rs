@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -10,9 +12,11 @@ use crate::events::{GroupChange, GroupKey, Placement, StreamEvent, StreamId};
 use crate::request::{Heartbeat, Limits};
 use crate::routing::stream_for;
 use crate::settings::SlotSource;
+use crate::stats::GrpcStats;
 use crate::{GrpcError, GrpcSettings};
 
 type Commands = mpsc::UnboundedSender<Vec<GroupChange>>;
+type StreamTask = Pin<Box<dyn Future<Output = Result<(), GrpcError>> + Send>>;
 
 /// Sending never waits: changes queue per stream and are coalesced into one
 /// filter update, so the caller's event loop cannot deadlock against a
@@ -77,6 +81,22 @@ const fn partition_of(shard: u16, partitions: u16) -> u16 {
 pub struct Partition {
     pub hub: HubHandle,
     pub events: mpsc::Receiver<StreamEvent>,
+    pub streams: Streams,
+}
+
+/// A partition's shard streams and its shared stream, not started yet: the
+/// partition runs them on its own thread, next to its engine.
+pub struct Streams(Vec<StreamTask>);
+
+impl Streams {
+    /// Runs every stream on the current runtime until one fails for good.
+    pub async fn run(self) -> Result<(), GrpcError> {
+        let mut streams = JoinSet::new();
+        for stream in self.0 {
+            streams.spawn(stream);
+        }
+        supervise(streams).await
+    }
 }
 
 pub struct GeyserHub;
@@ -84,12 +104,15 @@ pub struct GeyserHub;
 pub struct Spawned {
     pub partitions: Vec<Partition>,
     pub task: JoinHandle<Result<(), GrpcError>>,
+    pub stats: GrpcStats,
 }
 
 impl GeyserHub {
     /// `slot_source` must already be resolved: `Auto` is treated as `Slots`.
     /// Shard `i` feeds partition `i % partitions`; each partition also gets
-    /// its own shared stream, and the slot feed feeds them all.
+    /// its own shared stream, and the slot feed feeds them all. Only the slot
+    /// feed starts here, on the current runtime; each partition starts its
+    /// own `Streams`.
     pub fn spawn(
         endpoint: String,
         x_token: Option<String>,
@@ -118,7 +141,9 @@ pub(crate) fn spawn_with<C: Connector>(
         SlotSource::Auto | SlotSource::Slots => Heartbeat::Slots,
     };
     let limits = Limits::from_settings(&settings);
-    let mut actors = JoinSet::new();
+    let stats = GrpcStats::default();
+    let mut tasks: Vec<Vec<StreamTask>> = (0..partitions).map(|_| Vec::new()).collect();
+    let mut slot_feed_task = JoinSet::new();
     let mut spawn = |id: StreamId, role: Role, events: EventSink| -> Commands {
         let (tx, rx) = mpsc::unbounded_channel();
         let actor = StreamActor {
@@ -131,8 +156,18 @@ pub(crate) fn spawn_with<C: Connector>(
             commands: rx,
             events,
             state: State::default(),
+            stats: Arc::clone(&stats.0),
         };
-        actors.spawn(actor.run());
+        let partition = match id {
+            StreamId::Shard(i) => Some(partition_of(i, partitions)),
+            StreamId::Shared(p) => Some(p),
+            StreamId::SlotFeed => None,
+        };
+        if let Some(p) = partition {
+            tasks[usize::from(p)].push(Box::pin(actor.run()));
+        } else {
+            slot_feed_task.spawn(actor.run());
+        }
         tx
     };
     let shards: Vec<Commands> = (0..settings.streams.max(1))
@@ -167,13 +202,14 @@ pub(crate) fn spawn_with<C: Connector>(
         )
     });
     drop(senders);
-    let supervisor = tokio::spawn(supervise(actors));
+    let supervisor = tokio::spawn(supervise(slot_feed_task));
     Spawned {
         partitions: shared
             .into_iter()
             .zip(receivers)
+            .zip(tasks)
             .zip(0..)
-            .map(|((shared, events), partition)| Partition {
+            .map(|(((shared, events), streams), partition)| Partition {
                 hub: HubHandle {
                     shards: shards.clone(),
                     shared,
@@ -182,9 +218,11 @@ pub(crate) fn spawn_with<C: Connector>(
                     partitions,
                 },
                 events,
+                streams: Streams(streams),
             })
             .collect(),
         task: supervisor,
+        stats,
     }
 }
 

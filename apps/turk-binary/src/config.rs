@@ -24,7 +24,15 @@ pub struct AppConfig {
     pub sync: SyncSettings,
     #[serde(default)]
     pub route: RouteSettings,
+    #[serde(default)]
+    pub threads: ThreadSettings,
     pub universe: UniverseConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ThreadSettings {
+    pub pipeline: u16,
 }
 
 const fn default_stats_interval_secs() -> u64 {

@@ -61,25 +61,25 @@ These are errors, not warnings:
 
 ### Streams
 
-| Key                      | Default       | Meaning                                                                                                               |
-| ------------------------ | ------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `commitment`             | `"processed"` | See [Commitment values](#commitment-values)                                                                           |
-| `streams`                | `12`          | Pool shards. A pool and its pool-only dependencies share one; shared accounts use one extra stream per partition. Empty shards never connect. |
-| `slot_source`            | `"auto"`      | `slots`, `blocks_meta` or `auto`. See [architecture.md](architecture.md#fork-tracking).                               |
-| `max_pubkeys_per_filter` | `100`         | Longer address lists are split into several filters. Lowered automatically if the server reports a limit.             |
-| `max_account_filters`    | unset         | Max account filters per request. Unset means learn it from the server's error.                                        |
-| `max_txn_pubkeys_per_filter` | `100`     | The same split for the transaction-status filters on shards. Lowered automatically if the server reports a limit.     |
-| `max_txn_filters`        | unset         | Max transaction-status filters per request. Unset means learn it from the server's error.                            |
-| `warn_request_bytes`     | `2097152`     | Log a warning when a subscribe request is larger                                                                      |
-| `max_request_bytes`      | `4000000`     | Refuse groups that would make a request larger                                                                        |
-| `compression`            | `"gzip"`      | `none`, `gzip` or `zstd`. Use `none` when the gRPC node is on the same machine.                                       |
-| `recv_timeout_ms`        | `10000`       | Reconnect a stream that has received nothing for this long. `0` turns it off.                                         |
-| `max_message_delay_ms`   | `10000`       | Reconnect a stream whose messages are older than this (server `created_at`). `0` turns it off.                        |
-| `connect_timeout_ms`     | `10000`       | Connect timeout                                                                                                       |
-| `max_message_bytes`      | `67108864`    | Largest accepted message                                                                                              |
-| `event_buffer`           | `16384`       | Events queued between the streams and each partition's engine                                                         |
-| `filter_flush_ms`        | `200`         | Subscription changes are collected this long and sent as one filter update                                            |
-| `filter_ack_timeout_ms`  | `2000`        | If no update confirms a filter change in this time, it is assumed effective at the latest slot                        |
+| Key                          | Default       | Meaning                                                                                                                                       |
+| ---------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commitment`                 | `"processed"` | See [Commitment values](#commitment-values)                                                                                                   |
+| `streams`                    | `12`          | Pool shards. A pool and its pool-only dependencies share one; shared accounts use one extra stream per partition. Empty shards never connect. |
+| `slot_source`                | `"auto"`      | `slots`, `blocks_meta` or `auto`. See [architecture.md](architecture.md#fork-tracking).                                                       |
+| `max_pubkeys_per_filter`     | `100`         | Longer address lists are split into several filters. Lowered automatically if the server reports a limit.                                     |
+| `max_account_filters`        | unset         | Max account filters per request. Unset means learn it from the server's error.                                                                |
+| `max_txn_pubkeys_per_filter` | `100`         | The same split for the transaction-status filters on shards. Lowered automatically if the server reports a limit.                             |
+| `max_txn_filters`            | unset         | Max transaction-status filters per request. Unset means learn it from the server's error.                                                     |
+| `warn_request_bytes`         | `2097152`     | Log a warning when a subscribe request is larger                                                                                              |
+| `max_request_bytes`          | `4000000`     | Refuse groups that would make a request larger                                                                                                |
+| `compression`                | `"gzip"`      | `none`, `gzip` or `zstd`. Use `none` when the gRPC node is on the same machine.                                                               |
+| `recv_timeout_ms`            | `10000`       | Reconnect a stream that has received nothing for this long. `0` turns it off.                                                                 |
+| `max_message_delay_ms`       | `10000`       | Reconnect a stream whose messages are older than this (server `created_at`). `0` turns it off.                                                |
+| `connect_timeout_ms`         | `10000`       | Connect timeout                                                                                                                               |
+| `max_message_bytes`          | `67108864`    | Largest accepted message                                                                                                                      |
+| `event_buffer`               | `16384`       | Events queued between the streams and each partition's engine                                                                                 |
+| `filter_flush_ms`            | `200`         | Subscription changes are collected this long and sent as one filter update                                                                    |
+| `filter_ack_timeout_ms`      | `2000`        | If no update confirms a filter change in this time, it is assumed effective at the latest slot                                                |
 
 Every stream also subscribes to the Clock sysvar, which updates every slot. The receive timer resets on every message, so a pool with no trades never trips it.
 
@@ -125,14 +125,22 @@ When a reconnect cannot replay, only that stream's accounts are read again over 
 | `stream_swap_accounts`       | `true`  | Also subscribe accounts only the swap instruction needs (vaults the math does not read, DLMM oracle) |
 | `tick_ms`                    | `50`    | How often closures, reads and readiness are brought up to date                                       |
 | `txn_wait_ms`                | `400`   | How long a shard's transaction writes wait for the transaction status before they are applied anyway |
-| `pipeline_threads`           | `2`     | Writer threads (partitions). Shard `i` feeds partition `i % pipeline_threads`; must be 1 to `grpc.streams` |
 
 ## `[route]`
 
-| Key             | Default | Meaning                                                                                                             |
-| --------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
-| `route_threads` | `4`     | Decode and quote threads, separate from the writers. Each owns the pools its hash picks; must be at least 1 |
-| `probe_amount`  | `1000000` | `watch` quotes this raw input amount both ways through every decoded pool each stats tick and logs the outcomes per DEX (`quote probe`); `0` turns it off |
+| Key            | Default   | Meaning                                                                                                                                                    |
+| -------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `probe_amount` | `1000000` | `watch` quotes this raw input amount both ways through every decoded pool eaech stats tick and logs the outcomes per DEX (`quote probe`); `0` turns it off |
+
+## `[threads]`
+
+Thread pools, named after what they do. The route search gets its own key when it lands.
+
+| Key        | Default | Meaning                                                                                                                                                                                                                                                                                                                           |
+| ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pipeline` | `0`     | Pipeline threads (`pipe-p{i}`), one per partition. Each reads its own gRPC streams, applies their writes and decodes its pools. `0` picks the largest divisor of `grpc.streams` up to half the cores; otherwise 1 to `grpc.streams`. Shard `i` feeds partition `i % pipeline`, so a divisor gives every partition as many shards. |
+
+Besides these, `watch` runs a fixed two-thread runtime (`app`) for startup, the stats line and, in `blocks_meta` mode, the slot feed. `watch` logs the resolved counts at start (`threads`).
 
 ## Top level
 

@@ -96,11 +96,13 @@ fn rig(settings: &GrpcSettings, first_available: Option<u64>, slot_source: SlotS
         requests: requests_tx,
         first_available,
     });
-    let Spawned {
-        mut partitions,
-        task: done,
-    } = spawn_with(&connector, settings, slot_source, 1);
-    let Partition { hub, events } = partitions.remove(0);
+    let Spawned { mut partitions, .. } = spawn_with(&connector, settings, slot_source, 1);
+    let Partition {
+        hub,
+        events,
+        streams,
+    } = partitions.remove(0);
+    let done = tokio::spawn(streams.run());
     Rig {
         hub,
         events,
@@ -343,9 +345,10 @@ async fn a_stream_without_groups_never_connects() {
 }
 
 #[tokio::test]
-async fn a_replayed_reconnect_resumes_without_a_gap() {
+async fn a_replayed_reconnect_resumes_without_a_gap_and_names_its_keys() {
     let mut rig = rig(&settings(), Some(0), SlotSource::Slots);
-    let (updates, _) = connected(&mut rig, &[Pubkey::new_unique()]).await;
+    let key = Pubkey::new_unique();
+    let (updates, _) = connected(&mut rig, &[key]).await;
     drop(updates);
     let updates = rig.open();
     let request = rig.request().await;
@@ -355,13 +358,17 @@ async fn a_replayed_reconnect_resumes_without_a_gap() {
     let event = rig
         .event_matching(|e| matches!(e, StreamEvent::Resumed { .. } | StreamEvent::Gap { .. }))
         .await;
-    assert!(matches!(
-        event,
-        StreamEvent::Resumed {
-            from_slot: Slot(996),
-            ..
-        }
-    ));
+    let StreamEvent::Resumed {
+        from_slot,
+        at,
+        keys,
+        ..
+    } = event
+    else {
+        panic!("expected Resumed, got {event:?}");
+    };
+    assert_eq!((from_slot, at), (Slot(996), Slot(1_000)));
+    assert!(keys.contains(&key), "{keys:?}");
 }
 
 fn created(mut update: SubscribeUpdate, age: Duration) -> SubscribeUpdate {
@@ -678,6 +685,8 @@ async fn a_pools_updates_reach_only_the_partition_that_owns_its_shard() {
     let (Some(mut first), Some(mut second)) = (partitions.next(), partitions.next()) else {
         panic!("expected two partitions")
     };
+    tokio::spawn(first.streams.run());
+    tokio::spawn(second.streams.run());
     let pool = std::iter::repeat_with(Pubkey::new_unique)
         .find(|k| second.hub.owns(&GroupKey(*k)))
         .unwrap();

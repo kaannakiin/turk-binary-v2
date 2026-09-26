@@ -7,7 +7,6 @@ pub(crate) struct Stats {
     pub decoded: AtomicU64,
     pub decode_errors: AtomicU64,
     pub panics: AtomicU64,
-    pub lagged: AtomicU64,
     pub pools: AtomicU64,
     pub quotable: AtomicU64,
     pub unsupported: AtomicU64,
@@ -18,14 +17,12 @@ pub struct RouteStatsSnapshot {
     pub decoded: u64,
     pub decode_errors: u64,
     pub panics: u64,
-    /// Times a thread fell behind the change feed and rescanned.
-    pub lagged: u64,
     pub pools: u64,
     /// Ready pools whose every account decoded.
     pub quotable: u64,
     pub unsupported: u64,
-    /// Time a thread spent on one drained batch of changes.
-    pub batch: LatencySnapshot,
+    /// Time to decode one published view, on its partition thread.
+    pub decode: LatencySnapshot,
 }
 
 impl Stats {
@@ -43,11 +40,10 @@ impl Stats {
             decoded: load(&self.decoded),
             decode_errors: load(&self.decode_errors),
             panics: load(&self.panics),
-            lagged: load(&self.lagged),
             pools: load(&self.pools),
             quotable: load(&self.quotable),
             unsupported: load(&self.unsupported),
-            batch: LatencySnapshot::default(),
+            decode: LatencySnapshot::default(),
         }
     }
 }
@@ -58,11 +54,10 @@ impl RouteStatsSnapshot {
             decoded: a.decoded + b.decoded,
             decode_errors: a.decode_errors + b.decode_errors,
             panics: a.panics + b.panics,
-            lagged: a.lagged + b.lagged,
             pools: a.pools + b.pools,
             quotable: a.quotable + b.quotable,
             unsupported: a.unsupported + b.unsupported,
-            batch: LatencySnapshot::default(),
+            decode: LatencySnapshot::default(),
         })
     }
 }

@@ -26,7 +26,6 @@ impl RouteError {
     #[must_use]
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::Threads | Self::Thread(_) | Self::ThreadPanicked => "thread",
             Self::UnknownPool(_) => "unknown_pool",
             Self::NotReady(_) => "not_ready",
             Self::Stale => "stale",

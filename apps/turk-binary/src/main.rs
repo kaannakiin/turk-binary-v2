@@ -53,14 +53,27 @@ enum Command {
     Snapshot(run::SnapshotArgs),
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// Startup, the stats ticker and the slot feed; streams and decoding run on
+/// the pipeline threads.
+const APP_THREADS: usize = 2;
+
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
-    match Cli::parse().command {
+    let command = Cli::parse().command;
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(APP_THREADS)
+        .thread_name("app")
+        .enable_all()
+        .build()?
+        .block_on(run(command))
+}
+
+async fn run(command: Command) -> anyhow::Result<()> {
+    match command {
         Command::Watch { config } => run::watch(&config).await,
         Command::Probe { config, kinds } => run::probe(&config, &kinds).await,
         Command::Snapshot(args) => run::snapshot(&args).await,
