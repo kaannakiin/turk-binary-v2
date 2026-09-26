@@ -47,15 +47,15 @@ These are errors, not warnings:
 
 ## `[rpc]`
 
-| Key                   | Default       | Meaning                                                                                   |
-| --------------------- | ------------- | ----------------------------------------------------------------------------------------- |
-| `commitment`          | `"processed"` | Commitment for universe resolution. Seeds and repairs always read at `confirmed`.         |
-| `timeout_ms`          | `10000`       | Per-request timeout                                                                       |
-| `max_in_flight`       | `8`           | Max concurrent RPC requests                                                               |
-| `max_rps`             | `8`           | Requests per second, paced evenly across every method. `0` turns pacing off.              |
-| `retry.max_attempts`  | `5`           | Attempts for timeouts, 429s, 5xx and "node behind" errors. Other errors fail immediately. |
-| `retry.base_delay_ms` | `100`         | First backoff; doubles each attempt                                                       |
-| `retry.max_delay_ms`  | `5000`        | Backoff cap                                                                               |
+| Key                   | Default       | Meaning                                                                                                                                             |
+| --------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commitment`          | `"processed"` | Commitment for universe resolution. Seeds and repairs always read at `confirmed`.                                                                   |
+| `timeout_ms`          | `10000`       | Per-request timeout                                                                                                                                 |
+| `max_in_flight`       | `8`           | Max concurrent RPC requests                                                                                                                         |
+| `max_rps`             | `8`           | Ceiling on requests per second, paced across every method; each 429 lowers the pace below it, successes raise it back slowly. `0` turns pacing off. |
+| `retry.max_attempts`  | `5`           | Attempts for timeouts, 429s, 5xx and "node behind" errors. Other errors fail immediately.                                                           |
+| `retry.base_delay_ms` | `100`         | First backoff; doubles each attempt                                                                                                                 |
+| `retry.max_delay_ms`  | `5000`        | Backoff cap                                                                                                                                         |
 
 ## `[grpc]`
 
@@ -111,17 +111,17 @@ After a reconnect, only that stream's accounts are read again over RPC (see [arc
 
 ## `[sync]`
 
-| Key                          | Default | Meaning                                                                                              |
-| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
-| `settle_slots`               | `4`     | A seed read must be at least this many slots after the slot its filter became effective              |
-| `repair_concurrency`         | `2`     | Seed and repair reads in flight at once                                                              |
-| `repair_batch`               | `100`   | Keys per read (`getMultipleAccounts` takes at most 100)                                              |
-| `repair_retry.base_delay_ms` | `500`   | First delay before a failed read is retried                                                          |
-| `repair_retry.max_delay_ms`  | `30000` | Retry delay cap. Failed reads are retried until they succeed.                                        |
-| `audit_interval_ms`          | `10000` | One drift check of up to 100 accounts per interval. `0` turns it off.                                |
-| `stream_swap_accounts`       | `true`  | Also subscribe accounts only the swap instruction needs (vaults the math does not read, DLMM oracle) |
-| `tick_ms`                    | `50`    | How often closures, reads and readiness are brought up to date                                       |
-| `txn_max_hold_ms`            | `5000`  | Safety cap: a shard's transaction writes held this long without being closed are applied anyway      |
+| Key                          | Default | Meaning                                                                                                                 |
+| ---------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `settle_slots`               | `4`     | A seed read must be at least this many slots after the slot its filter became effective                                 |
+| `repair_concurrency`         | `2`     | Seed and repair reads in flight at once                                                                                 |
+| `repair_batch`               | `100`   | Keys per read (`getMultipleAccounts` takes at most 100)                                                                 |
+| `repair_retry.base_delay_ms` | `500`   | First delay before a failed read is retried                                                                             |
+| `repair_retry.max_delay_ms`  | `30000` | Retry delay cap. Failed reads are retried until they succeed.                                                           |
+| `audit_interval_ms`          | `10000` | One drift check of up to 100 accounts per interval. `0` turns it off.                                                   |
+| `stream_swap_accounts`       | `true`  | Also subscribe accounts only the swap instruction needs (vaults the math does not read, DLMM oracle)                    |
+| `tick_ms`                    | `50`    | How often closures, reads and readiness are brought up to date                                                          |
+| `txn_max_hold_ms`            | `5000`  | Safety cap: a shard's transaction writes held this long are applied and their pools re-read before they are ready again |
 
 ## `[route]`
 

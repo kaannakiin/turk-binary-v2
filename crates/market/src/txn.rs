@@ -8,10 +8,6 @@ use crate::store::Source;
 
 type GroupId = (Source, Slot, TxnSignature);
 
-// Agave replays sibling forks in parallel, so the next slot on a stream does
-// not yet prove an older slot finished.
-const PROGRESS_SLOTS: u64 = 2;
-
 struct Held {
     opened: Instant,
     updates: Vec<AccountUpdate>,
@@ -20,10 +16,10 @@ struct Held {
 /// Holds a transaction's account writes until they are known to be complete,
 /// so a pool never shows one vault after the swap and the other before it.
 ///
-/// A group is complete once its status arrives, once a later write hits one
-/// of its keys, or once its stream is `PROGRESS_SLOTS` past its slot. Agave
-/// notifies every account write of a batch during commit, before the batch
-/// releases its locks, so a conflicting transaction cannot write before them.
+/// A group is complete once its status arrives or once a later write hits
+/// one of its keys: Agave notifies every account write of a batch during
+/// commit, before the batch releases its locks, so a conflicting transaction
+/// cannot write before them. The engine releases the rest by slot.
 // src: anza-xyz/agave@825efd18292aff6ffcf9daa0f7612f21b3531a72 runtime/src/bank.rs (commit_transactions)
 // src: anza-xyz/agave@825efd18292aff6ffcf9daa0f7612f21b3531a72 accounts-db/src/accounts.rs (_store_accounts)
 // src: anza-xyz/agave@825efd18292aff6ffcf9daa0f7612f21b3531a72 runtime/src/transaction_batch.rs (Drop)
@@ -84,8 +80,12 @@ impl TxnBuffer {
         self.remove(&(source, slot, signature)).unwrap_or_default()
     }
 
-    pub(crate) fn advanced(&mut self, stream: StreamId, slot: Slot) -> Released {
-        self.take(|id, _| id.0.stream == stream && id.1.0.saturating_add(PROGRESS_SLOTS) <= slot.0)
+    pub(crate) fn released_where(
+        &mut self,
+        stream: StreamId,
+        due: impl Fn(Slot) -> bool,
+    ) -> Released {
+        self.take(|id, _| id.0.stream == stream && due(id.1))
     }
 
     pub(crate) fn expired(&mut self, now: Instant, max_hold: Duration) -> Released {
@@ -297,23 +297,6 @@ mod tests {
             (released, hold.unheld.is_none(), buffer.held()),
             (vec![vault.pubkey, other_vault.pubkey], true, 1)
         );
-    }
-
-    #[test]
-    fn a_group_is_released_once_its_own_stream_is_two_slots_past_it() {
-        for (stream, slot, released) in [
-            (StreamId::Shard(0), 11, false),
-            (StreamId::Shard(1), 12, false),
-            (StreamId::Shard(0), 12, true),
-        ] {
-            let mut buffer = TxnBuffer::default();
-            buffer.hold(SHARD, write(10, 1), Instant::now());
-            assert_eq!(
-                held_slots(&buffer.advanced(stream, Slot(slot))) == [10],
-                released,
-                "{stream:?} at {slot}"
-            );
-        }
     }
 
     #[test]

@@ -20,8 +20,8 @@ const DEFAULT_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_RETRY_AFTER_SECS: u64 = 120;
 
 /// `HttpSender` retries a 429 up to five times inside one call, past our
-/// limiter. This one hands the 429 back at once and pauses the limiter, so
-/// every retry is paced like any other request.
+/// limiter. This one hands the 429 back at once and throttles the limiter,
+/// so every retry is paced like any other request.
 // src: anza-xyz/agave@825efd18292aff6ffcf9daa0f7612f21b3531a72 rpc-client/src/http_sender.rs (HttpSender::send)
 pub(crate) struct PacedSender {
     client: reqwest::Client,
@@ -63,13 +63,14 @@ impl RpcSender for PacedSender {
             .await?;
         if !response.status().is_success() {
             if response.status() == StatusCode::TOO_MANY_REQUESTS {
-                self.rate.pause_for(retry_after(&response));
+                self.rate.throttle(retry_after(&response));
             }
             return Err(response
                 .error_for_status()
                 .expect_err("status is not a success")
                 .into());
         }
+        self.rate.succeeded();
         let mut json = response.json::<serde_json::Value>().await?;
         if !json.is_object() {
             return Err(RpcError::RpcRequestError(format!(

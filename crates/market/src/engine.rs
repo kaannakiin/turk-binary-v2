@@ -27,6 +27,9 @@ use crate::{MarketError, Universe};
 
 const AUDIT_BATCH: usize = 100;
 const MAX_HELD_WRITES: usize = 65_536;
+/// Without slot statuses a shard cannot tell which fork a slot is on, so a
+/// group this far behind its stream's Clock is released without proof.
+const UNPROVEN_LAG_SLOTS: u64 = 2;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -258,7 +261,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                 parent,
                 status,
             } => self.on_slot(stream, slot, parent, status),
-            StreamEvent::Heartbeat { stream, slot } => self.stream_advanced(stream, slot),
+            StreamEvent::Heartbeat { stream, slot } => self.on_heartbeat(stream, slot),
             StreamEvent::Effective {
                 stream,
                 slot,
@@ -358,13 +361,20 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                 groups = released.len(),
                 "too many held transaction writes; applying them all"
             );
-            self.release_orphans(released);
+            self.release_unproven(released);
         }
     }
 
-    fn stream_advanced(&mut self, stream: StreamId, slot: Slot) {
-        let released = self.txns.advanced(stream, slot);
-        self.release_orphans(released);
+    /// Slot statuses carry the evidence in `slots` mode; the Clock is all a
+    /// shard has otherwise.
+    fn on_heartbeat(&mut self, stream: StreamId, slot: Slot) {
+        if !self.global_tree {
+            return;
+        }
+        let released = self.txns.released_where(stream, |held| {
+            held.0.saturating_add(UNPROVEN_LAG_SLOTS) <= slot.0
+        });
+        self.release_unproven(released);
     }
 
     fn apply_group(&mut self, source: Source, updates: Vec<AccountUpdate>) {
@@ -392,6 +402,8 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         }
     }
 
+    /// Groups whose status never came but whose slot was provably finished
+    /// on their stream: complete.
     fn release_orphans(&mut self, released: Released) {
         if released.is_empty() {
             return;
@@ -400,6 +412,57 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         for (source, updates) in released {
             self.apply_group(source, updates);
         }
+    }
+
+    /// Groups forced out without proof they are complete. A missing write is
+    /// to a key that never arrived, so every account a swap writes in the
+    /// pools they touch is read again, and those pools are published not
+    /// ready in the same step that applies the writes.
+    fn release_unproven(&mut self, released: Released) {
+        if released.is_empty() {
+            return;
+        }
+        self.stats.add(Counter::TxnForced, released.len());
+        let mut suspects: BTreeMap<Pubkey, Slot> = BTreeMap::new();
+        for update in released.iter().flat_map(|(_, updates)| updates) {
+            for pool in self.index.pools_of(&update.pubkey) {
+                let at = suspects.entry(*pool).or_insert(update.slot);
+                *at = (*at).max(update.slot);
+            }
+        }
+        self.batched(|engine| {
+            for (source, updates) in released {
+                for update in updates {
+                    engine.on_account(source, update);
+                }
+            }
+            for (pool, slot) in suspects {
+                engine.distrust(pool, slot);
+            }
+        });
+    }
+
+    fn distrust(&mut self, pool: Pubkey, slot: Slot) {
+        let Some(entry) = self.index.pool(&pool) else {
+            return;
+        };
+        let keys: Vec<Pubkey> = entry
+            .closure
+            .deps
+            .iter()
+            .filter(|d| d.role.swap_writes())
+            .map(|d| d.pubkey)
+            .collect();
+        for key in keys {
+            if let Some(epoch) = self.sync.invalidate(&key, slot) {
+                self.repair.want(key, slot, epoch, self.priority(&key));
+            }
+        }
+        if let Some(batch) = &mut self.batch {
+            let at = batch.entry(pool).or_insert(slot);
+            *at = (*at).max(slot);
+        }
+        self.refresh_pool(pool);
     }
 
     fn on_account(&mut self, source: Source, update: AccountUpdate) {
@@ -438,14 +501,6 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
     }
 
     fn on_slot(&mut self, stream: StreamId, slot: Slot, parent: Option<Slot>, status: SlotStatus) {
-        // Shreds of a later slot arrive while an older one still executes;
-        // only a frozen bank shows this stream is past `slot`.
-        if matches!(
-            status,
-            SlotStatus::Processed | SlotStatus::Confirmed | SlotStatus::Finalized
-        ) {
-            self.stream_advanced(stream, slot);
-        }
         let scope = if self.global_tree {
             TreeScope::Global
         } else {
@@ -457,9 +512,13 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             tree.record_parent(slot, parent, live);
         }
         match status {
-            SlotStatus::Processed => self.stats.record_slot(slot),
+            SlotStatus::Processed => {
+                self.stats.record_slot(slot);
+                self.release_finished(stream, slot, false);
+            }
             SlotStatus::Confirmed | SlotStatus::Finalized => {
                 let Some(resolution) = tree.confirm(slot) else {
+                    self.release_finished(stream, slot, true);
                     return;
                 };
                 if resolution.has_gap() {
@@ -482,6 +541,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                     }
                 }
                 self.reverted(resolved.reverted, slot);
+                self.release_finished(stream, slot, true);
             }
             SlotStatus::Dead => {
                 let dropped = self.store.drop_slot(scope, slot);
@@ -490,6 +550,23 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             }
             SlotStatus::Other => {}
         }
+    }
+
+    /// A child bank is created only from a frozen parent, and a frozen bank
+    /// takes no more commits, so once this stream reports `slot` frozen,
+    /// every write of its ancestors was sent before. A confirmation also
+    /// settles the slots below it that are not ancestors: their writes are on
+    /// a dead fork, which the store drops as late and reads again.
+    // src: anza-xyz/agave@825efd18292aff6ffcf9daa0f7612f21b3531a72 runtime/src/bank.rs (_new_from_parent: parent.freeze(); commit_transactions: !freeze_started())
+    fn release_finished(&mut self, stream: StreamId, slot: Slot, confirmed: bool) {
+        if self.global_tree || !matches!(stream, StreamId::Shard(_)) {
+            return;
+        }
+        let tree = self.trees.get(&TreeScope::Stream(stream));
+        let released = self.txns.released_where(stream, |held| {
+            (confirmed && held <= slot) || tree.is_some_and(|t| t.descends(slot, held))
+        });
+        self.release_orphans(released);
     }
 
     fn on_tick(&mut self) -> Result<(), MarketError> {
@@ -504,7 +581,7 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
                 "transaction writes held past txn_max_hold_ms; applying them"
             );
         }
-        self.release_orphans(released);
+        self.release_unproven(released);
         let closures = Instant::now();
         self.refresh_closures()?;
         self.timings.closures.record(closures.elapsed());
@@ -709,7 +786,28 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
             if same {
                 continue;
             }
-            tracing::warn!(%key, slot = slot.0, "account drifted from the chain; replacing it");
+            let differs = account.as_ref().map(|a| {
+                (
+                    a.owner != stored.owner,
+                    a.lamports != stored.lamports,
+                    a.data != stored.data,
+                )
+            });
+            let clocks = (*key == CLOCK_SYSVAR).then(|| {
+                (
+                    ChainClock::decode(&stored.data),
+                    account.as_ref().and_then(|a| ChainClock::decode(&a.data)),
+                )
+            });
+            tracing::warn!(
+                %key,
+                slot = slot.0,
+                stored_slot = stored.order.slot.0,
+                stored_write_version = stored.order.write_version.0,
+                ?differs,
+                ?clocks,
+                "account drifted from the chain; replacing it"
+            );
             self.stats.add(Counter::AuditMismatches, 1);
             let before = Before {
                 exists: Some(stored.exists()),
@@ -858,33 +956,8 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         if pools.is_empty() {
             return;
         }
-        let evaluated: Vec<(Pubkey, PoolMeta)> = pools
-            .into_iter()
-            .filter_map(|pool| {
-                let seed = self.seeds.get(&pool)?;
-                let (deps, readiness) = self.evaluate(&pool);
-                let cross_stream = deps
-                    .iter()
-                    .any(|d| d.role.swap_writes() && self.index.is_shared(&d.pubkey));
-                Some((
-                    pool,
-                    PoolMeta {
-                        dex: seed.dex,
-                        deps,
-                        readiness,
-                        cross_stream,
-                    },
-                ))
-            })
-            .collect();
-        for (pool, meta) in evaluated {
-            let changed = self.table.get(&pool).is_none_or(|old| {
-                old.readiness != meta.readiness
-                    || old.cross_stream != meta.cross_stream
-                    || old.deps != meta.deps
-            });
-            self.table.insert(pool, meta);
-            if changed {
+        for pool in pools {
+            if self.refresh_pool(pool) {
                 self.pool_changed(pool, self.confirmed);
             }
         }
@@ -896,6 +969,31 @@ impl<S: AccountSource, H: HubPort> Engine<S, H> {
         self.stats.set(Counter::PoolsReady, ready);
         self.stats
             .set(Counter::PoolsNotReady, self.table.len() - ready);
+    }
+
+    /// Brings the pool's published metadata up to date; `true` when it
+    /// changed.
+    fn refresh_pool(&mut self, pool: Pubkey) -> bool {
+        let Some(dex) = self.seeds.get(&pool).map(|s| s.dex) else {
+            return false;
+        };
+        let (deps, readiness) = self.evaluate(&pool);
+        let cross_stream = deps
+            .iter()
+            .any(|d| d.role.swap_writes() && self.index.is_shared(&d.pubkey));
+        let meta = PoolMeta {
+            dex,
+            deps,
+            readiness,
+            cross_stream,
+        };
+        let changed = self.table.get(&pool).is_none_or(|old| {
+            old.readiness != meta.readiness
+                || old.cross_stream != meta.cross_stream
+                || old.deps != meta.deps
+        });
+        self.table.insert(pool, meta);
+        changed
     }
 
     fn evaluate(&self, pool: &Pubkey) -> (Arc<[Dependency]>, Readiness) {

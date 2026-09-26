@@ -72,6 +72,18 @@ impl SlotTree {
         self.first_seen = None;
     }
 
+    /// Only slots above the last confirmation are known.
+    pub fn descends(&self, slot: Slot, ancestor: Slot) -> bool {
+        let mut cursor = slot;
+        while cursor > ancestor {
+            match self.parents.get(&cursor) {
+                Some(&parent) => cursor = parent,
+                None => return false,
+            }
+        }
+        cursor == ancestor
+    }
+
     /// `None` when `slot` is not newer than the last confirmed slot: its
     /// ancestors were already resolved by a later confirmation.
     pub fn confirm(&mut self, slot: Slot) -> Option<Resolution> {
@@ -116,6 +128,18 @@ mod tests {
         assert_eq!(
             [101, 102, 103].map(|s| res.is_canonical(Slot(s))),
             [true, false, true]
+        );
+    }
+
+    #[test]
+    fn a_slot_descends_from_its_ancestors_only() {
+        let mut tree = SlotTree::default();
+        tree.record_parent(Slot(101), Slot(100), true);
+        tree.record_parent(Slot(102), Slot(100), true);
+        tree.record_parent(Slot(103), Slot(101), true);
+        assert_eq!(
+            [100, 101, 102, 103].map(|s| tree.descends(Slot(103), Slot(s))),
+            [true, true, false, true]
         );
     }
 

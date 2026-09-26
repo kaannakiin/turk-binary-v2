@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use domain::chain::CLOCK_SYSVAR;
-use domain::{Pubkey, Slot};
+use domain::{Pubkey, Slot, TxnSignature};
 use futures::StreamExt;
 use futures::channel::mpsc as fmpsc;
 use tokio::sync::{Mutex, mpsc};
@@ -675,7 +675,7 @@ async fn a_key_rejected_by_the_account_filter_too_rejects_only_its_group() {
 }
 
 #[tokio::test]
-async fn writes_to_a_key_left_out_of_the_txn_status_filter_carry_no_signature() {
+async fn writes_to_a_key_left_out_of_the_txn_status_filter_keep_their_signature() {
     let mut rig = rig(&settings(), SlotSource::Slots);
     let rejected = Pubkey::new_unique();
     rig.upsert(Pubkey::new_unique(), Placement::Pool, &[rejected]);
@@ -696,5 +696,5 @@ async fn writes_to_a_key_left_out_of_the_txn_status_filter_carry_no_signature() 
     else {
         unreachable!()
     };
-    assert_eq!(update.txn, None);
+    assert_eq!(update.txn, Some(TxnSignature([7; 64])));
 }

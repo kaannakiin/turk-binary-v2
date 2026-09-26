@@ -62,6 +62,7 @@ pub fn log_stats(s: &StatsSnapshot) {
         late = s.late,
         txn_orphans = s.txn_orphans,
         txn_superseded = s.txn_superseded,
+        txn_forced = s.txn_forced,
         views_published = s.views_published,
         stale = s.stale,
         audited = s.audit_checked,

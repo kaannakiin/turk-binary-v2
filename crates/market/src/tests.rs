@@ -15,8 +15,8 @@ use rpc::RpcError;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{
-    AccountSource, Engine, HubPort, MarketReader, PoolChanged, PoolInfo, Readiness, Reason,
-    SyncSettings, Universe,
+    AccountSource, Engine, HubPort, MarketReader, PoolChanged, PoolInfo, PoolView, Readiness,
+    Reason, SyncSettings, Universe, ViewSink,
 };
 
 const SHARD: StreamId = StreamId::Shard(0);
@@ -180,6 +180,7 @@ fn clmm_pool(bitmap_bits: &[usize]) -> Pool {
 
 struct Rig {
     events: mpsc::Sender<Stamped>,
+    published: Published,
     reader: MarketReader,
     chain: FakeSource,
     hub: FakeHub,
@@ -191,7 +192,30 @@ fn start(pool: &Pool) -> Rig {
     start_with(pool, 0)
 }
 
+type Published = Arc<Mutex<Vec<Arc<PoolView>>>>;
+
+/// Every view the engine publishes, in order: what any reader could have
+/// loaded between two steps.
+struct Recorder(Published);
+
+impl ViewSink for Recorder {
+    fn publish(&mut self, view: &Arc<PoolView>) {
+        self.0.lock().unwrap().push(Arc::clone(view));
+    }
+}
+
 fn start_with(pool: &Pool, audit_interval_ms: u64) -> Rig {
+    start_with_settings(
+        pool,
+        SyncSettings {
+            tick_ms: 5,
+            audit_interval_ms,
+            ..SyncSettings::default()
+        },
+    )
+}
+
+fn start_with_settings(pool: &Pool, settings: SyncSettings) -> Rig {
     let chain = FakeSource::default();
     {
         let mut c = chain.0.lock().unwrap();
@@ -226,24 +250,22 @@ fn start_with(pool: &Pool, audit_interval_ms: u64) -> Rig {
         )]),
     };
     let hub = FakeHub::default();
-    let settings = SyncSettings {
-        tick_ms: 5,
-        audit_interval_ms,
-        ..SyncSettings::default()
-    };
-    let engine = Engine::new(
+    let mut engine = Engine::new(
         &universe,
         Arc::new(chain.clone()),
         hub.clone(),
         settings,
         false,
     );
+    let published = Published::default();
+    engine.set_sink(Box::new(Recorder(Arc::clone(&published))));
     let reader = engine.reader();
     let stats = engine.stats();
     let (events, mut rx) = mpsc::channel(1_024);
     tokio::spawn(async move { engine.run(&mut rx).await });
     Rig {
         events,
+        published,
         reader,
         chain,
         hub,
@@ -754,7 +776,7 @@ async fn a_confirmation_on_another_stream_does_not_release_a_held_transaction() 
 }
 
 #[tokio::test]
-async fn a_held_transaction_is_released_by_a_frozen_later_slot_not_by_its_shreds() {
+async fn a_held_transaction_is_released_by_a_frozen_descendant_only() {
     let pool = cpmm_pool();
     let rig = subscribed(&pool).await;
     rig.effective_all(100).await;
@@ -767,13 +789,14 @@ async fn a_held_transaction_is_released_by_a_frozen_later_slot_not_by_its_shreds
         Some(TxnSignature([7; 64])),
     ))
     .await;
-    let later = |status| StreamEvent::Slot {
+    let slot = |slot, parent, status| StreamEvent::Slot {
         stream: SHARD,
-        slot: Slot(202),
-        parent: Some(Slot(201)),
+        slot: Slot(slot),
+        parent: Some(Slot(parent)),
         status,
     };
-    rig.send(later(SlotStatus::Other)).await;
+    rig.send(slot(202, 201, SlotStatus::Other)).await;
+    rig.send(slot(203, 199, SlotStatus::Processed)).await;
     rig.send(signed_write(vault_b, 200, b"marker", None)).await;
     rig.until("the marker", |r| {
         r.head_data(&vault_b.0).as_deref() == Some(b"marker".as_slice())
@@ -783,11 +806,57 @@ async fn a_held_transaction_is_released_by_a_frozen_later_slot_not_by_its_shreds
         rig.head_data(&vault_a.0).as_deref(),
         Some(b"after swap".as_slice())
     );
-    rig.send(later(SlotStatus::Processed)).await;
+    rig.send(slot(201, 200, SlotStatus::Processed)).await;
     rig.until("the released write", |r| {
         r.head_data(&vault_a.0).as_deref() == Some(b"after swap".as_slice())
     })
     .await;
+}
+
+#[tokio::test]
+async fn a_transaction_forced_out_unfinished_never_reaches_a_ready_view() {
+    let pool = cpmm_pool();
+    let rig = start_with_settings(
+        &pool,
+        SyncSettings {
+            tick_ms: 5,
+            audit_interval_ms: 0,
+            txn_max_hold_ms: 20,
+            ..SyncSettings::default()
+        },
+    );
+    rig.until("subscription", |r| {
+        !r.hub.keys_on(Placement::Pool).is_empty()
+    })
+    .await;
+    rig.effective_all(100).await;
+    rig.ready().await;
+    rig.chain.0.lock().unwrap().hang = true;
+    let vault_a = pool.deps[1];
+    rig.send(signed_write(
+        vault_a,
+        200,
+        b"after swap",
+        Some(TxnSignature([7; 64])),
+    ))
+    .await;
+    rig.until("the forced write", |r| {
+        r.head_data(&vault_a.0).as_deref() == Some(b"after swap".as_slice())
+    })
+    .await;
+    let half_applied_and_ready = rig.published.lock().unwrap().iter().any(|view| {
+        view.readiness == Readiness::Ready
+            && view.accounts.iter().any(|(dep, account)| {
+                dep.pubkey == vault_a.0
+                    && account
+                        .as_ref()
+                        .is_some_and(|a| a.data.as_ref() == b"after swap")
+            })
+    });
+    assert_eq!(
+        (half_applied_and_ready, rig.readiness()),
+        (false, Some(Readiness::NotReady(Reason::Syncing)))
+    );
 }
 
 #[tokio::test]

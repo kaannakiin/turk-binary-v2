@@ -421,15 +421,10 @@ impl<C: Connector> StreamActor<C> {
         let (slot, event) = match update.update_oneof {
             Some(UpdateOneof::Account(account)) => {
                 self.stats.accounts.fetch_add(1, Ordering::Relaxed);
-                let Some(mut update) = account_update(account) else {
+                let Some(update) = account_update(account) else {
                     tracing::warn!(stream = ?self.id, "dropping malformed grpc account update");
                     return None;
                 };
-                // No status ever arrives for a key left out of the status
-                // filter, so its writes must not wait for one.
-                if self.limits.txn_excluded.contains(&update.pubkey) {
-                    update.txn = None;
-                }
                 let slot = update.slot;
                 let forward = update.pubkey != CLOCK_SYSVAR
                     || matches!(

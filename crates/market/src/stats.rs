@@ -77,6 +77,7 @@ counters!(
     repair_backlog,
     txn_orphans,
     txn_superseded,
+    txn_forced,
     views_published,
 );
 
@@ -142,6 +143,7 @@ impl Stats {
             Counter::RepairBacklog => &self.repair_backlog,
             Counter::TxnOrphans => &self.txn_orphans,
             Counter::TxnSuperseded => &self.txn_superseded,
+            Counter::TxnForced => &self.txn_forced,
             Counter::ViewsPublished => &self.views_published,
         }
     }
@@ -199,6 +201,7 @@ pub(crate) enum Counter {
     RepairBacklog,
     TxnOrphans,
     TxnSuperseded,
+    TxnForced,
     ViewsPublished,
 }
 
