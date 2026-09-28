@@ -226,25 +226,45 @@ HTTP (axum, `app` runtime)            search threads (`search-{i}`)
 ### `POST /route`
 
 ```json
-{"fromTokenAddress":"So11111111111111111111111111111111111111112","toTokenAddress":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","amount":"1000000000"}
+{
+  "fromTokenAddress": "So11111111111111111111111111111111111111112",
+  "toTokenAddress": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "amount": "1000000000"
+}
 ```
 
-| Field                   | Required | Meaning                                                                                                      |
-| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
-| `fromTokenAddress`      | yes      | Input mint, base58.                                                                                          |
-| `toTokenAddress`        | yes      | Output mint. The same as the input only with `enableCyclicArbitrage`.                                        |
-| `amount`                | yes      | Exact input in base units, as a string of digits: no sign, no decimals, below 2^64.                          |
+| Field                   | Required | Meaning                                                                                                                  |
+| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `fromTokenAddress`      | yes      | Input mint, base58.                                                                                                      |
+| `toTokenAddress`        | yes      | Output mint. The same as the input only with `enableCyclicArbitrage`.                                                    |
+| `amount`                | yes      | Exact input in base units, as a string of digits: no sign, no decimals, below 2^64.                                      |
 | `enableCyclicArbitrage` | no       | `true` searches a cycle back to the input mint (at least 2 hops). It may come back at a loss: that is the caller's call. |
-| `maxHops`               | no       | Pools a route may pass, `quote.default_max_hops` when absent, at most `quote.max_hops`.                      |
-| `dexes`                 | no       | Only pools of these DEXes (config names such as `raydium_cpmm`). Empty: every DEX.                           |
-| `excludeDexes`          | no       | Never pools of these DEXes.                                                                                  |
+| `maxHops`               | no       | Pools a route may pass, `quote.default_max_hops` when absent, at most `quote.max_hops`.                                  |
+| `dexes`                 | no       | Only pools of these DEXes (config names such as `raydium_cpmm`). Empty: every DEX.                                       |
+| `excludeDexes`          | no       | Never pools of these DEXes.                                                                                              |
 
 Unknown fields are refused, so a client sending `slippagePercent` does not believe it was applied. The answer:
 
 ```json
-{"fromTokenAddress":"So111…","toTokenAddress":"EPjF…","fromTokenAmount":"1000000000","toTokenAmount":"33540506",
- "contextSlot":450370213,"crossStream":false,"search":{"pruned":false,"exhausted":false,"quotes":7},
- "legs":[{"poolAddress":"…","dex":"raydium_cpmm","fromTokenAddress":"So111…","toTokenAddress":"EPjF…","fromTokenAmount":"1000000000","toTokenAmount":"33540506"}]}
+{
+  "fromTokenAddress": "So111…",
+  "toTokenAddress": "EPjF…",
+  "fromTokenAmount": "1000000000",
+  "toTokenAmount": "33540506",
+  "contextSlot": 450370213,
+  "crossStream": false,
+  "search": { "pruned": false, "exhausted": false, "quotes": 7 },
+  "legs": [
+    {
+      "poolAddress": "…",
+      "dex": "raydium_cpmm",
+      "fromTokenAddress": "So111…",
+      "toTokenAddress": "EPjF…",
+      "fromTokenAmount": "1000000000",
+      "toTokenAmount": "33540506"
+    }
+  ]
+}
 ```
 
 - **Amounts** are the winning path priced again (`requote`) in a new session: the newest decoded state and Clock. The search compared paths on pins taken at different moments; the answer is not one of those. That session then `verify`s the path, since a pool pinned early can change or become unusable before the last is quoted. This catches what changed while the answer was prepared; it is not one chain snapshot and promises nothing about execution.
@@ -256,21 +276,21 @@ Unknown fields are refused, so a client sending `slippagePercent` does not belie
 
 Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 
-| Status | `code`            | When                                                                                                                                     |
-| ------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Status | `code`            | When                                                                                                                                    |
+| ------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | 400    | `INVALID_REQUEST` | The body does not parse, a field is malformed or unknown, `maxHops` is out of range, or the mints contradict `enableCyclicArbitrage`.   |
-| 422    | `UNKNOWN_MINT`    | A mint no watched pool trades.                                                                                                           |
-| 422    | `NO_ROUTE`        | No path; `error.search` says whether pruning or the budget may have hidden one.                                                          |
-| 503    | `NOT_READY`       | The engine has not started yet, or has no Clock.                                                                                         |
-| 503    | `STALE_DATA`      | The Clock has not moved for `ready.max_clock_stall_ms`: the feed stalled, however ready its pools still look.                            |
-| 503    | `OVERLOADED`      | Every search thread is busy and `quote.max_queued` searches wait. Answered at once, with `Retry-After: 1`.                               |
+| 422    | `UNKNOWN_MINT`    | A mint no watched pool trades.                                                                                                          |
+| 422    | `NO_ROUTE`        | No path; `error.search` says whether pruning or the budget may have hidden one.                                                         |
+| 503    | `NOT_READY`       | The engine has not started yet, or has no Clock.                                                                                        |
+| 503    | `STALE_DATA`      | The Clock has not moved for `ready.max_clock_stall_ms`: the feed stalled, however ready its pools still look.                           |
+| 503    | `OVERLOADED`      | Every search thread is busy and `quote.max_queued` searches wait. Answered at once, with `Retry-After: 1`.                              |
 | 503    | `ROUTE_CHANGED`   | A pool of the winning path failed its requote, or `verify` after it found one unusable or published again. Asking again searches again. |
-| 504    | `TIMEOUT`         | The search did not finish within `quote.timeout_ms`, queue time included.                                                                |
-| 500    | `INTERNAL`        | The search panicked. The thread survives.                                                                                                |
+| 504    | `TIMEOUT`         | The search did not finish within `quote.timeout_ms`, queue time included.                                                               |
+| 500    | `INTERNAL`        | The search panicked. The thread survives.                                                                                               |
 
 ### Search threads
 
-Searches are CPU work, so they run on their own threads (`[threads] search`), never on the async runtime. At most one search runs per thread and `quote.max_queued` wait; past that a request is refused at once, so a burst cannot grow an unbounded queue in front of a semaphore. A search opens its `SearchSession` when a thread takes it, not when the request arrived, so a queued request pins no state while it waits. A search cannot be interrupted: when a caller times out, a search already running finishes and keeps its thread and its place until it returns, and `quote.max_quotes` is what bounds that time. A search whose caller left before it started is dropped unrun.
+Searches are CPU work, so they run on their own threads (`[threads] search`), never on the async runtime. At most one search runs per thread and `quote.max_queued` wait; past that a request is refused at once, so a burst cannot grow an unbounded queue in front of a semaphore. A search opens its `SearchSession` when a thread takes it, not when the request arrived, so a queued request pins no state while it waits. A search cannot be interrupted: when a caller times out, a search already running finishes and keeps its thread and its place until it returns. `quote.max_quotes` is a work budget, not a deadline: filtering, pinning, the write-set checks and ranking are not counted, so no timeout here assumes a search ends within some number of milliseconds. A search whose caller left before it started is dropped unrun.
 
 ### `/health` and `/ready`
 
@@ -285,14 +305,34 @@ Once the engine runs, `/ready` needs:
 - enough ready pools among the **eligible** ones: ready, or not ready for a reason that clears by itself. `Unverified`, `Invalid`, `Unsubscribable` and `Closed` pools never become ready on their own, so they are left out; `Missing` and `OwnerMismatch` stay in, since with real money an unclear case counts against readiness. `/ready` first turns 200 at `ready.startup_percent` of them, so a service still seeding takes no traffic. From then on it fails again only below `ready.floor_percent`: a pool or a stream shard dropping out is a question for each request (does this route have data?), not for the whole service.
 
 ```json
-{"ready":false,"phase":"serving","reasons":["CLOCK_STALLED"],"slot":371234567,"slotAgeMs":12250,"readyPools":812,"eligiblePools":820,"totalPools":840}
+{
+  "ready": false,
+  "phase": "serving",
+  "reasons": ["CLOCK_STALLED"],
+  "slot": 371234567,
+  "slotAgeMs": 12250,
+  "readyPools": 812,
+  "eligiblePools": 820,
+  "totalPools": 840
+}
 ```
 
 `reasons` holds `STARTING`, `DRAINING`, `NO_CLOCK`, `CLOCK_STALLED`, `TOO_FEW_READY_POOLS`; `phase` is `starting`, `serving`, `draining` or `stopping`. Unknown paths and methods answer `NOT_FOUND` or `METHOD_NOT_ALLOWED` on both addresses. Every response carries `x-request-id`: the client's own if it sent one, otherwise a new UUID, and the request's tracing span records it.
 
+### Connections
+
+Both listeners run their own accept loop on hyper (`hyper-util`), not `axum::serve`: that spawns every connection as a task of its own, and dropping the server leaves those tasks running, so it cannot promise that no request outlives it. Here every connection is a task in a `JoinSet` the server owns. Request headers must arrive within `read_timeout_ms`, and on the API so must the body (the search timeout starts only once the body is read); a client that stops sending is cut off instead of holding its connection and task for good.
+
 ### Shutdown
 
-Ctrl-c or `SIGTERM` first **drains**: `/ready` answers 503 (`DRAINING`) while the API keeps serving for `drain_delay_ms`, so a load balancer moves traffic away. Then it **stops**: both listeners stop accepting and requests in flight get up to `shutdown_timeout_ms`. The engine stops last, so nothing is priced on state that stopped updating. A market failure skips the drain delay, since its state no longer updates, then the process exits with the error.
+Ctrl-c or `SIGTERM` first **drains**: `/ready` answers 503 (`DRAINING`) while the API keeps serving for `drain_delay_ms`, so a load balancer moves traffic away. Then it **stops**, within one `shutdown_timeout_ms` deadline:
+
+1. Both listeners stop accepting; open connections are told to finish (hyper's graceful shutdown) and idle ones close.
+2. At the deadline, connections still open are aborted and their tasks awaited, so `run` returns only when no request task is left.
+3. The search pool refuses new searches; queued ones whose caller is gone are dropped unrun, and the server waits for running ones until the same deadline. One still running then is logged and left to finish unread: a thread cannot be stopped safely, and nothing reads its answer.
+4. The engine stops last.
+
+A market failure skips the drain delay, since its state no longer updates, then takes the same stop path and the process exits with the error.
 
 ## LiteSVM oracle
 

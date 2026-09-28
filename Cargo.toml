@@ -24,7 +24,7 @@ ahash = "0.8.12"
 anyhow = "1.0.104"
 arc-swap = "1.9.2"
 async-trait = "0.1.92"
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio", "tracing"] }
+axum = { version = "0.8.9", default-features = false, features = ["json", "tracing"] }
 base64 = "0.22.1"
 flate2 = "1.1.10"
 bytemuck = "1.25.0"
@@ -34,6 +34,8 @@ clap = { version = "4.6.7", features = ["derive", "env"] }
 crossbeam-channel = "0.5.17"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 futures = "0.3.34"
+hyper = { version = "1.11.1", features = ["http1", "server"] }
+hyper-util = { version = "0.1.20", features = ["http1", "server", "server-graceful", "service", "tokio"] }
 rand = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -47,7 +49,7 @@ thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "1.1.6"
 tower = { version = "0.5.3", default-features = false }
-tower-http = { version = "0.6.11", features = ["request-id", "trace"] }
+tower-http = { version = "0.6.11", features = ["request-id", "timeout", "trace"] }
 uint = { version = "0.9.5", default-features = false }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

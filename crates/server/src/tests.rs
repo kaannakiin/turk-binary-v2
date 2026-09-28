@@ -8,6 +8,7 @@ mod api;
 mod executor;
 mod ops;
 mod ready;
+mod serve;
 
 async fn call(router: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {
     let response = router.oneshot(request).await.expect("router is infallible");

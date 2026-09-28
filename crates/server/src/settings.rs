@@ -11,6 +11,7 @@ pub struct ServerSettings {
     pub api_addr: SocketAddr,
     pub ops_addr: SocketAddr,
     pub drain_delay_ms: u64,
+    pub read_timeout_ms: u64,
     pub shutdown_timeout_ms: u64,
     pub ready: ReadySettings,
     pub quote: QuoteSettings,
@@ -20,6 +21,11 @@ impl ServerSettings {
     #[must_use]
     pub fn drain_delay(&self) -> Duration {
         Duration::from_millis(self.drain_delay_ms)
+    }
+
+    #[must_use]
+    pub fn read_timeout(&self) -> Duration {
+        Duration::from_millis(self.read_timeout_ms)
     }
 
     #[must_use]
@@ -34,6 +40,7 @@ impl Default for ServerSettings {
             api_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, 8080)),
             ops_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, 9100)),
             drain_delay_ms: 0,
+            read_timeout_ms: 5_000,
             shutdown_timeout_ms: 5_000,
             ready: ReadySettings::default(),
             quote: QuoteSettings::default(),

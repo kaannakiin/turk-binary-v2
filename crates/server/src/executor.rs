@@ -1,10 +1,11 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender};
-use tokio::sync::oneshot;
+use tokio::sync::{Notify, oneshot};
+use tokio::time::Instant;
 
 use crate::error::ServerError;
 
@@ -15,12 +16,22 @@ type Job = Box<dyn FnOnce() + Send>;
 /// burst gets `OVERLOADED` instead of a queue that grows without bound.
 pub struct SearchPool {
     jobs: Sender<Job>,
-    admitted: Arc<AtomicUsize>,
+    shared: Arc<Shared>,
     capacity: usize,
 }
 
+#[derive(Default)]
+struct Shared {
+    admitted: AtomicUsize,
+    closed: AtomicBool,
+    idle: Notify,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Overloaded;
+pub(crate) enum Refused {
+    Full,
+    Closed,
+}
 
 impl SearchPool {
     pub fn start(threads: usize, max_queued: usize) -> Result<Self, ServerError> {
@@ -35,7 +46,7 @@ impl SearchPool {
         }
         Ok(Self {
             jobs,
-            admitted: Arc::default(),
+            shared: Arc::default(),
             capacity: threads.saturating_add(max_queued),
         })
     }
@@ -46,8 +57,11 @@ impl SearchPool {
     pub(crate) fn submit<T: Send + 'static>(
         &self,
         work: impl FnOnce() -> T + Send + 'static,
-    ) -> Result<oneshot::Receiver<T>, Overloaded> {
-        let admission = Admission::take(&self.admitted, self.capacity).ok_or(Overloaded)?;
+    ) -> Result<oneshot::Receiver<T>, Refused> {
+        if self.shared.closed.load(Ordering::Acquire) {
+            return Err(Refused::Closed);
+        }
+        let admission = Admission::take(&self.shared, self.capacity).ok_or(Refused::Full)?;
         let (reply, result) = oneshot::channel();
         let job: Job = Box::new(move || {
             if reply.is_closed() {
@@ -63,8 +77,28 @@ impl SearchPool {
                 tracing::error!("a search panicked");
             }
         });
-        self.jobs.send(job).map_err(|_| Overloaded)?;
+        self.jobs.send(job).map_err(|_| Refused::Closed)?;
         Ok(result)
+    }
+
+    /// Refuses new searches, then waits until every admitted one has
+    /// returned or been skipped, up to `deadline`. `false`: some were still
+    /// running, and keep running on state nothing updates any more.
+    pub(crate) async fn close(&self, deadline: Instant) -> bool {
+        self.shared.closed.store(true, Ordering::Release);
+        loop {
+            let idle = self.shared.idle.notified();
+            tokio::pin!(idle);
+            // Registered before the count is read, so a release in between
+            // still wakes this wait.
+            idle.as_mut().enable();
+            if self.shared.admitted.load(Ordering::Acquire) == 0 {
+                return true;
+            }
+            if tokio::time::timeout_at(deadline, idle).await.is_err() {
+                return false;
+            }
+        }
     }
 }
 
@@ -74,21 +108,24 @@ fn work(queue: &Receiver<Job>) {
     }
 }
 
-struct Admission(Arc<AtomicUsize>);
+struct Admission(Arc<Shared>);
 
 impl Admission {
-    fn take(admitted: &Arc<AtomicUsize>, capacity: usize) -> Option<Self> {
-        admitted
+    fn take(shared: &Arc<Shared>, capacity: usize) -> Option<Self> {
+        shared
+            .admitted
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < capacity).then_some(n + 1)
             })
             .ok()?;
-        Some(Self(Arc::clone(admitted)))
+        Some(Self(Arc::clone(shared)))
     }
 }
 
 impl Drop for Admission {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        if self.0.admitted.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.idle.notify_waiters();
+        }
     }
 }

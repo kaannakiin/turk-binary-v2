@@ -65,6 +65,7 @@ search = 0                # serve only: route search threads; 0 = a quarter of t
 api_addr = "127.0.0.1:8080"   # POST /route
 ops_addr = "127.0.0.1:9100"   # /health and /ready
 drain_delay_ms = 0            # /ready answers 503 this long before the listeners close
+read_timeout_ms = 5000        # headers (and the API body) must arrive within this
 shutdown_timeout_ms = 5000
 
 [server.ready]
@@ -75,7 +76,7 @@ max_clock_stall_ms = 10000    # /ready fails once the Clock's slot has not moved
 [server.quote]
 default_max_hops = 3
 max_hops = 4
-max_quotes = 100000           # quote budget of one search
+max_quotes = 100000           # work budget of one search, not a deadline
 per_pair = 2                  # pools kept per pair while searching; 0 = all
 max_arrays = 8
 timeout_ms = 2000

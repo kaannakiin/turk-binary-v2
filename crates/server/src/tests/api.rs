@@ -78,6 +78,7 @@ impl Fixture {
             quotes,
             settings: self.settings,
             max_clock_stall: MAX_CLOCK_STALL,
+            read_timeout: Duration::from_secs(5),
         })
     }
 

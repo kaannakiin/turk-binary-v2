@@ -17,8 +17,6 @@ pub enum ServerError {
     },
     #[error("reading the listener address")]
     LocalAddr(#[source] io::Error),
-    #[error("serving HTTP")]
-    Serve(#[source] io::Error),
     #[error("starting a search thread")]
     Spawn(#[source] io::Error),
     #[error("server settings: {0}")]
@@ -91,6 +89,11 @@ impl ApiError {
         StatusCode::SERVICE_UNAVAILABLE,
         "OVERLOADED",
         "every search thread is busy and the queue is full",
+    );
+    pub(crate) const SHUTTING_DOWN: Self = Self::fixed(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "SHUTTING_DOWN",
+        "the server is shutting down",
     );
     pub(crate) const TIMEOUT: Self = Self::fixed(
         StatusCode::GATEWAY_TIMEOUT,
