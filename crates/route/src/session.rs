@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
@@ -24,19 +25,26 @@ type Pins = HashMap<PoolId, Pin, ahash::RandomState>;
 
 pub(crate) struct Pin {
     decoded: Arc<Decoded>,
+    /// Sorted and deduplicated, for [`intersect`]: a Whirlpool closure can
+    /// hold thousands of tick arrays.
     writes: Box<[Pubkey]>,
 }
 
 impl Pin {
     fn new(decoded: Arc<Decoded>) -> Self {
-        let writes = decoded
+        let mut writes: Vec<Pubkey> = decoded
             .view
             .accounts
             .iter()
             .filter(|(dep, _)| dep.role.swap_writes())
             .map(|(dep, _)| dep.pubkey)
             .collect();
-        Self { decoded, writes }
+        writes.sort_unstable();
+        writes.dedup();
+        Self {
+            decoded,
+            writes: writes.into_boxed_slice(),
+        }
     }
 }
 
@@ -130,7 +138,7 @@ impl SearchSession {
         others.into_iter().any(|other| {
             self.pins
                 .get(&other)
-                .is_none_or(|o| o.writes.iter().any(|key| pin.writes.contains(key)))
+                .is_none_or(|o| intersect(&o.writes, &pin.writes))
         })
     }
 
@@ -163,4 +171,16 @@ impl SearchSession {
             Verdict::Stale(stale)
         }
     }
+}
+
+fn intersect(a: &[Pubkey], b: &[Pubkey]) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while let (Some(x), Some(y)) = (a.get(i), b.get(j)) {
+        match x.cmp(y) {
+            Ordering::Less => i += 1,
+            Ordering::Greater => j += 1,
+            Ordering::Equal => return true,
+        }
+    }
+    false
 }
