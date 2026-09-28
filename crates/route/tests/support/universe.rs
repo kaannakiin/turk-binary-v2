@@ -1,0 +1,273 @@
+//! Loads the ready universe `just snapshot-universe` captured and publishes
+//! it through the route decoder, as the pipeline threads do.
+
+use std::collections::HashMap;
+use std::io::BufReader;
+use std::num::NonZeroU8;
+use std::sync::Arc;
+
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use bytes::Bytes;
+use dex::{AccountView, Known, PoolAccount, Role, Side};
+use domain::{ChainClock, DexKind, Pubkey, Slot, UpdateOrder, WriteVersion};
+use graph::{MintId, PoolSeed, Topology};
+use market::{PoolView, Readiness, StoredAccount, ViewSink};
+use route::{Decoding, Goal, PoolFeed, Query, QuoteReader};
+use serde::Deserialize;
+
+pub const PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../oracle/snapshots/universe.json.gz"
+);
+
+const WSOL: &str = "So11111111111111111111111111111111111111112";
+const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+/// The pump token with the most SOL in its pool, per `config.toml`.
+const PUMP: &str = "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump";
+
+#[derive(Deserialize)]
+struct Snapshot {
+    clock: Clock,
+    pools: Vec<Pool>,
+}
+
+#[derive(Deserialize)]
+struct Clock {
+    slot: u64,
+    epoch_start_timestamp: i64,
+    epoch: u64,
+    leader_schedule_epoch: u64,
+    unix_timestamp: i64,
+}
+
+#[derive(Deserialize)]
+struct Pool {
+    #[serde(rename = "pool")]
+    address: String,
+    dex: DexKind,
+    cross_stream: bool,
+    accounts: Vec<Account>,
+}
+
+#[derive(Deserialize)]
+struct Account {
+    key: String,
+    owner: Option<String>,
+    lamports: u64,
+    data: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct Feed(ChainClock);
+
+impl PoolFeed for Feed {
+    fn clock(&self) -> Option<ChainClock> {
+        Some(self.0)
+    }
+}
+
+pub struct Universe {
+    pub reader: QuoteReader<Feed>,
+    pub topology: Arc<Topology>,
+    pub slot: u64,
+    pub skipped: Vec<(Pubkey, String)>,
+}
+
+struct Accounts(HashMap<Pubkey, StoredAccount>);
+
+impl AccountView for Accounts {
+    fn get(&self, key: &Pubkey) -> Known<'_> {
+        match self.0.get(key) {
+            None => Known::Unknown,
+            Some(account) if account.exists() => Known::Present(&account.data),
+            Some(_) => Known::Absent,
+        }
+    }
+}
+
+#[must_use]
+pub fn load() -> Universe {
+    let file = std::fs::File::open(PATH)
+        .unwrap_or_else(|e| panic!("{PATH}: {e}; capture it with `just snapshot-universe`"));
+    let snapshot: Snapshot =
+        serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
+            .expect("the snapshot parses");
+    let clock = ChainClock {
+        slot: Slot(snapshot.clock.slot),
+        epoch_start_timestamp: snapshot.clock.epoch_start_timestamp,
+        epoch: snapshot.clock.epoch,
+        leader_schedule_epoch: snapshot.clock.leader_schedule_epoch,
+        unix_timestamp: snapshot.clock.unix_timestamp,
+    };
+    let order = UpdateOrder {
+        slot: clock.slot,
+        write_version: WriteVersion(0),
+    };
+
+    let mut views = Vec::new();
+    let mut skipped = Vec::new();
+    for pool in snapshot.pools {
+        let address: Pubkey = pool.address.parse().expect("pool address");
+        let accounts = Accounts(
+            pool.accounts
+                .iter()
+                .map(|a| (a.key.parse().expect("account key"), stored(a, order)))
+                .collect(),
+        );
+        match view(pool.dex, address, pool.cross_stream, &accounts) {
+            Ok(view) => views.push(view),
+            Err(reason) => skipped.push((address, reason)),
+        }
+    }
+
+    let topology = Arc::new(
+        Topology::build(views.iter().map(|view| PoolSeed {
+            pubkey: view.pool,
+            dex: view.dex,
+            mints: mints(view),
+        }))
+        .expect("the universe fits"),
+    );
+    let mut decoding = Decoding::new(Arc::clone(&topology));
+    let mut decoder = decoding.decoder();
+    for view in views {
+        decoder.publish(&Arc::new(view));
+    }
+    Universe {
+        reader: decoding.reader(Feed(clock)),
+        topology,
+        slot: snapshot.clock.slot,
+        skipped,
+    }
+}
+
+fn stored(account: &Account, order: UpdateOrder) -> StoredAccount {
+    match &account.owner {
+        Some(owner) => StoredAccount {
+            owner: owner.parse().expect("owner"),
+            lamports: account.lamports,
+            data: Bytes::from(
+                STANDARD
+                    .decode(account.data.as_deref().unwrap_or_default())
+                    .expect("base64"),
+            ),
+            order,
+        },
+        None => StoredAccount {
+            owner: Pubkey::default(),
+            lamports: 0,
+            data: Bytes::new(),
+            order,
+        },
+    }
+}
+
+fn view(
+    dex: DexKind,
+    address: Pubkey,
+    cross_stream: bool,
+    accounts: &Accounts,
+) -> Result<PoolView, String> {
+    let pool = accounts
+        .0
+        .get(&address)
+        .filter(|pool| pool.exists())
+        .ok_or("pool account missing")?;
+    let closure = dex::closure(
+        dex,
+        &PoolAccount {
+            address,
+            data: &pool.data,
+            mints: None,
+        },
+        accounts,
+    )
+    .map_err(|e| e.to_string())?;
+    if !closure.is_complete() {
+        return Err(format!("awaiting {:?}", closure.awaiting));
+    }
+    Ok(PoolView {
+        pool: address,
+        dex,
+        readiness: Readiness::Ready,
+        accounts: closure
+            .deps
+            .into_iter()
+            .filter(|dep| dep.role != Role::Clock)
+            .map(|dep| {
+                let account = accounts.0.get(&dep.pubkey).cloned();
+                (dep, account)
+            })
+            .collect(),
+        cross_stream,
+    })
+}
+
+fn mints(view: &PoolView) -> Option<(Pubkey, Pubkey)> {
+    let side = |side| {
+        view.accounts
+            .iter()
+            .find(|(dep, _)| dep.role == Role::Mint(side))
+            .map(|(dep, _)| dep.pubkey)
+    };
+    Some((side(Side::A)?, side(Side::B)?))
+}
+
+impl Universe {
+    #[must_use]
+    pub fn mint(&self, address: &str) -> MintId {
+        self.topology
+            .mint_id(&address.parse().expect("mint address"))
+            .unwrap_or_else(|| panic!("{address} is not in the captured universe"))
+    }
+
+    /// The widest pair: how many pools run between the same two mints.
+    #[must_use]
+    pub fn widest_pair(&self) -> usize {
+        self.topology
+            .mints()
+            .iter()
+            .filter_map(|mint| self.topology.mint_id(mint))
+            .flat_map(|mint| self.topology.out_pairs(mint).map(|(_, edges)| edges.len()))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Exhaustive; set `per_pair` to prune.
+    #[must_use]
+    pub fn queries(&self) -> Vec<(String, Query)> {
+        let (sol, usdc, pump) = (self.mint(WSOL), self.mint(USDC), self.mint(PUMP));
+        let query = |from, goal, max_hops, amount_in| Query {
+            from,
+            goal,
+            amount_in,
+            max_hops,
+            max_arrays: u8::MAX,
+            max_quotes: 50_000_000,
+            per_pair: None::<NonZeroU8>,
+        };
+        vec![
+            (
+                "sol_cycle_h2".into(),
+                query(sol, Goal::Cycle, 2, 1_000_000_000),
+            ),
+            (
+                "sol_cycle_h3".into(),
+                query(sol, Goal::Cycle, 3, 1_000_000_000),
+            ),
+            (
+                "sol_to_usdc_h2".into(),
+                query(sol, Goal::To(usdc), 2, 1_000_000_000),
+            ),
+            (
+                "sol_to_usdc_h3".into(),
+                query(sol, Goal::To(usdc), 3, 1_000_000_000),
+            ),
+            (
+                "pump_cycle_h3".into(),
+                query(pump, Goal::Cycle, 3, 1_000_000_000),
+            ),
+        ]
+    }
+}
