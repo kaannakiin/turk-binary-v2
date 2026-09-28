@@ -182,7 +182,7 @@ Pools are decoded on their partition's pipeline thread, inside the engine's publ
 
 ### Search (next phase)
 
-The read contract and the direct (one-pool) search are in place; multi-hop and cycle search are not implemented yet. The layout above is built for it.
+The read contract, the direct (one-pool) search and the exhaustive depth-first search are in place; the faster search is not implemented yet. The layout above is built for it.
 
 #### Read contract
 
@@ -196,8 +196,11 @@ A search reads through a `route::SearchSession`, taken from `QuoteReader::sessio
 #### Algorithm
 
 - **Direct.** `SearchSession::direct(in, out, amount, max_arrays, allow)` quotes the amount through every pool from `in` to `out` that the request's `allow` filter admits, and returns the highest output with every refusal and its reason. It does not consult the activity bit: a pair has few pools, and quoting each one reports why the others refused. The result names its pool by `EdgeId`, to be checked with `verify` in the same session.
-- An exhaustive depth-first search comes first, as the reference the faster search is tested against.
-- A query `(in, out, amount)` runs a hop-layered Bellman-Ford over the graph with real integer exact-in quotes, keeping the best few labels per (depth, mint). Pool uniqueness and the account budget are enforced during the search, not afterwards. Depth is bounded by what the executor can land: 64 account locks per transaction, and the on-chain router's client takes up to 4 hops.
+- **Depth first.** `SearchSession::search(query, filter)` tries every single path of up to `max_hops` pools from `from` to the goal: another mint (`Goal::To`) or back to `from` (`Goal::Cycle`, arbitrage). Each leg is quoted exact-in with the previous leg's output, in the session. It is the reference the faster search below is tested against.
+- **Path rules.** A path uses a pool once, passes an intermediate mint once, and stops at the goal. No two legs write the same account (`dex::Role::swap_writes` over each pinned view): in one transaction the later swap would run on state its quote did not see. Shared read-only accounts (configs, mints) do not count. A `Filter` admits pools and intermediate mints per request; the activity bit prunes before quoting.
+- **Budget.** `max_quotes` caps the quotes one search makes. `Search::exhausted` says the budget ran out first, so `best` is the best found rather than the best there is; no path at all is `best: None` with `exhausted` false. `max_hops` is a request parameter, not a limit of the design.
+- **Result.** The highest final output wins; a cycle may come back at a loss, and whether it pays is the caller's decision. The legs carry their `EdgeId`s for `verify` in the same session.
+- Next: a query `(in, out, amount)` runs a hop-layered Bellman-Ford over the graph with real integer exact-in quotes, keeping the best few labels per (depth, mint). Pool uniqueness and the account budget are enforced during the search, not afterwards. Depth is bounded by what the executor can land: 64 account locks per transaction, and the on-chain router's client takes up to 4 hops.
 - Arbitrage is the cycle case: when pool u→v changes, search forward from v and close at u; the amount comes from a golden-section search on integers.
 - The quoter is exact-in only, so no amount-aware search runs backwards from the output mint.
 - Search runs on its own thread pool, apart from the pipeline and route threads, and reads the topology and quotes without locks.
