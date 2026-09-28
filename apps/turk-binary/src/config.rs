@@ -6,6 +6,7 @@ use market::{SyncSettings, UniverseConfig};
 use route::RouteSettings;
 use rpc::RpcSettings;
 use serde::Deserialize;
+use server::ServerSettings;
 
 const RPC_URL_ENV: &str = "TB_RPC_URL";
 const GRPC_URL_ENV: &str = "TB_GRPC_URL";
@@ -26,6 +27,8 @@ pub struct AppConfig {
     pub route: RouteSettings,
     #[serde(default)]
     pub threads: ThreadSettings,
+    #[serde(default)]
+    pub server: ServerSettings,
     pub universe: UniverseConfig,
 }
 
@@ -33,6 +36,7 @@ pub struct AppConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct ThreadSettings {
     pub pipeline: u16,
+    pub search: u16,
 }
 
 const fn default_stats_interval_secs() -> u64 {

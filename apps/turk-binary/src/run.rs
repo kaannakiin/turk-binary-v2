@@ -29,8 +29,7 @@ struct Running {
 }
 
 impl Running {
-    async fn start(path: &Path) -> anyhow::Result<Self> {
-        let config = config::load(path)?;
+    async fn start(config: config::AppConfig) -> anyhow::Result<Self> {
         let secrets = config::Secrets::from_env()?;
         let rpc = Arc::new(RpcGateway::new(secrets.rpc_url, &config.rpc)?);
 
@@ -142,10 +141,79 @@ impl Running {
 }
 
 pub async fn watch(path: &Path) -> anyhow::Result<()> {
-    Running::start(path)
+    Running::start(config::load(path)?)
         .await?
         .run(std::future::pending())
         .await
+}
+
+type Servers = (
+    JoinHandle<Result<(), server::ServerError>>,
+    JoinHandle<Result<(), server::ServerError>>,
+);
+
+/// `watch` plus the quote API and the ops endpoints. Both answer from before
+/// the engine starts until it has stopped; the engine outlives them, so no
+/// request is priced on state that stopped updating.
+pub async fn serve(path: &Path) -> anyhow::Result<()> {
+    let config = config::load(path)?;
+    let settings = config.server;
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let threads = server::search_threads(config.threads.search, cores);
+    let health = server::Health::new(settings.ready);
+    let quotes = server::QuoteSlot::default();
+    let pool = server::SearchPool::start(threads, settings.quote.max_queued)?;
+    let api = server::ApiServer::bind(&settings, health.clone(), pool, quotes.clone()).await?;
+    let ops = server::OpsServer::bind(&settings, health.clone()).await?;
+    tracing::info!(api = %api.local_addr()?, ops = %ops.local_addr()?, search = threads, "listening");
+    let servers = (tokio::spawn(api.run()), tokio::spawn(ops.run()));
+    let stop = shutdown_signal();
+    tokio::pin!(stop);
+    let mut running = tokio::select! {
+        running = Running::start(config) => running?,
+        () = &mut stop => return stop_servers(&health, servers).await,
+    };
+    quotes.attach(running.quotes.clone());
+    health.serving(running.reader.clone());
+    let result = running.run(&mut stop).await;
+    health.drain();
+    if result.is_ok() {
+        tokio::time::sleep(settings.drain_delay()).await;
+    }
+    stop_servers(&health, servers).await?;
+    drop(running);
+    result
+}
+
+async fn stop_servers(health: &server::Health, (api, ops): Servers) -> anyhow::Result<()> {
+    health.stop();
+    api.await.context("api server panicked")??;
+    ops.await.context("ops server panicked")??;
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let interrupt = async {
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "no SIGTERM handler; only ctrl-c stops the server");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    tokio::select! {
+        () = interrupt => {}
+        () = terminate => {}
+    }
+    tracing::info!("shutting down");
 }
 
 #[derive(clap::Args)]
@@ -169,7 +237,7 @@ pub struct SnapshotArgs {
 pub async fn snapshot(args: &SnapshotArgs) -> anyhow::Result<()> {
     let per_dex = if args.all { usize::MAX } else { args.per_dex };
     let out = args.out.as_path();
-    let mut running = Running::start(&args.config).await?;
+    let mut running = Running::start(config::load(&args.config)?).await?;
     running
         .run(tokio::time::sleep(Duration::from_secs(args.settle_secs)))
         .await?;
@@ -207,17 +275,29 @@ pub async fn probe(path: &Path, kinds: &[ProbeKind]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub struct TxnProbeArgs<'a> {
-    pub minutes: u64,
-    pub per_dex: usize,
-    pub orphan_after_ms: u64,
-    pub only: Option<&'a str>,
-    pub out: Option<&'a Path>,
-    pub record: Option<&'a Path>,
+#[derive(clap::Args)]
+pub struct TxnProbeArgs {
+    #[arg(long, default_value = "config.toml")]
+    config: PathBuf,
+    #[arg(long, default_value_t = 30)]
+    minutes: u64,
+    #[arg(long, default_value_t = 20)]
+    per_dex: usize,
+    #[arg(long, default_value_t = 2_000)]
+    orphan_after_ms: u64,
+    /// Only pools of this DEX, e.g. `raydium_amm_v4`.
+    #[arg(long)]
+    only: Option<String>,
+    /// Write every received message's metadata as TSV.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Write a replay fixture: the pool stream's account bytes, statuses and full transactions.
+    #[arg(long)]
+    record: Option<PathBuf>,
 }
 
-pub async fn txn_probe(path: &Path, args: TxnProbeArgs<'_>) -> anyhow::Result<()> {
-    let config = config::load(path)?;
+pub async fn txn_probe(args: &TxnProbeArgs) -> anyhow::Result<()> {
+    let config = config::load(&args.config)?;
     let secrets = config::Secrets::from_env()?;
     let rpc = RpcGateway::new(secrets.rpc_url, &config.rpc)?;
     let universe = Universe::resolve(&config.universe, &rpc)
@@ -226,7 +306,7 @@ pub async fn txn_probe(path: &Path, args: TxnProbeArgs<'_>) -> anyhow::Result<()
     let targets: Vec<_> = universe
         .probe_targets(args.per_dex)
         .into_iter()
-        .filter(|t| args.only.is_none_or(|only| t.label == only))
+        .filter(|t| args.only.as_deref().is_none_or(|only| t.label == only))
         .collect();
     anyhow::ensure!(!targets.is_empty(), "no pools to probe");
     let slot_source = grpc::resolve_slot_source(
@@ -252,8 +332,8 @@ pub async fn txn_probe(path: &Path, args: TxnProbeArgs<'_>) -> anyhow::Result<()
             .transpose()
             .context("creating an output file")
     };
-    let mut trace_out = create(args.out)?;
-    let mut record_out = create(args.record)?;
+    let mut trace_out = create(args.out.as_deref())?;
+    let mut record_out = create(args.record.as_deref())?;
     if let Some(w) = trace_out.as_mut() {
         writeln!(w, "{}", output::TRACE_HEADER).context("writing the trace file")?;
     }

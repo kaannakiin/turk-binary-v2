@@ -13,6 +13,7 @@
 | `quoter`           | Decodes a pool's accounts and computes swap quotes (DEX math and SDK binds); pure            | No                         |
 | `graph`            | Token graph built once from the universe: mints, pools, edges, per-pool activity bits        | No                         |
 | `route`            | Decodes each pool on the pipeline thread that publishes it; quotes against the decoded state | No (reads `market`)        |
+| `server`           | HTTP serving: the quote API, its search thread pool, readiness, graceful shutdown            | Serves HTTP only           |
 
 Dependencies point one way:
 
@@ -20,6 +21,7 @@ Dependencies point one way:
 turk-binary ──▶ route ──▶ quoter ──▶ dex ──▶ domain
      │            ├─────▶ graph ──▶ market
      │            └─────▶ market
+     ├──────────▶ server ──▶ route, graph, market
      ├──────────▶ graph
      └──────────▶ market ──▶ rpc ──┐
                      │  └──▶ grpc ─┤
@@ -30,7 +32,7 @@ turk-binary ──▶ route ──▶ quoter ──▶ dex ──▶ domain
 
 ## One gate per protocol
 
-Only `rpc` may depend on `solana-rpc-client`, and only `grpc` may depend on `yellowstone-grpc-*`. `cargo deny` fails CI if any other crate tries. That gives one place for retries, rate limits and error handling.
+Only `rpc` may depend on `solana-rpc-client`, only `grpc` on `yellowstone-grpc-*`, and only `server` on `axum` and `tower-http`. `cargo deny` fails CI if any other crate tries. That gives one place for retries, rate limits and error handling.
 
 ## Dependency closures
 
@@ -206,7 +208,89 @@ A search reads through a `route::SearchSession`, taken from `QuoteReader::sessio
 - Next: a query `(in, out, amount)` runs a hop-layered Bellman-Ford over the graph with real integer exact-in quotes, keeping the best few labels per (depth, mint). Pool uniqueness and the account budget are enforced during the search, not afterwards. Depth is bounded by what the executor can land: 64 account locks per transaction, and the on-chain router's client takes up to 4 hops.
 - Arbitrage is the cycle case: when pool u→v changes, search forward from v and close at u; the amount comes from a golden-section search on integers.
 - The quoter is exact-in only, so no amount-aware search runs backwards from the output mint.
-- Search runs on its own thread pool, apart from the pipeline and route threads, and reads the topology and quotes without locks.
+- Search runs on its own thread pool (`search-{i}`, see [HTTP API](#search-threads)), apart from the pipeline and route threads, and reads the topology and quotes without locks.
+
+## HTTP API
+
+`serve` runs `watch` and answers on two addresses, like the Metis and OKX (Pallas) binaries: the quote API on `server.api_addr` (default `127.0.0.1:8080`) and the probes on `server.ops_addr` (default `127.0.0.1:9100`), so probes and metrics stay off the API port. Both are bound before the universe is resolved: a taken port fails at once, and requests during the long startup get an answer (`503`) instead of a hung connection.
+
+It prices routes and builds no transactions. Instructions come later, from the same search inside the same request (the Pallas shape): a client never hands back a route for the server to trust or revalidate.
+
+```text
+HTTP (axum, `app` runtime)            search threads (`search-{i}`)
+  parse + validate ─▶ admit ──────────▶ open SearchSession ─▶ search_widening ─▶ requote ─▶ reply
+       │  400          │ 503 OVERLOADED      (state pinned from here, not from arrival)
+       └───────────────┴── wait ≤ timeout_ms ─▶ 504 TIMEOUT
+```
+
+### `POST /route`
+
+```json
+{"fromTokenAddress":"So11111111111111111111111111111111111111112","toTokenAddress":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","amount":"1000000000"}
+```
+
+| Field                   | Required | Meaning                                                                                                      |
+| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `fromTokenAddress`      | yes      | Input mint, base58.                                                                                          |
+| `toTokenAddress`        | yes      | Output mint. The same as the input only with `enableCyclicArbitrage`.                                        |
+| `amount`                | yes      | Exact input in base units, as a string of digits: no sign, no decimals, below 2^64.                          |
+| `enableCyclicArbitrage` | no       | `true` searches a cycle back to the input mint (at least 2 hops). It may come back at a loss: that is the caller's call. |
+| `maxHops`               | no       | Pools a route may pass, `quote.default_max_hops` when absent, at most `quote.max_hops`.                      |
+| `dexes`                 | no       | Only pools of these DEXes (config names such as `raydium_cpmm`). Empty: every DEX.                           |
+| `excludeDexes`          | no       | Never pools of these DEXes.                                                                                  |
+
+Unknown fields are refused, so a client sending `slippagePercent` does not believe it was applied. The answer:
+
+```json
+{"fromTokenAddress":"So111…","toTokenAddress":"EPjF…","fromTokenAmount":"1000000000","toTokenAmount":"33540506",
+ "contextSlot":450370213,"crossStream":false,"search":{"pruned":false,"exhausted":false,"quotes":7},
+ "legs":[{"poolAddress":"…","dex":"raydium_cpmm","fromTokenAddress":"So111…","toTokenAddress":"EPjF…","fromTokenAmount":"1000000000","toTokenAmount":"33540506"}]}
+```
+
+- **Amounts** are the winning path priced again (`requote`) in a new session: the newest decoded state and Clock. The search compared paths on pins taken at different moments; the answer is not one of those.
+- **`contextSlot`** is the slot of the Clock that requote used. It says when the price held, not that it will hold when a transaction lands.
+- **`search`** is the search's quality, apart from freshness: `pruned` means pools were dropped per pair so a better path may exist, `exhausted` that the quote budget ran out first. A fresh price can come from an approximate search, and an exhaustive one can be stale by the time it is read.
+- **`crossStream`** means some account a swap writes rides the shared stream, so the state priced may hold part of a transaction.
+- Pools and mints are addresses; the graph's `PoolId`/`EdgeId` never leave the process.
+
+Errors are `{"error":{"code","message"}}`, `code` being the stable part:
+
+| Status | `code`            | When                                                                                                                                     |
+| ------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `INVALID_REQUEST` | The body does not parse, a field is malformed or unknown, `maxHops` is out of range, or the mints contradict `enableCyclicArbitrage`.   |
+| 422    | `UNKNOWN_MINT`    | A mint no watched pool trades.                                                                                                           |
+| 422    | `NO_ROUTE`        | No path; `error.search` says whether pruning or the budget may have hidden one.                                                          |
+| 503    | `NOT_READY`       | The engine has not started yet, or has no Clock.                                                                                         |
+| 503    | `OVERLOADED`      | Every search thread is busy and `quote.max_queued` searches wait. Answered at once, with `Retry-After: 1`.                               |
+| 503    | `ROUTE_CHANGED`   | A pool of the winning path became unusable before the requote. Asking again searches again.                                              |
+| 504    | `TIMEOUT`         | The search did not finish within `quote.timeout_ms`, queue time included.                                                                |
+| 500    | `INTERNAL`        | The search panicked. The thread survives.                                                                                                |
+
+### Search threads
+
+Searches are CPU work, so they run on their own threads (`[threads] search`), never on the async runtime. At most one search runs per thread and `quote.max_queued` wait; past that a request is refused at once, so a burst cannot grow an unbounded queue in front of a semaphore. A search opens its `SearchSession` when a thread takes it, not when the request arrived, so a queued request pins no state while it waits. A search cannot be interrupted: when a caller times out, a search already running finishes and keeps its thread and its place until it returns, and `quote.max_quotes` is what bounds that time. A search whose caller left before it started is dropped unrun.
+
+### `/health` and `/ready`
+
+| Endpoint  | Answers                                                                                                    |
+| --------- | ---------------------------------------------------------------------------------------------------------- |
+| `/health` | `200 {"status":"ok"}` whenever the process can answer, during startup and shutdown too. For liveness.      |
+| `/ready`  | `200` when the engine can serve quotes, `503` otherwise, with a body saying why. For routing traffic here. |
+
+Once the engine runs, `/ready` needs:
+
+- a Clock sysvar whose slot moved within `ready.max_clock_stall_ms`. The Clock carries no host time, so the server samples it every 250 ms and notes when its slot last advanced. A stalled stream stops the Clock;
+- enough ready pools among the **eligible** ones: ready, or not ready for a reason that clears by itself. `Unverified`, `Invalid`, `Unsubscribable` and `Closed` pools never become ready on their own, so they are left out; `Missing` and `OwnerMismatch` stay in, since with real money an unclear case counts against readiness. `/ready` first turns 200 at `ready.startup_percent` of them, so a service still seeding takes no traffic. From then on it fails again only below `ready.floor_percent`: a pool or a stream shard dropping out is a question for each request (does this route have data?), not for the whole service.
+
+```json
+{"ready":false,"phase":"serving","reasons":["CLOCK_STALLED"],"slot":371234567,"slotAgeMs":12250,"readyPools":812,"eligiblePools":820,"totalPools":840}
+```
+
+`reasons` holds `STARTING`, `DRAINING`, `NO_CLOCK`, `CLOCK_STALLED`, `TOO_FEW_READY_POOLS`; `phase` is `starting`, `serving`, `draining` or `stopping`. Unknown paths and methods answer `NOT_FOUND` or `METHOD_NOT_ALLOWED` on both addresses. Every response carries `x-request-id`: the client's own if it sent one, otherwise a new UUID, and the request's tracing span records it.
+
+### Shutdown
+
+Ctrl-c or `SIGTERM` first **drains**: `/ready` answers 503 (`DRAINING`) while the API keeps serving for `drain_delay_ms`, so a load balancer moves traffic away. Then it **stops**: both listeners stop accepting and requests in flight get up to `shutdown_timeout_ms`. The engine stops last, so nothing is priced on state that stopped updating. A market failure skips the drain delay, since its state no longer updates, then the process exits with the error.
 
 ## LiteSVM oracle
 

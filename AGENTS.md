@@ -16,6 +16,7 @@ crates/market/      # lib: pool universe resolution, account store, ingestion
 crates/quoter/      # lib: account decode and swap quotes per DEX (SDK binds), no I/O
 crates/graph/       # lib: token graph built from the universe (mints, pools, edges), per-pool activity bits, no I/O
 crates/route/       # lib: decoder run on the pipeline threads (incremental decode, activity bits), quote reader
+crates/server/      # lib: HTTP serving (axum): quote API, search thread pool, /health and /ready, graceful shutdown
 docs/               # user docs: architecture, config, DEX table
 oracle/             # separate workspace: LiteSVM replay of snapshot swaps on mainnet's deployed programs
 ```
@@ -39,8 +40,8 @@ Dependency versions live only in the root `Cargo.toml` → `[workspace.dependenc
 - `apps/*` stay thin: argument parsing, config loading, logging setup, printing output. No business logic.
 - `crates/*` carry the logic and know nothing about the application: no `clap`, `println!`, or `std::process::exit`.
 - Dependencies flow one way: `apps → crates`. A crate never depends on an app; apps never depend on each other.
-- Crate-to-crate direction is also one-way and acyclic: `dex, rpc, grpc → domain`, `market → dex, rpc, grpc, domain`, `quoter → dex, domain`, `graph → market, domain`, `route → graph, quoter, market, dex, domain`. `domain` depends on no internal crate; `market` never depends on `quoter`, `graph` or `route`.
-- **Network access through one door each**: JSON-RPC only via `rpc`, gRPC only via `grpc`. No other crate may pull in `solana-rpc-client` or `yellowstone-grpc-*`; `deny.toml` → `[bans]` enforces this in CI.
+- Crate-to-crate direction is also one-way and acyclic: `dex, rpc, grpc → domain`, `market → dex, rpc, grpc, domain`, `quoter → dex, domain`, `graph → market, domain`, `route → graph, quoter, market, dex, domain`, `server → route, graph, market, domain`. `domain` depends on no internal crate; `market` never depends on `quoter`, `graph` or `route`.
+- **Network access through one door each**: JSON-RPC only via `rpc`, gRPC only via `grpc`, HTTP serving only via `server`. No other crate may pull in `solana-rpc-client`, `yellowstone-grpc-*`, `axum` or `tower-http`; `deny.toml` → `[bans]` enforces this in CI.
 - `dex`, `quoter` and `graph` stay pure: no I/O, no async. DEX knowledge lives only in them: `dex` holds what a pool looks like on chain (program IDs, filters, closures), `quoter` how its accounts decode and how a swap is priced. `market`, `graph` and `route` hold no DEX-specific constants.
 - DEX SDK crates and token-program interfaces enter only through `quoter`; `deny.toml` → `[bans]` enforces this. No SDK type appears in `quoter`'s public API.
 - When a config key, crate, or DEX is added or changed, `docs/` is updated in the same change.
@@ -167,6 +168,7 @@ just bench graph               # criterion benches of one crate (heavy: ask firs
 just bench route               # route search on the snapshot-universe capture (heavy: ask first)
 just deny                      # cargo-deny
 just watch                     # read-only watch with .env (config.toml)
+just serve                     # read-only: watch plus POST /route and /health, /ready (builds no transactions)
 just snapshot                  # read-only: ready pools' views + Clock for the oracle
 just oracle                    # LiteSVM replay on mainnet's programs → quoter svm fixtures
 just snapshot-universe         # read-only: every ready pool's view + Clock, for test-universe and bench route

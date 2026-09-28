@@ -18,6 +18,6 @@ just watch
 
 `just` loads `.env` by itself, so the endpoints never need to be exported in your shell.
 
-`watch` is read-only. It never signs or sends a transaction.
+`watch` is read-only. It never signs or sends a transaction. `just serve` does the same and also answers `POST /route` on `127.0.0.1:8080` and `/health`, `/ready` on `127.0.0.1:9100` (see [architecture.md](architecture.md#http-api)). It prices routes; it builds no transactions.
 
 Run `just probe` once per gRPC provider to see which features it supports (`slots`, Clock streaming, filter limits); see [architecture.md](architecture.md#provider-probes). `just txn-probe` measures how transaction writes and their statuses arrive on the provider's streams.
