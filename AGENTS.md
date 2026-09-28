@@ -171,6 +171,7 @@ just snapshot                  # read-only: ready pools' views + Clock for the o
 just oracle                    # LiteSVM replay on mainnet's programs → quoter svm fixtures
 just snapshot-universe         # read-only: every ready pool's view + Clock, for test-universe and bench route
 just test-universe             # pruned vs exhaustive route search on that capture (release)
+just find-fee-mints            # read-only, project RPC: Token-2022 mints whose transfer fee changes, to capture as fixtures
 just ci                        # everything CI runs
 ```
 
