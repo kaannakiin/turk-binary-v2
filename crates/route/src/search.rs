@@ -76,6 +76,10 @@ pub struct Search {
     /// The quote budget ran out before every path was tried, so `best` is
     /// the best found, not the best there is.
     pub exhausted: bool,
+    /// `per_pair` dropped quoted candidates, so `best` is the best of the
+    /// paths tried and `None` does not mean there is no path: a later leg
+    /// may refuse, or share writes with, every candidate kept.
+    pub pruned: bool,
 }
 
 impl SearchSession {
@@ -152,11 +156,13 @@ impl<F: Filter> Walk<'_, F> {
                     }
                 }
             }
-            // Exact-in outputs grow with the input, so the pools paying most
-            // here lead to the best paths; `keep` covers those a later leg
-            // cannot reuse or share writes with.
+            // A heuristic, not a bound: the pools paying most here usually
+            // lead to the best paths, but a later leg can refuse, or share
+            // writes with, every one kept.
             ranked.sort_by_key(|leg| Reverse(leg.amount_out));
-            for &leg in ranked.iter().take(usize::from(keep.get())) {
+            let keep = usize::from(keep.get());
+            self.search.pruned |= ranked.len() > keep;
+            for &leg in ranked.iter().take(keep) {
                 self.advance(session, topology, leg, peer, closes)?;
             }
             self.ranked[depth] = ranked;
