@@ -11,6 +11,8 @@ use crate::feed::PoolFeed;
 use crate::reader::QuoteReader;
 use crate::session::SearchSession;
 
+const TWO: NonZeroU8 = NonZeroU8::MIN.saturating_add(1);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Goal {
     To(MintId),
@@ -133,6 +135,30 @@ impl SearchSession {
             let _ = walk.walk(self, &topology, query.from, query.amount_in);
         }
         walk.search
+    }
+
+    /// Searches with `query.per_pair`; while pruning dropped candidates and
+    /// nothing was found, again with twice the pools per pair, and last with
+    /// none dropped. `max_quotes` is the budget of all the attempts together.
+    /// A path found pruned is kept: widening cannot tell whether a better
+    /// one was dropped.
+    pub fn search_widening(&mut self, query: &Query, filter: &impl Filter) -> Search {
+        let mut attempt = *query;
+        let mut quotes = 0;
+        loop {
+            attempt.max_quotes = query.max_quotes - quotes;
+            let mut found = self.search(&attempt, filter);
+            quotes += found.quotes;
+            let dropped_the_way = found.best.is_none() && found.pruned && !found.exhausted;
+            if !dropped_the_way || attempt.per_pair.is_none() {
+                found.quotes = quotes;
+                return found;
+            }
+            attempt.per_pair = attempt
+                .per_pair
+                .filter(|k| k.get() < u8::MAX)
+                .map(|k| k.saturating_mul(TWO));
+        }
     }
 }
 

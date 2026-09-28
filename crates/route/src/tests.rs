@@ -737,7 +737,7 @@ fn pruning_keeps_the_runner_up_when_the_best_pool_is_taken() {
 }
 
 #[test]
-fn pruning_that_drops_the_only_way_on_says_so() {
+fn pruning_that_drops_the_only_way_on_says_so_and_widening_finds_it() {
     let [a, b, c] = [(); 3].map(|()| Pubkey::new_unique());
     let mut p1 = recorded();
     scale_vault(&mut p1, BASE_VAULT, 3, 1);
@@ -784,4 +784,14 @@ fn pruning_that_drops_the_only_way_on_says_so() {
         (pools_of(&pruned), pruned.exhausted, pruned.pruned),
         (None, false, true)
     );
+
+    let widened = rig.reader.session().unwrap().search_widening(
+        &Query {
+            per_pair: NonZeroU8::new(2),
+            ..query(id(&a), Goal::To(id(&c)), 2, 10_000)
+        },
+        &Everything,
+    );
+    assert_eq!(pools_of(&widened), Some(vec![p3.pool, q.pool]));
+    assert!(widened.quotes > pruned.quotes);
 }
