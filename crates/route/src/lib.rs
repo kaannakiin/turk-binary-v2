@@ -1,4 +1,5 @@
 mod decoder;
+mod direct;
 mod error;
 mod feed;
 mod probe;
@@ -8,6 +9,7 @@ mod settings;
 mod stats;
 
 pub use decoder::{Decoder, Decoding};
+pub use direct::{Candidate, Direct};
 pub use error::RouteError;
 pub use feed::PoolFeed;
 pub use probe::{ProbeReport, ProbeTally};

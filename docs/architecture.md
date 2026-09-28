@@ -182,7 +182,7 @@ Pools are decoded on their partition's pipeline thread, inside the engine's publ
 
 ### Search (next phase)
 
-The read contract is in place; the algorithm is not implemented yet. The layout above is built for it.
+The read contract and the direct (one-pool) search are in place; multi-hop and cycle search are not implemented yet. The layout above is built for it.
 
 #### Read contract
 
@@ -195,6 +195,7 @@ A search reads through a `route::SearchSession`, taken from `QuoteReader::sessio
 
 #### Algorithm
 
+- **Direct.** `SearchSession::direct(in, out, amount, max_arrays, allow)` quotes the amount through every pool from `in` to `out` that the request's `allow` filter admits, and returns the highest output with every refusal and its reason. It does not consult the activity bit: a pair has few pools, and quoting each one reports why the others refused. The result names its pool by `EdgeId`, to be checked with `verify` in the same session.
 - An exhaustive depth-first search comes first, as the reference the faster search is tested against.
 - A query `(in, out, amount)` runs a hop-layered Bellman-Ford over the graph with real integer exact-in quotes, keeping the best few labels per (depth, mint). Pool uniqueness and the account budget are enforced during the search, not afterwards. Depth is bounded by what the executor can land: 64 account locks per transaction, and the on-chain router's client takes up to 4 hops.
 - Arbitrage is the cycle case: when pool u→v changes, search forward from v and close at u; the amount comes from a golden-section search on integers.

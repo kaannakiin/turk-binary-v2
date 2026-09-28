@@ -14,7 +14,7 @@ use crate::reader::{Decoded, Quote, QuoteReader, Revision, Table};
 /// state. The pins are taken at different moments and are not one chain
 /// snapshot; [`SearchSession::verify`] and simulation guard what is sent.
 pub struct SearchSession {
-    topology: Arc<Topology>,
+    pub(crate) topology: Arc<Topology>,
     table: Arc<Table>,
     clock: ChainClock,
     pins: HashMap<PoolId, Arc<Decoded>, ahash::RandomState>,

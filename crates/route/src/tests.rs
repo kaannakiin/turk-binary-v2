@@ -10,7 +10,7 @@ use bytes::Bytes;
 use dex::{Dependency, OwnerRule, Role, Scope, Side};
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 use domain::{ChainClock, DexKind, Pubkey, Slot, UpdateOrder, WriteVersion};
-use graph::{EdgeId, PoolSeed, Topology};
+use graph::{EdgeId, MintId, PoolSeed, Topology};
 use market::{PoolView, Readiness, Reason, StoredAccount, ViewSink};
 use quoter::{AccountRef, QuoteInput, VenueState};
 
@@ -123,10 +123,27 @@ fn view(recorded: &Recorded, readiness: Readiness, order: u64) -> PoolView {
     }
 }
 
+const BASE_VAULT: usize = 1;
+const QUOTE_VAULT: usize = 2;
+
+fn vault_amount(recorded: &Recorded, vault: usize) -> u64 {
+    u64::from_le_bytes(
+        recorded.accounts[vault].2[64..72]
+            .try_into()
+            .expect("amount"),
+    )
+}
+
+fn scale_vault(recorded: &mut Recorded, vault: usize, mul: u64, div: u64) {
+    let amount = vault_amount(recorded, vault)
+        .checked_mul(mul)
+        .expect("scaled amount fits")
+        / div;
+    recorded.accounts[vault].2[64..72].copy_from_slice(&amount.to_le_bytes());
+}
+
 fn halve_base_vault(recorded: &mut Recorded) {
-    let vault = &mut recorded.accounts[1].2;
-    let amount = u64::from_le_bytes(vault[64..72].try_into().expect("amount"));
-    vault[64..72].copy_from_slice(&(amount / 2).to_le_bytes());
+    scale_vault(recorded, BASE_VAULT, 1, 2);
 }
 
 fn oracle(recorded: &Recorded, feed: &FakeFeed, amount_in: u64) -> u64 {
@@ -174,6 +191,24 @@ struct Rig {
 
 fn rig(pools: &[(Pubkey, DexKind)]) -> Rig {
     rig_on(topology_of(pools))
+}
+
+/// Every pool between the same two mints, returned as `(a, b)`.
+fn pair_rig(pools: &[(Pubkey, DexKind)]) -> (Rig, MintId, MintId) {
+    let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+    let topology = Arc::new(
+        Topology::build(pools.iter().map(|&(pubkey, dex)| PoolSeed {
+            pubkey,
+            dex,
+            mints: Some((a, b)),
+        }))
+        .expect("small universe"),
+    );
+    let ids = (
+        topology.mint_id(&a).expect("mint a"),
+        topology.mint_id(&b).expect("mint b"),
+    );
+    (rig_on(topology), ids.0, ids.1)
 }
 
 fn rig_on(topology: Arc<Topology>) -> Rig {
@@ -339,5 +374,72 @@ fn a_pool_unusable_after_pinning_stays_consistent_in_its_session_but_fails_the_f
     assert!(matches!(
         session.verify([edge.pool()]),
         Verdict::Unusable { pool, reason: RouteError::NotReady(Reason::Syncing) } if pool == recorded.pool
+    ));
+}
+
+#[test]
+fn the_direct_winner_follows_the_amount() {
+    let shallow = recorded();
+    let mut deep = recorded();
+    scale_vault(&mut deep, BASE_VAULT, 2, 1);
+    scale_vault(&mut deep, QUOTE_VAULT, 4, 1);
+    let (mut rig, a, b) = pair_rig(&[
+        (shallow.pool, DexKind::PumpAmm),
+        (deep.pool, DexKind::PumpAmm),
+    ]);
+    rig.publish(view(&shallow, Readiness::Ready, 80));
+    rig.publish(view(&deep, Readiness::Ready, 80));
+    let small = 1_000_000;
+    let large = vault_amount(&shallow, QUOTE_VAULT)
+        .checked_mul(10)
+        .expect("large amount fits");
+
+    for (amount, winner, loser) in [(small, &shallow, &deep), (large, &deep, &shallow)] {
+        let expected = oracle(winner, &rig.feed, amount);
+        assert!(expected > oracle(loser, &rig.feed, amount));
+        let mut session = rig.reader.session().unwrap();
+        let direct = session.direct(b, a, amount, 0, |_| true);
+        let best = direct.best.expect("both pools quote");
+        assert_eq!(
+            (best.pool, best.quote.out.amount_out),
+            (winner.pool, expected)
+        );
+        assert!(direct.refused.is_empty());
+    }
+}
+
+#[test]
+fn refused_and_excluded_pools_do_not_hide_the_best_one() {
+    let good = recorded();
+    let mut broken = recorded();
+    broken.accounts[3].2.truncate(10);
+    let excluded = PoolView {
+        pool: Pubkey::new_unique(),
+        dex: DexKind::PumpBondingCurve,
+        readiness: Readiness::Ready,
+        accounts: Vec::new(),
+        cross_stream: false,
+    };
+    let (mut rig, a, b) = pair_rig(&[
+        (good.pool, DexKind::PumpAmm),
+        (broken.pool, DexKind::PumpAmm),
+        (excluded.pool, DexKind::PumpBondingCurve),
+    ]);
+    rig.publish(view(&good, Readiness::Ready, 90));
+    rig.publish(view(&broken, Readiness::Ready, 90));
+    rig.publish(excluded);
+
+    let mut session = rig.reader.session().unwrap();
+    let direct = session.direct(b, a, 1_000_000, 0, |node| {
+        node.dex != DexKind::PumpBondingCurve
+    });
+    let best = direct.best.expect("the good pool quotes");
+    assert_eq!(
+        (best.pool, best.quote.out.amount_out),
+        (good.pool, oracle(&good, &rig.feed, 1_000_000))
+    );
+    assert!(matches!(
+        direct.refused.as_slice(),
+        [(pool, RouteError::Decode(_))] if *pool == broken.pool
     ));
 }
