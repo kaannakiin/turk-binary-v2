@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, State};
@@ -20,6 +21,7 @@ pub(crate) struct Api<F> {
     pub pool: Arc<SearchPool>,
     pub quotes: QuoteSlot<F>,
     pub settings: QuoteSettings,
+    pub max_clock_stall: Duration,
 }
 
 impl<F> Clone for Api<F> {
@@ -28,6 +30,7 @@ impl<F> Clone for Api<F> {
             pool: Arc::clone(&self.pool),
             quotes: self.quotes.clone(),
             settings: self.settings,
+            max_clock_stall: self.max_clock_stall,
         }
     }
 }
@@ -50,7 +53,7 @@ async fn route<F: PoolFeed>(
     let request = body.into_request()?;
     let service = api
         .quotes
-        .service(api.settings)
+        .service(api.settings, api.max_clock_stall)
         .ok_or(ApiError::NOT_READY)?;
     let pending = api
         .pool
@@ -72,14 +75,17 @@ impl From<ServiceError> for ApiError {
             }
             ServiceError::Invalid(_) | ServiceError::MaxHops { .. } => Self::invalid(message),
             ServiceError::NotReady => Self::NOT_READY,
+            ServiceError::StaleData { .. } => {
+                Self::new(StatusCode::SERVICE_UNAVAILABLE, "STALE_DATA", message)
+            }
             ServiceError::NoRoute(search) => Self::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "NO_ROUTE",
                 no_route(search.pruned, search.exhausted),
             )
             .with_search(search.into()),
-            ServiceError::RouteChanged(source) => {
-                tracing::debug!(%source, "route changed before its requote");
+            ServiceError::RouteChanged(changed) => {
+                tracing::debug!(%changed, "route changed while priced again");
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, "ROUTE_CHANGED", message)
             }
         }

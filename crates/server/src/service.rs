@@ -1,9 +1,10 @@
 use std::num::{NonZeroU8, NonZeroU64};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use domain::{DexKind, Pubkey, Slot};
 use graph::{MintId, PoolNode, Topology};
-use route::{Filter, Goal, PoolFeed, Query, QuoteReader, RouteError};
+use route::{Filter, Goal, PoolFeed, Query, QuoteReader, RouteError, Verdict};
 
 use crate::settings::QuoteSettings;
 
@@ -30,9 +31,17 @@ impl<F: PoolFeed> QuoteSlot<F> {
         }
     }
 
-    pub(crate) fn service(&self, settings: QuoteSettings) -> Option<QuoteService<F>> {
+    pub(crate) fn service(
+        &self,
+        settings: QuoteSettings,
+        max_clock_stall: Duration,
+    ) -> Option<QuoteService<F>> {
         let quotes = self.0.get()?.clone();
-        Some(QuoteService { quotes, settings })
+        Some(QuoteService {
+            quotes,
+            settings,
+            max_clock_stall,
+        })
     }
 }
 
@@ -98,21 +107,35 @@ pub(crate) enum ServiceError {
     MaxHops { min: u8, max: u8 },
     #[error("no Clock sysvar yet")]
     NotReady,
+    #[error("the Clock has not moved for {age_ms} ms: the feed has stalled")]
+    StaleData { age_ms: u128 },
     #[error("no route found")]
     NoRoute(SearchQuality),
-    #[error("a pool of the route changed before it could be priced again")]
-    RouteChanged(#[source] RouteError),
+    #[error("a pool of the route changed while it was priced again")]
+    RouteChanged(#[source] Changed),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum Changed {
+    #[error("the requote failed: {0}")]
+    Requote(#[source] RouteError),
+    #[error("{pool} became unusable: {reason}")]
+    Unusable { pool: Pubkey, reason: RouteError },
+    #[error("published again while priced: {0:?}")]
+    Stale(Vec<Pubkey>),
 }
 
 pub(crate) struct QuoteService<F> {
     quotes: QuoteReader<F>,
     settings: QuoteSettings,
+    max_clock_stall: Duration,
 }
 
 impl<F: PoolFeed> QuoteService<F> {
     /// Runs on a search thread. The search's session opens here, not when
     /// the request arrived, so a queued request pins no state while it waits.
     pub(crate) fn route(&self, request: &RouteRequest) -> Result<Routed, ServiceError> {
+        self.fresh()?;
         let mut session = self.quotes.session().map_err(|_| ServiceError::NotReady)?;
         let query = self.query(session.topology(), request)?;
         let found = session.search_widening(&query, &request.dexes);
@@ -127,7 +150,19 @@ impl<F: PoolFeed> QuoteService<F> {
         let mut now = self.quotes.session().map_err(|_| ServiceError::NotReady)?;
         let path = now
             .requote(&best, self.settings.max_arrays)
-            .map_err(ServiceError::RouteChanged)?;
+            .map_err(|error| ServiceError::RouteChanged(Changed::Requote(error)))?;
+        // Each pool is checked as it is pinned; one pinned early can still
+        // change or become unusable before the last is quoted.
+        match now.verify(path.legs.iter().map(|leg| leg.edge.pool())) {
+            Verdict::Current(_) => {}
+            Verdict::Stale(pools) => return Err(ServiceError::RouteChanged(Changed::Stale(pools))),
+            Verdict::Unusable { pool, reason } => {
+                return Err(ServiceError::RouteChanged(Changed::Unusable {
+                    pool,
+                    reason,
+                }));
+            }
+        }
         let topology = now.topology();
         let legs = path
             .legs
@@ -154,6 +189,23 @@ impl<F: PoolFeed> QuoteService<F> {
             search,
             legs,
         })
+    }
+
+    /// A stalled feed keeps its last views ready, so a session opened on it
+    /// would price stopped state as current. Checked when a thread takes the
+    /// request, which also catches a feed that stalled while it was queued.
+    fn fresh(&self) -> Result<(), ServiceError> {
+        let at = self
+            .quotes
+            .clock_advanced_at()
+            .ok_or(ServiceError::NotReady)?;
+        let age = at.elapsed();
+        if age > self.max_clock_stall {
+            return Err(ServiceError::StaleData {
+                age_ms: age.as_millis(),
+            });
+        }
+        Ok(())
     }
 
     fn query(&self, topology: &Topology, request: &RouteRequest) -> Result<Query, ServiceError> {

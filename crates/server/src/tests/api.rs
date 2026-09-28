@@ -4,6 +4,7 @@
 
 use std::io::BufReader;
 use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Body;
@@ -45,7 +46,10 @@ fn cases() -> Vec<Case> {
     corpus.cases
 }
 
+const MAX_CLOCK_STALL: Duration = Duration::from_secs(10);
+
 struct Fixture {
+    feed: universe::Feed,
     pool: Arc<SearchPool>,
     quotes: QuoteSlot<universe::Feed>,
     settings: QuoteSettings,
@@ -57,6 +61,7 @@ impl Fixture {
         let quotes = QuoteSlot::default();
         quotes.attach(universe.reader);
         Self {
+            feed: universe.feed,
             pool: Arc::new(SearchPool::start(threads, max_queued).expect("starts")),
             quotes,
             settings: QuoteSettings::default(),
@@ -64,11 +69,25 @@ impl Fixture {
     }
 
     fn router(&self) -> Router {
+        self.router_with(self.quotes.clone())
+    }
+
+    fn router_with(&self, quotes: QuoteSlot<universe::Feed>) -> Router {
         api::router(Api {
             pool: Arc::clone(&self.pool),
-            quotes: self.quotes.clone(),
+            quotes,
             settings: self.settings,
+            max_clock_stall: MAX_CLOCK_STALL,
         })
+    }
+
+    /// The Clock last moved longer ago than the stall limit; the pool views
+    /// stay as they were, ready.
+    fn stall_the_feed(&self) {
+        let long_ago = Instant::now()
+            .checked_sub(MAX_CLOCK_STALL * 2)
+            .expect("the host clock is past the stall limit");
+        self.feed.set_advanced_at(long_ago);
     }
 
     /// Holds the only search thread until the sender is dropped.
@@ -125,11 +144,7 @@ async fn a_route_pays_what_the_best_pool_paid_in_the_deployed_program() {
 #[tokio::test]
 async fn a_route_before_the_engine_is_attached_answers_not_ready() {
     let fixture = Fixture::new(1, 4);
-    let router = api::router(Api {
-        pool: Arc::clone(&fixture.pool),
-        quotes: QuoteSlot::<universe::Feed>::default(),
-        settings: fixture.settings,
-    });
+    let router = fixture.router_with(QuoteSlot::default());
 
     let (status, _, body) = call(router, post(&sol_to_usdc())).await;
 
@@ -228,4 +243,31 @@ async fn a_search_still_queued_at_the_deadline_answers_timeout() {
 
     assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     assert_eq!(body["error"]["code"], "TIMEOUT");
+}
+
+#[tokio::test]
+async fn a_stalled_feed_answers_stale_data_though_its_pools_look_ready() {
+    let fixture = Fixture::new(1, 4);
+    fixture.stall_the_feed();
+
+    let (status, _, body) = call(fixture.router(), post(&sol_to_usdc())).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["error"]["code"], "STALE_DATA");
+}
+
+#[tokio::test]
+async fn a_feed_that_stalls_while_the_request_is_queued_is_caught_when_its_search_starts() {
+    let fixture = Fixture::new(1, 1);
+    let (release, _done) = fixture.occupy();
+    let queued = tokio::spawn(call(fixture.router(), post(&sol_to_usdc())));
+    // The request is parsed and queued well within this; nothing it does waits.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    fixture.stall_the_feed();
+    drop(release);
+    let (status, _, body) = queued.await.expect("the request task");
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["error"]["code"], "STALE_DATA");
 }

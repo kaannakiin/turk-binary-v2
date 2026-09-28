@@ -1,16 +1,13 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use domain::Slot;
 use market::{MarketReader, PoolCounts};
 use serde::Serialize;
 use tokio::sync::watch;
-use tokio::time::{Instant, MissedTickBehavior};
 
 use crate::settings::ReadySettings;
-
-const CLOCK_SAMPLE: Duration = Duration::from_millis(250);
 
 enum Phase {
     Starting,
@@ -26,15 +23,8 @@ pub struct Health {
 
 struct Inner {
     phase: watch::Sender<Phase>,
-    clock: Mutex<Option<ClockMark>>,
     opened: AtomicBool,
     settings: ReadySettings,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ClockMark {
-    slot: Slot,
-    advanced_at: Instant,
 }
 
 impl Health {
@@ -43,7 +33,6 @@ impl Health {
         Self {
             inner: Arc::new(Inner {
                 phase: watch::Sender::new(Phase::Starting),
-                clock: Mutex::new(None),
                 opened: AtomicBool::new(false),
                 settings,
             }),
@@ -70,40 +59,6 @@ impl Health {
         let _ = phase.wait_for(|p| matches!(p, Phase::Stopping)).await;
     }
 
-    /// A Clock that stops advancing means the streams stopped; the Clock
-    /// carries no host time, so the host notes when its slot last moved.
-    pub(crate) async fn track_clock(&self) {
-        let mut ticker = tokio::time::interval(CLOCK_SAMPLE);
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        loop {
-            ticker.tick().await;
-            let slot = match &*self.inner.phase.borrow() {
-                Phase::Serving(reader) => reader.clock().map(|clock| clock.slot),
-                Phase::Starting | Phase::Draining | Phase::Stopping => None,
-            };
-            if let Some(slot) = slot {
-                self.mark_clock(slot, Instant::now());
-            }
-        }
-    }
-
-    fn mark_clock(&self, slot: Slot, now: Instant) {
-        let mut mark = self.clock_lock();
-        if mark.is_none_or(|m| slot > m.slot) {
-            *mark = Some(ClockMark {
-                slot,
-                advanced_at: now,
-            });
-        }
-    }
-
-    fn clock_lock(&self) -> MutexGuard<'_, Option<ClockMark>> {
-        self.inner
-            .clock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
     pub(crate) fn report(&self) -> ReadyReport {
         let settings = &self.inner.settings;
         let reader = match &*self.inner.phase.borrow() {
@@ -112,10 +67,10 @@ impl Health {
             Phase::Stopping => return assess(&Observed::Stopping, settings),
             Phase::Serving(reader) => reader.clone(),
         };
-        let clock = *self.clock_lock();
+        let clock = reader.clock().zip(reader.clock_advanced_at());
         let sample = EngineSample {
             pools: reader.pool_counts(),
-            clock: clock.map(|m| (m.slot, m.advanced_at.elapsed())),
+            clock: clock.map(|(clock, at)| (clock.slot, at.elapsed())),
             opened: self.inner.opened.load(Ordering::Acquire),
         };
         let report = assess(&Observed::Serving(sample), settings);
@@ -136,7 +91,7 @@ pub(crate) enum Observed {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EngineSample {
     pub pools: PoolCounts,
-    /// The newest slot and how long ago it was first seen.
+    /// The newest slot and how long ago it arrived.
     pub clock: Option<(Slot, Duration)>,
     /// Ready once already: the pool share only has to stay above the floor.
     pub opened: bool,

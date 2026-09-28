@@ -42,10 +42,13 @@ impl OpsServer {
     }
 
     pub async fn run(self) -> Result<(), ServerError> {
-        tokio::select! {
-            result = serve(self.listener, self.router, &self.health, self.shutdown_timeout) => result,
-            () = self.health.track_clock() => Ok(()),
-        }
+        serve(
+            self.listener,
+            self.router,
+            &self.health,
+            self.shutdown_timeout,
+        )
+        .await
     }
 }
 
@@ -70,6 +73,7 @@ impl ApiServer {
             pool: Arc::new(pool),
             quotes,
             settings: settings.quote,
+            max_clock_stall: settings.ready.max_clock_stall(),
         };
         Ok(Self {
             listener: bind(settings.api_addr).await?,

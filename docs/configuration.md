@@ -157,7 +157,7 @@ Used by `serve` only (see [architecture.md](architecture.md#http-api)). Both add
 | -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `startup_percent`    | `90`    | `/ready` first turns 200 once this share of the eligible pools is ready. Eligible: ready, or not ready for a reason that clears by itself. |
 | `floor_percent`      | `50`    | Once ready, `/ready` fails again only below this share. One pool or one stream shard dropping out leaves the service ready.             |
-| `max_clock_stall_ms` | `10000` | `/ready` fails when the Clock sysvar's slot has not moved for longer than this: the streams have stalled.                               |
+| `max_clock_stall_ms` | `10000` | `/ready` fails, and `POST /route` answers `STALE_DATA`, when the Clock sysvar's slot has not moved for longer than this: the streams have stalled. |
 
 ### `[server.quote]`
 

@@ -247,7 +247,8 @@ Unknown fields are refused, so a client sending `slippagePercent` does not belie
  "legs":[{"poolAddress":"…","dex":"raydium_cpmm","fromTokenAddress":"So111…","toTokenAddress":"EPjF…","fromTokenAmount":"1000000000","toTokenAmount":"33540506"}]}
 ```
 
-- **Amounts** are the winning path priced again (`requote`) in a new session: the newest decoded state and Clock. The search compared paths on pins taken at different moments; the answer is not one of those.
+- **Amounts** are the winning path priced again (`requote`) in a new session: the newest decoded state and Clock. The search compared paths on pins taken at different moments; the answer is not one of those. That session then `verify`s the path, since a pool pinned early can change or become unusable before the last is quoted. This catches what changed while the answer was prepared; it is not one chain snapshot and promises nothing about execution.
+- **Freshness** is checked when a search thread takes the request, so a feed that stalled while the request waited is caught too. It is the whole-feed signal: a stalled Clock means the streams stopped, however ready their pools still look. Traffic policy (the pool share, draining) stays with `/ready` and is not applied per quote.
 - **`contextSlot`** is the slot of the Clock that requote used. It says when the price held, not that it will hold when a transaction lands.
 - **`search`** is the search's quality, apart from freshness: `pruned` means pools were dropped per pair so a better path may exist, `exhausted` that the quote budget ran out first. A fresh price can come from an approximate search, and an exhaustive one can be stale by the time it is read.
 - **`crossStream`** means some account a swap writes rides the shared stream, so the state priced may hold part of a transaction.
@@ -261,8 +262,9 @@ Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 | 422    | `UNKNOWN_MINT`    | A mint no watched pool trades.                                                                                                           |
 | 422    | `NO_ROUTE`        | No path; `error.search` says whether pruning or the budget may have hidden one.                                                          |
 | 503    | `NOT_READY`       | The engine has not started yet, or has no Clock.                                                                                         |
+| 503    | `STALE_DATA`      | The Clock has not moved for `ready.max_clock_stall_ms`: the feed stalled, however ready its pools still look.                            |
 | 503    | `OVERLOADED`      | Every search thread is busy and `quote.max_queued` searches wait. Answered at once, with `Retry-After: 1`.                               |
-| 503    | `ROUTE_CHANGED`   | A pool of the winning path became unusable before the requote. Asking again searches again.                                              |
+| 503    | `ROUTE_CHANGED`   | A pool of the winning path failed its requote, or `verify` after it found one unusable or published again. Asking again searches again. |
 | 504    | `TIMEOUT`         | The search did not finish within `quote.timeout_ms`, queue time included.                                                                |
 | 500    | `INTERNAL`        | The search panicked. The thread survives.                                                                                                |
 
@@ -279,7 +281,7 @@ Searches are CPU work, so they run on their own threads (`[threads] search`), ne
 
 Once the engine runs, `/ready` needs:
 
-- a Clock sysvar whose slot moved within `ready.max_clock_stall_ms`. The Clock carries no host time, so the server samples it every 250 ms and notes when its slot last advanced. A stalled stream stops the Clock;
+- a Clock sysvar whose slot moved within `ready.max_clock_stall_ms`. The Clock carries no host time, so the market notes the host time whenever a newer slot replaces it (`MarketReader::clock_advanced_at`); a partition behind another or a rolled-back fork moves neither. A stalled stream stops the Clock;
 - enough ready pools among the **eligible** ones: ready, or not ready for a reason that clears by itself. `Unverified`, `Invalid`, `Unsubscribable` and `Closed` pools never become ready on their own, so they are left out; `Missing` and `OwnerMismatch` stay in, since with real money an unclear case counts against readiness. `/ready` first turns 200 at `ready.startup_percent` of them, so a service still seeding takes no traffic. From then on it fails again only below `ready.floor_percent`: a pool or a stream shard dropping out is a question for each request (does this route have data?), not for the whole service.
 
 ```json
