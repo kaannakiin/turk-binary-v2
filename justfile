@@ -60,6 +60,10 @@ snapshot-universe out="oracle/snapshots/universe.json.gz" settle="90" config="co
 test-universe snapshot="oracle/snapshots/universe.json.gz":
     ROUTE_UNIVERSE={{justfile_directory()}}/{{snapshot}} cargo nextest run --release -p route --test snapshot --run-ignored only --no-capture
 
+# Read-only, project RPC: Token-2022 mints whose older and newer transfer fees differ, for fixtures.
+find-fee-mints want="5":
+    python3 scripts/find_fee_mints.py {{want}}
+
 # Read-only: dumps mainnet's deployed programs and runs the snapshot's swaps through them in LiteSVM.
 # Writes the expected payouts to crates/quoter/src/tests/fixtures/svm.
 oracle snapshot="oracle/snapshots/latest.json.gz":

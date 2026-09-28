@@ -184,3 +184,39 @@ fn edges(fee: &TransferFee) -> Vec<u64> {
     }
     amounts
 }
+
+/// Quotes read the fee through `Mint::fee_at`; on mints whose older and
+/// newer fees differ, it has to switch where the interface does.
+#[test]
+fn a_fee_change_takes_effect_at_the_epoch_the_interface_switches() {
+    let mut changing = 0;
+    for (key, owner, data) in captured() {
+        let Ok(local) = decode_mint(&owner, &data) else {
+            continue;
+        };
+        let Some(schedule) = local.transfer_fee else {
+            continue;
+        };
+        let rate = |fee: TransferFee| (fee.maximum_fee, fee.basis_points);
+        if rate(schedule.older) == rate(schedule.newer) {
+            continue;
+        }
+        changing += 1;
+        let canonical = *StateWithExtensions::<Mint>::unpack(&data)
+            .expect("interface decodes")
+            .get_extension::<TransferFeeConfig>()
+            .expect("fee config");
+        let switch = schedule.newer.epoch;
+        for epoch in [switch.saturating_sub(1), switch, switch + 1] {
+            let fee = local.fee_at(epoch).expect("a fee mint");
+            for amount in [1, 999, 1_000_000_000, u64::MAX] {
+                assert_eq!(
+                    fee.calculate_fee(amount),
+                    canonical.calculate_epoch_fee(epoch, amount),
+                    "{key} epoch {epoch} amount {amount}"
+                );
+            }
+        }
+    }
+    assert!(changing >= 2, "fixtures hold mints whose fee changes");
+}
