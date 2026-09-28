@@ -2,6 +2,7 @@
 //! AMM pool; a fresh `VenueState` fed the same bytes is the oracle for what
 //! the decoder's incremental decode must reach.
 
+use std::num::NonZeroU8;
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -10,11 +11,14 @@ use bytes::Bytes;
 use dex::{Dependency, OwnerRule, Role, Scope, Side};
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 use domain::{ChainClock, DexKind, Pubkey, Slot, UpdateOrder, WriteVersion};
-use graph::{EdgeId, PoolSeed, Topology};
+use graph::{EdgeId, MintId, PoolSeed, Topology};
 use market::{PoolView, Readiness, Reason, StoredAccount, ViewSink};
 use quoter::{AccountRef, QuoteInput, VenueState};
 
-use crate::{Decoder, Decoding, PoolFeed, Quote, QuoteReader, RouteError, Verdict};
+use crate::{
+    Decoder, Decoding, Everything, Filter, Goal, PoolFeed, Query, Quote, QuoteReader, RouteError,
+    Verdict,
+};
 
 #[derive(Clone)]
 struct FakeFeed;
@@ -104,7 +108,9 @@ fn view(recorded: &Recorded, readiness: Readiness, order: u64) -> PoolView {
             .iter()
             .enumerate()
             .map(|(i, (role, owner, data))| {
-                let key = Pubkey::new_from_array([u8::try_from(i + 1).expect("few"); 32]);
+                let mut key = recorded.pool.to_bytes();
+                key[31] = u8::try_from(i + 1).expect("few");
+                let key = Pubkey::new_from_array(key);
                 (
                     Dependency::new(key, *role, Scope::Pool, OwnerRule::TokenProgram),
                     Some(StoredAccount {
@@ -123,13 +129,36 @@ fn view(recorded: &Recorded, readiness: Readiness, order: u64) -> PoolView {
     }
 }
 
+const BASE_VAULT: usize = 1;
+const QUOTE_VAULT: usize = 2;
+
+fn vault_amount(recorded: &Recorded, vault: usize) -> u64 {
+    u64::from_le_bytes(
+        recorded.accounts[vault].2[64..72]
+            .try_into()
+            .expect("amount"),
+    )
+}
+
+fn scale_vault(recorded: &mut Recorded, vault: usize, mul: u64, div: u64) {
+    let amount = vault_amount(recorded, vault)
+        .checked_mul(mul)
+        .expect("scaled amount fits")
+        / div;
+    recorded.accounts[vault].2[64..72].copy_from_slice(&amount.to_le_bytes());
+}
+
 fn halve_base_vault(recorded: &mut Recorded) {
-    let vault = &mut recorded.accounts[1].2;
-    let amount = u64::from_le_bytes(vault[64..72].try_into().expect("amount"));
-    vault[64..72].copy_from_slice(&(amount / 2).to_le_bytes());
+    scale_vault(recorded, BASE_VAULT, 1, 2);
 }
 
 fn oracle(recorded: &Recorded, feed: &FakeFeed, amount_in: u64) -> u64 {
+    fresh_quote(recorded, feed, amount_in, false).expect("recorded pool quotes")
+}
+
+/// A new `VenueState` fed the recorded bytes, apart from the decoder and
+/// any session. `None` when the venue refuses the quote.
+fn fresh_quote(recorded: &Recorded, feed: &FakeFeed, amount_in: u64, a_to_b: bool) -> Option<u64> {
     let mut state = VenueState::new(DexKind::PumpAmm);
     for (role, owner, data) in &recorded.accounts {
         state
@@ -146,12 +175,12 @@ fn oracle(recorded: &Recorded, feed: &FakeFeed, amount_in: u64) -> u64 {
     state
         .quote(&QuoteInput {
             amount_in,
-            a_to_b: false,
+            a_to_b,
             clock: &clock,
             max_arrays: 0,
         })
-        .expect("recorded pool quotes")
-        .amount_out
+        .ok()
+        .map(|out| out.amount_out)
 }
 
 fn topology_of(pools: &[(Pubkey, DexKind)]) -> Arc<Topology> {
@@ -174,6 +203,24 @@ struct Rig {
 
 fn rig(pools: &[(Pubkey, DexKind)]) -> Rig {
     rig_on(topology_of(pools))
+}
+
+/// Every pool between the same two mints, returned as `(a, b)`.
+fn pair_rig(pools: &[(Pubkey, DexKind)]) -> (Rig, MintId, MintId) {
+    let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+    let topology = Arc::new(
+        Topology::build(pools.iter().map(|&(pubkey, dex)| PoolSeed {
+            pubkey,
+            dex,
+            mints: Some((a, b)),
+        }))
+        .expect("small universe"),
+    );
+    let ids = (
+        topology.mint_id(&a).expect("mint a"),
+        topology.mint_id(&b).expect("mint b"),
+    );
+    (rig_on(topology), ids.0, ids.1)
 }
 
 fn rig_on(topology: Arc<Topology>) -> Rig {
@@ -340,4 +387,351 @@ fn a_pool_unusable_after_pinning_stays_consistent_in_its_session_but_fails_the_f
         session.verify([edge.pool()]),
         Verdict::Unusable { pool, reason: RouteError::NotReady(Reason::Syncing) } if pool == recorded.pool
     ));
+}
+
+#[test]
+fn the_direct_winner_follows_the_amount() {
+    let shallow = recorded();
+    let mut deep = recorded();
+    scale_vault(&mut deep, BASE_VAULT, 2, 1);
+    scale_vault(&mut deep, QUOTE_VAULT, 4, 1);
+    let (mut rig, a, b) = pair_rig(&[
+        (shallow.pool, DexKind::PumpAmm),
+        (deep.pool, DexKind::PumpAmm),
+    ]);
+    rig.publish(view(&shallow, Readiness::Ready, 80));
+    rig.publish(view(&deep, Readiness::Ready, 80));
+    let small = 1_000_000;
+    let large = vault_amount(&shallow, QUOTE_VAULT)
+        .checked_mul(10)
+        .expect("large amount fits");
+
+    for (amount, winner, loser) in [(small, &shallow, &deep), (large, &deep, &shallow)] {
+        let expected = oracle(winner, &rig.feed, amount);
+        assert!(expected > oracle(loser, &rig.feed, amount));
+        let mut session = rig.reader.session().unwrap();
+        let direct = session.direct(b, a, amount, 0, |_| true);
+        let best = direct.best.expect("both pools quote");
+        assert_eq!(
+            (best.pool, best.quote.out.amount_out),
+            (winner.pool, expected)
+        );
+        assert!(direct.refused.is_empty());
+    }
+}
+
+#[test]
+fn refused_and_excluded_pools_do_not_hide_the_best_one() {
+    let good = recorded();
+    let mut broken = recorded();
+    broken.accounts[3].2.truncate(10);
+    let excluded = PoolView {
+        pool: Pubkey::new_unique(),
+        dex: DexKind::PumpBondingCurve,
+        readiness: Readiness::Ready,
+        accounts: Vec::new(),
+        cross_stream: false,
+    };
+    let (mut rig, a, b) = pair_rig(&[
+        (good.pool, DexKind::PumpAmm),
+        (broken.pool, DexKind::PumpAmm),
+        (excluded.pool, DexKind::PumpBondingCurve),
+    ]);
+    rig.publish(view(&good, Readiness::Ready, 90));
+    rig.publish(view(&broken, Readiness::Ready, 90));
+    rig.publish(excluded);
+
+    let mut session = rig.reader.session().unwrap();
+    let direct = session.direct(b, a, 1_000_000, 0, |node| {
+        node.dex != DexKind::PumpBondingCurve
+    });
+    let best = direct.best.expect("the good pool quotes");
+    assert_eq!(
+        (best.pool, best.quote.out.amount_out),
+        (good.pool, oracle(&good, &rig.feed, 1_000_000))
+    );
+    assert!(matches!(
+        direct.refused.as_slice(),
+        [(pool, RouteError::Decode(_))] if *pool == broken.pool
+    ));
+}
+
+const AMOUNT: u64 = 1_000_000;
+
+struct Placed<'r> {
+    recorded: &'r Recorded,
+    mints: (Pubkey, Pubkey),
+    view: PoolView,
+}
+
+fn placed(recorded: &Recorded, a: Pubkey, b: Pubkey) -> Placed<'_> {
+    Placed {
+        recorded,
+        mints: (a, b),
+        view: view(recorded, Readiness::Ready, 100),
+    }
+}
+
+fn universe(pools: &[Placed<'_>]) -> Rig {
+    let topology = Arc::new(
+        Topology::build(pools.iter().map(|p| PoolSeed {
+            pubkey: p.recorded.pool,
+            dex: DexKind::PumpAmm,
+            mints: Some(p.mints),
+        }))
+        .expect("small universe"),
+    );
+    let mut rig = rig_on(topology);
+    for pool in pools {
+        rig.publish(pool.view.clone());
+    }
+    rig
+}
+
+fn query(from: MintId, goal: Goal, max_hops: u8, max_quotes: u32) -> Query {
+    Query {
+        from,
+        goal,
+        amount_in: AMOUNT,
+        max_hops,
+        max_arrays: 0,
+        max_quotes,
+        per_pair: None,
+    }
+}
+
+struct Avoid(Option<MintId>);
+
+impl Filter for Avoid {
+    fn via(&self, mint: MintId) -> bool {
+        Some(mint) != self.0
+    }
+}
+
+/// Every ordering of up to `max_len` distinct indices, built breadth first.
+fn orderings(n: usize, max_len: usize) -> Vec<Vec<usize>> {
+    let mut layer: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut all = Vec::new();
+    for _ in 0..max_len {
+        layer = layer
+            .iter()
+            .flat_map(|seq| {
+                (0..n).filter(|i| !seq.contains(i)).map(move |i| {
+                    let mut next = seq.clone();
+                    next.push(i);
+                    next
+                })
+            })
+            .collect();
+        all.extend(layer.iter().cloned());
+    }
+    all
+}
+
+fn writes(view: &PoolView) -> Vec<Pubkey> {
+    view.accounts
+        .iter()
+        .filter(|(dep, _)| dep.role.swap_writes())
+        .map(|(dep, _)| dep.pubkey)
+        .collect()
+}
+
+fn run(
+    pools: &[Placed<'_>],
+    feed: &FakeFeed,
+    order: &[usize],
+    (from, target): (Pubkey, Pubkey),
+    via: &impl Fn(&Pubkey) -> bool,
+) -> Option<u64> {
+    let (mut at, mut amount, mut passed) = (from, AMOUNT, Vec::new());
+    for (step, &i) in order.iter().enumerate() {
+        let pool = &pools[i];
+        let (a_to_b, next) = if at == pool.mints.0 {
+            (true, pool.mints.1)
+        } else if at == pool.mints.1 {
+            (false, pool.mints.0)
+        } else {
+            return None;
+        };
+        let last = step + 1 == order.len();
+        if last != (next == target) {
+            return None;
+        }
+        if !last && (next == from || passed.contains(&next) || !via(&next)) {
+            return None;
+        }
+        amount = fresh_quote(pool.recorded, feed, amount, a_to_b).filter(|&out| out > 0)?;
+        passed.push(next);
+        at = next;
+    }
+    let written: Vec<Vec<Pubkey>> = order.iter().map(|&i| writes(&pools[i].view)).collect();
+    for (i, mine) in written.iter().enumerate() {
+        if written[i + 1..]
+            .iter()
+            .any(|theirs| mine.iter().any(|key| theirs.contains(key)))
+        {
+            return None;
+        }
+    }
+    Some(amount)
+}
+
+/// The best path by brute force over pool orderings; walks no graph.
+fn reference(
+    pools: &[Placed<'_>],
+    feed: &FakeFeed,
+    ends: (Pubkey, Pubkey),
+    max_hops: usize,
+    via: impl Fn(&Pubkey) -> bool,
+) -> Option<(Vec<Pubkey>, u64)> {
+    let mut best: Option<(Vec<Pubkey>, u64)> = None;
+    for order in orderings(pools.len(), max_hops) {
+        if let Some(out) = run(pools, feed, &order, ends, &via)
+            && best.as_ref().is_none_or(|(_, top)| out > *top)
+        {
+            best = Some((order.iter().map(|&i| pools[i].recorded.pool).collect(), out));
+        }
+    }
+    best
+}
+
+#[test]
+fn search_matches_the_exhaustive_reference() {
+    let [x, y, z] = [(); 3].map(|()| Pubkey::new_unique());
+    let p1 = recorded();
+    let mut p2 = recorded();
+    scale_vault(&mut p2, BASE_VAULT, 2, 1);
+    scale_vault(&mut p2, QUOTE_VAULT, 4, 1);
+    let mut p3 = recorded();
+    scale_vault(&mut p3, QUOTE_VAULT, 3, 1);
+    let mut p4 = recorded();
+    scale_vault(&mut p4, BASE_VAULT, 1, 3);
+    let mut p5 = recorded();
+    scale_vault(&mut p5, BASE_VAULT, 5, 1);
+    let pools = [
+        placed(&p1, y, x),
+        placed(&p2, y, x),
+        placed(&p3, z, y),
+        placed(&p4, x, z),
+        placed(&p5, z, x),
+    ];
+    let rig = universe(&pools);
+    let id = |mint: &Pubkey| rig.topology.mint_id(mint).expect("placed mint");
+
+    let mut multi_hop = false;
+    for (goal, target, avoid) in [
+        (Goal::To(id(&z)), z, None),
+        (Goal::Cycle, x, None),
+        (Goal::To(id(&z)), z, Some(y)),
+    ] {
+        let expected = reference(&pools, &rig.feed, (x, target), 3, |mint| {
+            Some(*mint) != avoid
+        });
+        assert!(expected.is_some(), "{goal:?} avoiding {avoid:?} has a path");
+        for per_pair in [None, NonZeroU8::new(3)] {
+            let mut session = rig.reader.session().unwrap();
+            let found = session.search(
+                &Query {
+                    per_pair,
+                    ..query(id(&x), goal, 3, 10_000)
+                },
+                &Avoid(avoid.map(|mint| id(&mint))),
+            );
+            assert!(!found.exhausted);
+            let found = found.best.map(|path| {
+                let pools = path.legs.iter().map(|leg| leg.pool).collect::<Vec<_>>();
+                (pools, path.amount_out())
+            });
+            assert_eq!(
+                found, expected,
+                "{goal:?} avoiding {avoid:?}, {per_pair:?} per pair"
+            );
+        }
+        multi_hop |= expected.is_some_and(|(pools, _)| pools.len() > 1);
+    }
+    assert!(multi_hop);
+}
+
+#[test]
+fn a_cycle_never_returns_through_the_same_pool() {
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let only = recorded();
+    let rig = universe(&[placed(&only, y, x)]);
+    let from = rig.topology.mint_id(&x).expect("placed mint");
+
+    let found = rig
+        .reader
+        .session()
+        .unwrap()
+        .search(&query(from, Goal::Cycle, 3, 10_000), &Everything);
+    assert_eq!((found.best, found.exhausted), (None, false));
+    assert!(found.quotes > 0);
+}
+
+#[test]
+fn legs_that_write_the_same_account_are_not_chained() {
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let p1 = recorded();
+    let mut p2 = recorded();
+    scale_vault(&mut p2, BASE_VAULT, 2, 1);
+    scale_vault(&mut p2, QUOTE_VAULT, 4, 1);
+    let cycle = |pools: &[Placed<'_>]| {
+        let rig = universe(pools);
+        let from = rig.topology.mint_id(&x).expect("placed mint");
+        rig.reader
+            .session()
+            .unwrap()
+            .search(&query(from, Goal::Cycle, 2, 10_000), &Everything)
+    };
+
+    let apart = [placed(&p1, y, x), placed(&p2, y, x)];
+    assert!(cycle(&apart).best.is_some());
+
+    let mut shared = [placed(&p1, y, x), placed(&p2, y, x)];
+    shared[1].view.accounts[BASE_VAULT].0.pubkey = shared[0].view.accounts[BASE_VAULT].0.pubkey;
+    let found = cycle(&shared);
+    assert_eq!((found.best, found.exhausted), (None, false));
+}
+
+#[test]
+fn a_spent_budget_is_reported_apart_from_no_route() {
+    let [x, y, w, v] = [(); 4].map(|()| Pubkey::new_unique());
+    let p1 = recorded();
+    let mut p2 = recorded();
+    scale_vault(&mut p2, QUOTE_VAULT, 4, 1);
+    let island = recorded();
+    let rig = universe(&[placed(&p1, y, x), placed(&p2, y, x), placed(&island, w, v)]);
+    let id = |mint: &Pubkey| rig.topology.mint_id(mint).expect("placed mint");
+    let mut session = rig.reader.session().unwrap();
+
+    let spent = session.search(&query(id(&x), Goal::Cycle, 2, 1), &Everything);
+    assert_eq!((spent.quotes, spent.exhausted), (1, true));
+
+    let unreachable = session.search(&query(id(&x), Goal::To(id(&w)), 3, 10_000), &Everything);
+    assert_eq!((unreachable.best, unreachable.exhausted), (None, false));
+}
+
+#[test]
+fn pruning_keeps_the_runner_up_when_the_best_pool_is_taken() {
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let shallow = recorded();
+    let mut deep = recorded();
+    scale_vault(&mut deep, BASE_VAULT, 4, 1);
+    scale_vault(&mut deep, QUOTE_VAULT, 4, 1);
+    let rig = universe(&[placed(&shallow, y, x), placed(&deep, y, x)]);
+    let there = |pool: &Recorded| fresh_quote(pool, &rig.feed, AMOUNT, false).expect("quotes");
+    assert!(there(&deep) > there(&shallow));
+
+    let from = rig.topology.mint_id(&x).expect("placed mint");
+    let found = rig.reader.session().unwrap().search(
+        &Query {
+            per_pair: NonZeroU8::new(1),
+            ..query(from, Goal::Cycle, 2, 10_000)
+        },
+        &Everything,
+    );
+    let pools = found
+        .best
+        .map(|path| path.legs.iter().map(|leg| leg.pool).collect::<Vec<_>>());
+    assert_eq!(pools, Some(vec![deep.pool, shallow.pool]));
 }

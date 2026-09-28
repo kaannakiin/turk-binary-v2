@@ -164,10 +164,13 @@ just lint                      # fmt --check + clippy -D warnings
 just test-crate domain         # single-crate tests (nextest)
 just test -p domain <filter>   # tests filtered by name
 just bench graph               # criterion benches of one crate (heavy: ask first)
+just bench route               # route search on the snapshot-universe capture (heavy: ask first)
 just deny                      # cargo-deny
 just watch                     # read-only watch with .env (config.toml)
 just snapshot                  # read-only: ready pools' views + Clock for the oracle
 just oracle                    # LiteSVM replay on mainnet's programs → quoter svm fixtures
+just snapshot-universe         # read-only: every ready pool's view + Clock, for test-universe and bench route
+just test-universe             # pruned vs exhaustive route search on that capture (release)
 just ci                        # everything CI runs
 ```
 

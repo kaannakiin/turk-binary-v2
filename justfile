@@ -52,6 +52,14 @@ txn-record dex minutes="1" per_dex="60" config="config.toml":
 snapshot out="oracle/snapshots/latest.json.gz" per_dex="12" settle="90" config="config.toml":
     cargo run -p turk-binary -- snapshot --config {{config}} --out {{out}} --per-dex {{per_dex}} --settle-secs {{settle}}
 
+# Read-only: every ready pool's view + Clock, the input of `test-universe` and `bench route`.
+snapshot-universe out="oracle/snapshots/universe.json.gz" settle="90" config="config.toml":
+    cargo run -p turk-binary -- snapshot --config {{config}} --out {{out}} --all --settle-secs {{settle}}
+
+# Pruned against exhaustive route search on the `snapshot-universe` capture (release: it quotes a lot).
+test-universe snapshot="oracle/snapshots/universe.json.gz":
+    ROUTE_UNIVERSE={{justfile_directory()}}/{{snapshot}} cargo nextest run --release -p route --test snapshot --run-ignored only --no-capture
+
 # Read-only: dumps mainnet's deployed programs and runs the snapshot's swaps through them in LiteSVM.
 # Writes the expected payouts to crates/quoter/src/tests/fixtures/svm.
 oracle snapshot="oracle/snapshots/latest.json.gz":

@@ -157,14 +157,17 @@ pub struct SnapshotArgs {
     settle_secs: u64,
     #[arg(long, default_value_t = 12)]
     per_dex: usize,
+    /// Every ready pool instead of `per_dex` of each DEX.
+    #[arg(long)]
+    all: bool,
     #[arg(long)]
     out: PathBuf,
 }
 
 /// Lets the market settle, then writes `per_dex` ready pools of every DEX
-/// with the accounts their views hold and the Clock.
+/// (or all of them) with the accounts their views hold and the Clock.
 pub async fn snapshot(args: &SnapshotArgs) -> anyhow::Result<()> {
-    let per_dex = args.per_dex;
+    let per_dex = if args.all { usize::MAX } else { args.per_dex };
     let out = args.out.as_path();
     let mut running = Running::start(&args.config).await?;
     running
