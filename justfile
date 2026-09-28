@@ -29,10 +29,29 @@ ci: lint deny
     cargo nextest run --workspace --profile ci
     cargo test --workspace --doc
 
+# The router program (onchain/, its own workspace).
+lint-onchain:
+    cargo fmt --manifest-path onchain/Cargo.toml --all --check
+    cargo clippy --manifest-path onchain/Cargo.toml --workspace --all-targets --locked -- -D warnings
+
+build-onchain:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+
+test-onchain *args:
+    cargo nextest run --manifest-path onchain/Cargo.toml {{args}}
+
+# LiteSVM: every swap the CPMM replay corpus paid, sent through the router as /swap-instructions
+# builds it, on the same accounts and mainnet bytecode. Writes crates/tx/src/tests/fixtures/router_replay.json.
+router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz":
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_PLANS={{justfile_directory()}}/target/router-plans.json cargo nextest run -p server --run-ignored only router_replay_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router {{corpus}} target/router-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_replay.json
+
 watch config="config.toml":
     cargo run -p turk-binary -- watch --config {{config}}
 
-# `watch` plus POST /route on `server.api_addr` and /health, /ready on `server.ops_addr` (read-only).
+# `watch` plus POST /quote, /swap-instructions, /swap on `server.api_addr` and /health, /ready on
+# `server.ops_addr`. Builds unsigned transactions; never signs or sends one.
 serve config="config.toml":
     cargo run -p turk-binary -- serve --config {{config}}
 
@@ -67,6 +86,10 @@ test-universe snapshot="oracle/snapshots/universe.json.gz":
 # Read-only, project RPC: Token-2022 mints whose older and newer transfer fees differ, for fixtures.
 find-fee-mints want="5":
     python3 scripts/find_fee_mints.py {{want}}
+
+# CPU-bound vanity search; writes an ignored program keypair with mode 0600.
+grind-program-id prefix="TURK" threads="10" output="target/deploy/turk_binary-keypair.json":
+    python3 scripts/grind_program_id.py --prefix "{{prefix}}" --threads "{{threads}}" --output "{{output}}"
 
 # Read-only: dumps mainnet's deployed programs and runs the snapshot's swaps through them in LiteSVM.
 # Writes the expected payouts to crates/quoter/src/tests/fixtures/svm.

@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 
 use crate::{ApiServer, Health, QuoteSlot, ReadySettings, SearchPool, ServerError, ServerSettings};
 
-const PARTIAL_BODY: &[u8] = b"POST /route HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"from";
+const PARTIAL_BODY: &[u8] = b"POST /quote HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"from";
 
 async fn started(
     read_timeout_ms: u64,
@@ -30,6 +30,7 @@ async fn started(
         health.clone(),
         pool,
         QuoteSlot::<MarketReader>::default(),
+        crate::BlockhashSlot::default(),
     )
     .await
     .expect("binds an ephemeral port");
@@ -88,7 +89,7 @@ async fn a_body_that_stops_arriving_is_answered_at_the_read_timeout() {
 #[tokio::test]
 async fn a_connection_that_never_finishes_its_headers_is_closed_at_the_read_timeout() {
     let (_health, addr, _running) = started(100, 5_000).await;
-    let mut stuck = send(addr, b"POST /route HTTP/1.1\r\nHost: te").await;
+    let mut stuck = send(addr, b"POST /quote HTTP/1.1\r\nHost: te").await;
 
     let closed = until_closed(&mut stuck, Duration::from_secs(5)).await;
 

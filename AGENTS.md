@@ -17,8 +17,10 @@ crates/quoter/      # lib: account decode and swap quotes per DEX (SDK binds), n
 crates/graph/       # lib: token graph built from the universe (mints, pools, edges), per-pool activity bits, no I/O
 crates/route/       # lib: decoder run on the pipeline threads (incremental decode, activity bits), quote reader
 crates/server/      # lib: HTTP serving (axum): quote API, search thread pool, /health and /ready, graceful shutdown
+crates/tx/          # lib: route → router instruction, ATA and WSOL setup/cleanup, v1 account budget; no I/O
 docs/               # user docs: architecture, config, DEX table
 oracle/             # separate workspace: LiteSVM replay of snapshot swaps on mainnet's deployed programs
+onchain/            # separate workspace: the pinocchio router program (router-wire, router-core, programs/router)
 ```
 
 Every crate's `Cargo.toml`:
@@ -40,9 +42,9 @@ Dependency versions live only in the root `Cargo.toml` → `[workspace.dependenc
 - `apps/*` stay thin: argument parsing, config loading, logging setup, printing output. No business logic.
 - `crates/*` carry the logic and know nothing about the application: no `clap`, `println!`, or `std::process::exit`.
 - Dependencies flow one way: `apps → crates`. A crate never depends on an app; apps never depend on each other.
-- Crate-to-crate direction is also one-way and acyclic: `dex, rpc, grpc → domain`, `market → dex, rpc, grpc, domain`, `quoter → dex, domain`, `graph → market, domain`, `route → graph, quoter, market, dex, domain`, `server → route, graph, market, domain`. `domain` depends on no internal crate; `market` never depends on `quoter`, `graph` or `route`.
+- Crate-to-crate direction is also one-way and acyclic: `dex, rpc, grpc → domain`, `market → dex, rpc, grpc, domain`, `quoter → dex, domain`, `graph → market, domain`, `route → graph, quoter, market, dex, domain`, `server → route, graph, market, domain, tx`, `tx → domain, router-wire` (`onchain/crates/router-wire`, no dependencies). `domain` depends on no internal crate; `market` never depends on `quoter`, `graph` or `route`.
 - **Network access through one door each**: JSON-RPC only via `rpc`, gRPC only via `grpc`, HTTP serving only via `server`. No other crate may pull in `solana-rpc-client`, `yellowstone-grpc-*`, `axum` or `tower-http`; `deny.toml` → `[bans]` enforces this in CI.
-- `dex`, `quoter` and `graph` stay pure: no I/O, no async. DEX knowledge lives only in them: `dex` holds what a pool looks like on chain (program IDs, filters, closures), `quoter` how its accounts decode and how a swap is priced. `market`, `graph` and `route` hold no DEX-specific constants.
+- `dex`, `quoter` and `graph` stay pure: no I/O, no async. DEX knowledge lives only in them: `dex` holds what a pool looks like on chain (program IDs, filters, closures), `quoter` how its accounts decode, how a swap is priced, and which accounts its swap instruction takes (`VenueState::swap_window`). `tx` holds no DEX knowledge: it fills a window's user slots and wraps windows in the router's instruction. `market`, `graph` and `route` hold no DEX-specific constants.
 - DEX SDK crates and token-program interfaces enter only through `quoter`; `deny.toml` → `[bans]` enforces this. No SDK type appears in `quoter`'s public API.
 - When a config key, crate, or DEX is added or changed, `docs/` is updated in the same change.
 - Errors: typed errors with `thiserror` in libs, wrapped with `anyhow` in apps.
@@ -100,9 +102,23 @@ Verified: 2026-09-24. Source code or IDL compared against mainnet `getAccountInf
 | PumpSwap AMM       | `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`  | `idl/pump_amm.json`                              |
 | Pump fees          | `pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ`  | `idl/pump_fees.json`                             |
 
+Our own router program (`onchain/`, [docs/router.md](docs/router.md)) is `TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3`, not deployed. Its keypair is the operator's; agents never read it. The keypair `cargo build-sbf` writes to `onchain/target/deploy/` is not the program's key and is never used.
+
 Raydium repos have separate devnet IDs behind `#[cfg(feature = "devnet")]`. The mainnet ID is the one in the `not(feature = "devnet")` branch.
 
 All programs are upgradeable: layouts and account lists can change. This table is a starting point, not an authority.
+
+### Transaction format
+
+Verified: 2026-09-28. The bot builds **v1** transactions; do not design around address lookup tables.
+
+- v1 (prefix `0x81`) is live on mainnet: `getTransaction` on CPMM swaps at slot ~451386322 returned version 1, and requests without `maxSupportedTransactionVersion: 1` fail with `-32015`.
+- v1 has no address lookup tables: every address is inline, at most 64 per transaction (duplicates rejected), in a 4096-byte envelope. SIMD-0596 (draft) would raise the limit to 96.
+- v1 has no Compute Budget instructions: compute unit limit, priority fee (total lamports, not micro-lamports per CU), heap size and loaded-data limit are `config` fields of the message.
+- Legacy and v0 still work and v0 still supports lookup tables, but they are slated for retirement; nothing new targets them.
+- So a route's account count is a hard budget: the router's fixed accounts plus every hop's window, plus the setup and cleanup instructions, must fit in 64.
+
+Sources: [SIMD-0385](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0385-transaction-v1.md) (format), [SIMD-0296](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0296-larger-transactions.md) (4096 bytes), [SIMD-0596](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0596-increase-txv1-account-lock-limit-to-96.md) (96 accounts, draft), <https://solana.com/upgrades/larger-transaction-sizes>. Recheck them before changing transaction assembly.
 
 ## Skills
 
@@ -150,7 +166,6 @@ Information that cannot be verified is marked `TODO(verify)`, and that code path
 - **Endpoint secrets**: RPC/gRPC URLs and the `x-token` live in the root `.env` file (gitignored, template `.env.example`). `just` loads it itself. Agents do not read or edit `.env` and never print its contents or any `TB_*` variable; if `watch` is needed, they run `just watch`. `.claude/settings.json` blocks these reads. It is a guardrail, not a sandbox: following the rule is mandatory. No error or log message that leaves the process carries a URL (the `rpc` crate strips URLs from reqwest errors).
 - **Agents never send transactions to mainnet** and never run any command with a real keypair. Only a human starts a mainnet transaction.
 - **Dry-run is the default mode.** Real submission requires an explicit flag (e.g. `--live`); the config default is never live.
-- **Simulate first.** Every transaction runs `simulateTransaction` before sending. A simulation error or lower-than-expected output aborts the transaction.
 - **Atomic arbitrage.** All legs are in one transaction. `minimum_amount_out` is computed tightly for every swap. A trade below the profit threshold fails instead of landing at a loss.
 - **Limits.** Maximum trade size, maximum daily loss, and the kill switch live in config. Code cannot bypass these limits.
 - **Arithmetic.** No `f64` on the price and amount path. Integers (u64/u128) with `checked_*`; overflow is an error, not a panic.
@@ -168,12 +183,16 @@ just bench graph               # criterion benches of one crate (heavy: ask firs
 just bench route               # route search on the snapshot-universe capture (heavy: ask first)
 just deny                      # cargo-deny
 just watch                     # read-only watch with .env (config.toml)
-just serve                     # read-only: watch plus POST /route and /health, /ready (builds no transactions)
+just serve                     # watch plus POST /quote, /swap-instructions, /swap and /health, /ready (unsigned txs; never signs or sends)
 just snapshot                  # read-only: ready pools' views + Clock for the oracle
 just oracle                    # LiteSVM replay on mainnet's programs → quoter svm fixtures
 just snapshot-universe         # read-only: every ready pool's view + Clock, for test-universe and bench route
 just test-universe             # pruned vs exhaustive route search on that capture (release)
 just find-fee-mints            # read-only, project RPC: Token-2022 mints whose transfer fee changes, to capture as fixtures
+just lint-onchain              # router program workspace: fmt --check + clippy -D warnings
+just build-onchain             # cargo build-sbf → onchain/target/deploy/router.so
+just test-onchain              # router program workspace tests (nextest; ask first like any suite)
+just router-replay             # LiteSVM: the CPMM replay corpus's swaps through the router → tx fixture (ask first)
 just ci                        # everything CI runs
 ```
 

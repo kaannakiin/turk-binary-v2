@@ -1,11 +1,11 @@
 use anchor_lang_032::{AccountDeserialize, Discriminator};
 use dex::{Role, Side};
-use domain::Pubkey;
+use domain::{DexKind, Pubkey, SwapWindow, TokenSide, WindowAccount};
 use raydium_cp_swap::curve::CurveCalculator;
 use raydium_cp_swap::states::{AmmConfig, PoolState, PoolStatusBitIndex};
 
 use crate::account::AccountRef;
-use crate::error::{DecodeError, QuoteError};
+use crate::error::{DecodeError, QuoteError, WindowError};
 use crate::state::{QuoteInput, QuoteOut};
 use crate::token::token_amount;
 use crate::token22::{Mint, TransferFee, decode_mint};
@@ -19,6 +19,7 @@ struct Vault {
 /// Side A is token 0, side B token 1.
 #[derive(Default)]
 pub(crate) struct Cpmm {
+    address: Option<Pubkey>,
     pool: Option<Box<PoolState>>,
     config: Option<AmmConfig>,
     vaults: [Option<Vault>; 2],
@@ -28,6 +29,7 @@ pub(crate) struct Cpmm {
 impl Clone for Cpmm {
     fn clone(&self) -> Self {
         Self {
+            address: self.address,
             pool: self.pool.as_ref().map(|p| Box::new(**p)),
             config: self.config.clone(),
             vaults: self.vaults,
@@ -52,6 +54,10 @@ const fn side_index(side: Side) -> usize {
         Side::B => 1,
     }
 }
+
+// src: raydium-io/raydium-cp-swap@59fb845a9e5bb569c8b2f3415f13b0c0ebcc6b92 programs/cp-swap/src/lib.rs
+// (AUTH_SEED); mainnet tx 49Gr3dn1…C2PX passes it as swap_base_input's `authority`.
+const AUTHORITY: Pubkey = Pubkey::from_str_const("GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL");
 
 fn key(pubkey: &anchor_lang_032::prelude::Pubkey) -> Pubkey {
     Pubkey::new_from_array(pubkey.to_bytes())
@@ -82,6 +88,7 @@ impl Cpmm {
         let exists = account.exists();
         match account.role {
             Role::Pool => {
+                self.address = exists.then_some(account.key);
                 self.pool = if exists {
                     Some(Box::new(decode_pool(account.data).ok_or_else(layout)?))
                 } else {
@@ -218,6 +225,50 @@ impl Cpmm {
                 creator_fee
             },
             arrays_used: 0,
+        })
+    }
+
+    // src: raydium-io/raydium-cp-swap@59fb845a9e5bb569c8b2f3415f13b0c0ebcc6b92
+    // programs/cp-swap/src/instructions/swap_base_input.rs (struct Swap)
+    pub(crate) fn swap_window(&self, a_to_b: bool) -> Result<SwapWindow, WindowError> {
+        let (Some(address), Some(pool)) = (self.address, self.pool.as_deref()) else {
+            return Err(WindowError::Incomplete(Role::Pool));
+        };
+        let token_0 = (pool.token_0_vault, pool.token_0_mint, pool.token_0_program);
+        let token_1 = (pool.token_1_vault, pool.token_1_mint, pool.token_1_program);
+        let (source, destination) = if a_to_b {
+            (token_0, token_1)
+        } else {
+            (token_1, token_0)
+        };
+        let fixed = |address: Pubkey, writable| WindowAccount::Fixed {
+            key: address,
+            writable,
+        };
+        let side = |(_, mint, program)| TokenSide {
+            mint: key(&mint),
+            token_program: key(&program),
+        };
+        Ok(SwapWindow {
+            kind: DexKind::RaydiumCpmm,
+            program_id: dex::spec(DexKind::RaydiumCpmm).program_id,
+            accounts: vec![
+                WindowAccount::User,
+                fixed(AUTHORITY, false),
+                fixed(key(&pool.amm_config), false),
+                fixed(address, true),
+                WindowAccount::UserSource,
+                WindowAccount::UserDestination,
+                fixed(key(&source.0), true),
+                fixed(key(&destination.0), true),
+                fixed(key(&source.2), false),
+                fixed(key(&destination.2), false),
+                fixed(key(&source.1), false),
+                fixed(key(&destination.1), false),
+                fixed(key(&pool.observation_key), true),
+            ],
+            source: side(source),
+            destination: side(destination),
         })
     }
 }

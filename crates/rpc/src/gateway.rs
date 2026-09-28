@@ -2,6 +2,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use domain::chain::LatestBlockhash;
 use domain::{AccountFilter, AccountUpdate, Commitment, Pubkey, RetryPolicy, Slot};
 use serde::Deserialize;
 use serde_json::json;
@@ -93,6 +94,13 @@ impl RpcGateway {
 
     pub async fn get_slot(&self) -> Result<Slot, RpcError> {
         self.on_io(|inner| async move { inner.get_slot().await })
+            .await
+    }
+
+    // A processed blockhash can come from a block that is later dropped;
+    // a transaction built on it would never land.
+    pub async fn get_latest_blockhash(&self) -> Result<LatestBlockhash, RpcError> {
+        self.on_io(|inner| async move { inner.get_latest_blockhash().await })
             .await
     }
 
@@ -198,6 +206,18 @@ impl Inner {
         })
         .await
         .map(Slot)
+    }
+
+    async fn get_latest_blockhash(&self) -> Result<LatestBlockhash, RpcError> {
+        self.call("getLatestBlockhash", || {
+            self.client
+                .get_latest_blockhash_with_commitment(CommitmentConfig::confirmed())
+        })
+        .await
+        .map(|(hash, last_valid_block_height)| LatestBlockhash {
+            hash: hash.to_bytes(),
+            last_valid_block_height,
+        })
     }
 
     async fn fetch_multiple(

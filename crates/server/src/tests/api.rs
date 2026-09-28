@@ -1,4 +1,4 @@
-//! `POST /route` over the Raydium CPMM pools of the quoter's program replay
+//! `POST /quote` over the Raydium CPMM pools of the quoter's program replay
 //! corpus: the expected payouts are what the deployed program paid in
 //! `LiteSVM` for the same state and Clock.
 
@@ -53,6 +53,7 @@ struct Fixture {
     pool: Arc<SearchPool>,
     quotes: QuoteSlot<universe::Feed>,
     settings: QuoteSettings,
+    blockhashes: crate::BlockhashSlot,
 }
 
 impl Fixture {
@@ -65,6 +66,7 @@ impl Fixture {
             pool: Arc::new(SearchPool::start(threads, max_queued).expect("starts")),
             quotes,
             settings: QuoteSettings::default(),
+            blockhashes: crate::BlockhashSlot::default(),
         }
     }
 
@@ -77,6 +79,8 @@ impl Fixture {
             pool: Arc::clone(&self.pool),
             quotes,
             settings: self.settings,
+            swap: crate::SwapSettings::default(),
+            blockhashes: self.blockhashes.clone(),
             max_clock_stall: MAX_CLOCK_STALL,
             read_timeout: Duration::from_secs(5),
         })
@@ -105,7 +109,11 @@ impl Fixture {
 }
 
 fn post(body: &Value) -> Request<Body> {
-    Request::post("/route")
+    post_to("/quote", body)
+}
+
+fn post_to(path: &str, body: &Value) -> Request<Body> {
+    Request::post(path)
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .expect("valid request")
@@ -271,4 +279,276 @@ async fn a_feed_that_stalls_while_the_request_is_queued_is_caught_when_its_searc
 
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["error"]["code"], "STALE_DATA");
+}
+
+const USER: &str = "3XHtXZ9sdzoQvqjKadyn4JP7kAfQACHpSpGAbbusd3tq";
+const ROUTER: &str = "TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3";
+const ONE_SOL: &str = "1000000000";
+
+fn best_sol_to_usdc_pool() -> Case {
+    cases()
+        .into_iter()
+        .filter(|case| {
+            case.input_mint == sol_to_usdc()["fromTokenAddress"] && case.amount_in == ONE_SOL
+        })
+        .max_by_key(|case| case.out.parse::<u64>().expect("a payout"))
+        .expect("the corpus replays SOL at this amount")
+}
+
+fn swap_one_sol() -> Value {
+    let mut request = sol_to_usdc();
+    request["amount"] = json!(ONE_SOL);
+    json!({ "userPublicKey": USER, "quoteRequest": request })
+}
+
+fn data(instruction: &Value) -> Vec<u8> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(instruction["data"].as_str().expect("base64 data"))
+        .expect("base64")
+}
+
+// src: docs/router.md → Instructions (route: tag 0, version 1, in_amount, min_out, hop_count,
+// then kind, hook_a, hook_b, tail per hop); the payout is what the deployed CPMM program paid.
+#[tokio::test]
+async fn swap_instructions_route_one_sol_through_the_pool_that_paid_most() {
+    let fixture = Fixture::new(1, 4);
+    let best = best_sol_to_usdc_pool();
+    let out: u128 = best.out.parse().expect("a payout");
+    let min_out = u64::try_from(out * 9_950 / 10_000).expect("fits");
+
+    let (status, _, body) = call(
+        fixture.router(),
+        post_to("/swap-instructions", &swap_one_sol()),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["quote"]["toTokenAmount"], best.out.as_str());
+    assert_eq!(body["quote"]["otherAmountThreshold"], min_out.to_string());
+    let swap = &body["swapInstruction"];
+    assert_eq!(swap["programId"], ROUTER);
+    let mut expected = vec![0u8, 1];
+    expected.extend_from_slice(&1_000_000_000u64.to_le_bytes());
+    expected.extend_from_slice(&min_out.to_le_bytes());
+    expected.extend_from_slice(&[1, 2, 0, 0, 0]);
+    assert_eq!(data(swap), expected);
+    let accounts: Vec<&str> = swap["accounts"]
+        .as_array()
+        .expect("accounts")
+        .iter()
+        .map(|account| account["pubkey"].as_str().expect("a pubkey"))
+        .collect();
+    assert_eq!(accounts[0], USER);
+    assert!(accounts.contains(&best.pool.as_str()), "{accounts:?}");
+    assert_eq!(
+        body["setupInstructions"].as_array().map(Vec::len),
+        Some(4),
+        "wrap SOL, create USDC"
+    );
+    assert_eq!(
+        body["cleanupInstructions"].as_array().map(Vec::len),
+        Some(1),
+        "unwrap SOL"
+    );
+}
+
+#[tokio::test]
+async fn a_quote_sent_back_builds_the_same_swap_without_searching_again() {
+    let fixture = Fixture::new(1, 4);
+    let (_, _, searched) = call(
+        fixture.router(),
+        post_to("/swap-instructions", &swap_one_sol()),
+    )
+    .await;
+    let mut request = sol_to_usdc();
+    request["amount"] = json!(ONE_SOL);
+    let (_, _, quote) = call(fixture.router(), post(&request)).await;
+
+    let body = json!({ "userPublicKey": USER, "quoteResponse": quote });
+    let (status, _, quoted) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+
+    assert_eq!(status, StatusCode::OK, "{quoted}");
+    assert_eq!(quoted["swapInstruction"], searched["swapInstruction"]);
+    assert_eq!(quoted["setupInstructions"], searched["setupInstructions"]);
+}
+
+#[tokio::test]
+async fn a_quote_the_market_cannot_build_is_refused() {
+    let fixture = Fixture::new(1, 4);
+    let mut request = sol_to_usdc();
+    request["amount"] = json!(ONE_SOL);
+    let (_, _, quote) = call(fixture.router(), post(&request)).await;
+    let with = |edit: fn(&mut Value)| {
+        let mut quote = quote.clone();
+        edit(&mut quote);
+        json!({ "userPublicKey": USER, "quoteResponse": quote })
+    };
+    let cases: [(&str, Value, &str); 5] = [
+        (
+            "unwatched pool",
+            with(|q| q["legs"][0]["poolAddress"] = json!(USER)),
+            "QUOTE_MISMATCH",
+        ),
+        (
+            "wrong venue",
+            with(|q| q["legs"][0]["dex"] = json!("orca_whirlpool")),
+            "QUOTE_MISMATCH",
+        ),
+        (
+            "threshold above the output",
+            with(|q| {
+                let out: u64 = q["toTokenAmount"].as_str().unwrap().parse().unwrap();
+                q["otherAmountThreshold"] = json!((out + 1).to_string());
+            }),
+            "QUOTE_MISMATCH",
+        ),
+        (
+            "legs spend another mint",
+            with(|q| q["legs"][0]["fromTokenAddress"] = q["toTokenAddress"].clone()),
+            "QUOTE_MISMATCH",
+        ),
+        (
+            "older than the limit",
+            with(|q| {
+                let slot = q["contextSlot"].as_u64().unwrap();
+                q["contextSlot"] = json!(slot - 33);
+            }),
+            "QUOTE_EXPIRED",
+        ),
+    ];
+    for (name, body, code) in cases {
+        let (status, _, answer) =
+            call(fixture.router(), post_to("/swap-instructions", &body)).await;
+
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{name}: {answer}");
+        assert_eq!(answer["error"]["code"], code, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn a_swap_body_names_exactly_one_source_of_its_route() {
+    let fixture = Fixture::new(1, 4);
+    let both = json!({ "userPublicKey": USER, "quoteRequest": sol_to_usdc(), "quoteResponse": {} });
+    let neither = json!({ "userPublicKey": USER });
+    for (name, body) in [("both", both), ("neither", neither)] {
+        let (status, _, answer) =
+            call(fixture.router(), post_to("/swap-instructions", &body)).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {answer}");
+    }
+}
+
+#[tokio::test]
+async fn swap_answers_no_blockhash_until_one_is_fetched() {
+    let fixture = Fixture::new(1, 4);
+
+    let (status, _, body) = call(fixture.router(), post_to("/swap", &swap_one_sol())).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"]["code"], "NO_BLOCKHASH");
+}
+
+// src: SIMD-0385 (a v1 transaction starts with the 0x81 prefix and ends with its signatures).
+#[tokio::test]
+async fn swap_returns_an_unsigned_v1_transaction_on_the_latest_blockhash() {
+    use base64::Engine as _;
+    let fixture = Fixture::new(1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [7; 32],
+        last_valid_block_height: 123,
+    });
+
+    let (status, _, body) = call(fixture.router(), post_to("/swap", &swap_one_sol())).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["lastValidBlockHeight"], 123);
+    let transaction = base64::engine::general_purpose::STANDARD
+        .decode(body["transaction"].as_str().expect("base64"))
+        .expect("base64");
+    assert_eq!(transaction[0], 0x81);
+    assert!(transaction.len() <= 4096);
+    assert_eq!(transaction[transaction.len() - 64..], [0u8; 64]);
+}
+
+// `Keypair::new_from_array([7; 32])`, the payer of oracle/src/svm.rs.
+const ORACLE_PAYER: &str = "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB";
+
+#[derive(Deserialize)]
+struct Paid {
+    cases: Vec<PaidCase>,
+}
+
+#[derive(Deserialize)]
+struct PaidCase {
+    pool: String,
+    input_mint: String,
+    amount_in: String,
+    out: Option<String>,
+}
+
+/// Every swap the corpus paid, as `/swap-instructions` builds it through the
+/// same pool and requiring exactly what the program paid; `just
+/// router-replay` runs them through the router in `LiteSVM`.
+#[tokio::test]
+#[ignore = "writes the router replay plans for `just router-replay`"]
+async fn router_replay_plans() {
+    let out = std::env::var("ROUTER_PLANS").expect("ROUTER_PLANS names the plans file");
+    let fixture = Fixture::new(1, 4);
+    let (_, _, probe) = call(fixture.router(), post(&sol_to_usdc())).await;
+    let slot = probe["contextSlot"].clone();
+    let file = std::fs::File::open(CPMM).expect("the corpus is in the repository");
+    let paid: Paid = serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
+        .expect("the corpus parses");
+    let sol = sol_to_usdc()["fromTokenAddress"]
+        .as_str()
+        .expect("SOL")
+        .to_owned();
+
+    let mut plans = Vec::new();
+    for case in paid.cases {
+        let Some(expected) = case.out else { continue };
+        let output = if case.input_mint == sol {
+            USDC.to_owned()
+        } else {
+            sol.clone()
+        };
+        let quote = json!({
+            "fromTokenAddress": case.input_mint,
+            "toTokenAddress": output,
+            "fromTokenAmount": case.amount_in,
+            "toTokenAmount": expected,
+            "otherAmountThreshold": expected,
+            "slippageBps": 0,
+            "contextSlot": slot,
+            "legs": [{
+                "poolAddress": case.pool,
+                "dex": "raydium_cpmm",
+                "fromTokenAddress": case.input_mint,
+                "toTokenAddress": output,
+                "fromTokenAmount": case.amount_in,
+                "toTokenAmount": expected,
+            }],
+        });
+        let body = json!({
+            "userPublicKey": ORACLE_PAYER,
+            "wrapAndUnwrapSol": false,
+            "quoteResponse": quote,
+        });
+        let (status, _, built) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+        assert_eq!(status, StatusCode::OK, "{}: {built}", case.pool);
+        plans.push(json!({
+            "pool": case.pool,
+            "inputMint": case.input_mint,
+            "outputMint": output,
+            "amountIn": case.amount_in,
+            "expectedOut": expected,
+            "setupInstructions": built["setupInstructions"],
+            "swapInstruction": built["swapInstruction"],
+            "cleanupInstructions": built["cleanupInstructions"],
+        }));
+    }
+    let file = std::fs::File::create(&out).expect("creating the plans file");
+    serde_json::to_writer(file, &json!({ "corpus": CPMM, "plans": plans })).expect("writing plans");
+    eprintln!("{} plans written to {out}", plans.len());
 }

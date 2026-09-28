@@ -6,15 +6,21 @@ use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
+use domain::Pubkey;
 use route::PoolFeed;
 use tower_http::timeout::RequestBodyTimeoutLayer;
+use tx::{Fees, SwapInstructions, SwapRequest, TxError};
 
+use crate::blockhash::BlockhashSlot;
 use crate::error::ApiError;
 use crate::executor::{Refused, SearchPool};
-use crate::service::{QuoteSlot, ServiceError};
-use crate::settings::QuoteSettings;
+use crate::service::{QuoteService, QuoteSlot, ServiceError};
+use crate::settings::{QuoteSettings, SwapSettings};
 use crate::transport;
-use crate::wire::{RouteBody, RouteResponse};
+use crate::wire::{
+    QuoteBody, QuoteResponse, SwapBody, SwapInstructionsResponse, SwapResponse, SwapSource,
+    Swapping,
+};
 
 const MAX_BODY: usize = 16 * 1024;
 
@@ -22,6 +28,8 @@ pub(crate) struct Api<F> {
     pub pool: Arc<SearchPool>,
     pub quotes: QuoteSlot<F>,
     pub settings: QuoteSettings,
+    pub swap: SwapSettings,
+    pub blockhashes: BlockhashSlot,
     pub max_clock_stall: Duration,
     pub read_timeout: Duration,
 }
@@ -32,6 +40,8 @@ impl<F> Clone for Api<F> {
             pool: Arc::clone(&self.pool),
             quotes: self.quotes.clone(),
             settings: self.settings,
+            swap: self.swap,
+            blockhashes: self.blockhashes.clone(),
             max_clock_stall: self.max_clock_stall,
             read_timeout: self.read_timeout,
         }
@@ -41,7 +51,9 @@ impl<F> Clone for Api<F> {
 pub(crate) fn router<F: PoolFeed>(api: Api<F>) -> Router {
     let read_timeout = api.read_timeout;
     let router = Router::new()
-        .route("/route", post(route::<F>))
+        .route("/quote", post(quote::<F>))
+        .route("/swap-instructions", post(swap_instructions::<F>))
+        .route("/swap", post(swap::<F>))
         .fallback(|| async { ApiError::NOT_FOUND })
         .method_not_allowed_fallback(|| async { ApiError::METHOD_NOT_ALLOWED })
         .layer(DefaultBodyLimit::max(MAX_BODY))
@@ -52,28 +64,144 @@ pub(crate) fn router<F: PoolFeed>(api: Api<F>) -> Router {
     transport::layered(router)
 }
 
-async fn route<F: PoolFeed>(
+impl<F: PoolFeed> Api<F> {
+    fn service(&self) -> Result<QuoteService<F>, ApiError> {
+        self.quotes
+            .service(self.settings, self.swap, self.max_clock_stall)
+            .ok_or(ApiError::NOT_READY)
+    }
+
+    async fn on_search_thread<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+    ) -> Result<T, ApiError> {
+        let pending = self.pool.submit(work).map_err(|refused| match refused {
+            Refused::Full => ApiError::OVERLOADED,
+            Refused::Closed => ApiError::SHUTTING_DOWN,
+        })?;
+        tokio::time::timeout(self.settings.timeout(), pending)
+            .await
+            .map_err(|_| ApiError::TIMEOUT)?
+            .map_err(|_| ApiError::INTERNAL)?
+    }
+}
+
+async fn quote<F: PoolFeed>(
     State(api): State<Api<F>>,
-    body: Result<Json<RouteBody>, JsonRejection>,
-) -> Result<Json<RouteResponse>, ApiError> {
+    body: Result<Json<QuoteBody>, JsonRejection>,
+) -> Result<Json<QuoteResponse>, ApiError> {
     let Json(body) = body.map_err(|rejection| ApiError::invalid(rejection.body_text()))?;
-    let request = body.into_request()?;
-    let service = api
-        .quotes
-        .service(api.settings, api.max_clock_stall)
-        .ok_or(ApiError::NOT_READY)?;
-    let pending =
-        api.pool
-            .submit(move || service.route(&request))
-            .map_err(|refused| match refused {
-                Refused::Full => ApiError::OVERLOADED,
-                Refused::Closed => ApiError::SHUTTING_DOWN,
-            })?;
-    let routed = tokio::time::timeout(api.settings.timeout(), pending)
+    let quoting = body.into_request(api.swap.default_slippage_bps)?;
+    let service = api.service()?;
+    let response = api
+        .on_search_thread(move || {
+            let routed = service.route(&quoting.request)?;
+            let min_out = threshold(routed.amount_out, quoting.slippage_bps)?;
+            Ok(QuoteResponse::new(routed, min_out, quoting.slippage_bps))
+        })
+        .await?;
+    Ok(Json(response))
+}
+
+async fn swap_instructions<F: PoolFeed>(
+    State(api): State<Api<F>>,
+    body: Result<Json<SwapBody>, JsonRejection>,
+) -> Result<Json<SwapInstructionsResponse>, ApiError> {
+    let plan = plan(&api, body).await?;
+    Ok(Json(SwapInstructionsResponse::new(
+        plan.quote,
+        &plan.instructions,
+        plan.fees,
+    )))
+}
+
+async fn swap<F: PoolFeed>(
+    State(api): State<Api<F>>,
+    body: Result<Json<SwapBody>, JsonRejection>,
+) -> Result<Json<SwapResponse>, ApiError> {
+    let plan = plan(&api, body).await?;
+    let blockhash = api
+        .blockhashes
+        .fresh(api.swap.max_blockhash_age())
+        .ok_or(ApiError::NO_BLOCKHASH)?;
+    let transaction = tx::unsigned_v1(&plan.instructions, &plan.user, blockhash.hash, plan.fees)
+        .map_err(ApiError::from)?;
+    Ok(Json(SwapResponse::new(
+        plan.quote,
+        &transaction,
+        blockhash.last_valid_block_height,
+        plan.fees,
+    )))
+}
+
+struct Plan {
+    user: Pubkey,
+    quote: QuoteResponse,
+    instructions: SwapInstructions,
+    fees: Fees,
+}
+
+async fn plan<F: PoolFeed>(
+    api: &Api<F>,
+    body: Result<Json<SwapBody>, JsonRejection>,
+) -> Result<Plan, ApiError> {
+    let Json(body) = body.map_err(|rejection| ApiError::invalid(rejection.body_text()))?;
+    let swapping = body.into_swap(api.swap.default_slippage_bps)?;
+    let service = api.service()?;
+    api.on_search_thread(move || swap_plan(&service, swapping))
         .await
-        .map_err(|_| ApiError::TIMEOUT)?
-        .map_err(|_| ApiError::INTERNAL)??;
-    Ok(Json(routed.into()))
+}
+
+fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Result<Plan, ApiError> {
+    let (priced, min_out, slippage_bps) = match swapping.source {
+        SwapSource::Search(quoting) => {
+            let priced = service.route_to_swap(&quoting.request)?;
+            let min_out = threshold(priced.routed.amount_out, quoting.slippage_bps)?;
+            (priced, min_out, quoting.slippage_bps)
+        }
+        SwapSource::Quoted(quoted, slippage_bps) => {
+            let priced = service.quoted(&quoted)?;
+            (priced, quoted.min_out, slippage_bps)
+        }
+    };
+    let instructions = tx::build(&SwapRequest {
+        user: swapping.user,
+        hops: &priced.windows,
+        amount_in: priced.routed.amount_in,
+        min_out,
+        wrap_sol: swapping.wrap_sol,
+    })?;
+    Ok(Plan {
+        user: swapping.user,
+        quote: QuoteResponse::new(priced.routed, min_out, slippage_bps),
+        instructions,
+        fees: Fees {
+            compute_unit_limit: tx::compute_unit_limit(&priced.windows),
+            priority_fee_lamports: swapping.priority_fee_lamports,
+        },
+    })
+}
+
+fn threshold(amount_out: u64, slippage_bps: u16) -> Result<u64, ApiError> {
+    tx::min_out(amount_out, slippage_bps)
+        .filter(|&min_out| min_out > 0)
+        .ok_or_else(|| ApiError::invalid("slippageBps leaves no output to require"))
+}
+
+impl From<TxError> for ApiError {
+    fn from(error: TxError) -> Self {
+        let message = error.to_string();
+        let code = match error {
+            TxError::TooManyAccounts { .. } => "TOO_MANY_ACCOUNTS",
+            TxError::TooLarge { .. } => "TRANSACTION_TOO_LARGE",
+            TxError::Unsupported(_) => "UNSUPPORTED_VENUE",
+            TxError::EmptyRoute
+            | TxError::TooManyHops { .. }
+            | TxError::Discontinuous { .. }
+            | TxError::Compile(_) => "CANNOT_BUILD",
+        };
+        Self::new(StatusCode::UNPROCESSABLE_ENTITY, code, message)
+    }
 }
 
 impl From<ServiceError> for ApiError {
@@ -97,6 +225,15 @@ impl From<ServiceError> for ApiError {
             ServiceError::RouteChanged(changed) => {
                 tracing::debug!(%changed, "route changed while priced again");
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, "ROUTE_CHANGED", message)
+            }
+            ServiceError::QuoteExpired { .. } => {
+                Self::new(StatusCode::UNPROCESSABLE_ENTITY, "QUOTE_EXPIRED", message)
+            }
+            ServiceError::QuoteMismatch(_) => {
+                Self::new(StatusCode::UNPROCESSABLE_ENTITY, "QUOTE_MISMATCH", message)
+            }
+            ServiceError::NoWindow { .. } => {
+                Self::new(StatusCode::UNPROCESSABLE_ENTITY, "CANNOT_SWAP", message)
             }
         }
     }

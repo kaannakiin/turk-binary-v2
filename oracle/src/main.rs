@@ -4,6 +4,7 @@
 //!
 //! Usage: oracle SNAPSHOT PROGRAMS_DIR OUT_DIR
 
+mod router;
 mod rpc;
 mod snapshot;
 mod svm;
@@ -268,6 +269,9 @@ fn write(path: &Path, fixture: &Fixture<'_>) {
 
 fn main() {
     let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    if args.first().is_some_and(|mode| mode.as_os_str() == "router") {
+        return router::main(&args[1..]);
+    }
     let [snapshot_path, programs, out_dir] = args.as_slice() else {
         eprintln!("usage: oracle SNAPSHOT PROGRAMS_DIR OUT_DIR");
         std::process::exit(2);

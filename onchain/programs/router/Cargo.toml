@@ -1,0 +1,26 @@
+[package]
+name = "router"
+description = "Multi-hop DEX router: typed CPI adapters, balance-delta chaining, one terminal min_out"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+pinocchio.workspace = true
+pinocchio-system.workspace = true
+router-core.workspace = true
+router-wire.workspace = true
+
+# On the solana target these are syscalls; the host needs the curve to derive PDAs.
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+solana-address = { version = "2", features = ["curve25519"] }
+
+[lints]
+workspace = true

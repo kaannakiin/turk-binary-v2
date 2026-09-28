@@ -16,6 +16,19 @@ pub const TOKEN_PROGRAM: Pubkey =
 pub const TOKEN_2022_PROGRAM: Pubkey =
     Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
+// src: spl-token-interface@3.0.0 src/native_mint.rs
+pub const NATIVE_MINT: Pubkey =
+    Pubkey::from_str_const("So11111111111111111111111111111111111111112");
+// src: spl-associated-token-account-interface@2.0.0 src/lib.rs
+pub const ASSOCIATED_TOKEN_PROGRAM: Pubkey =
+    Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LatestBlockhash {
+    pub hash: [u8; 32],
+    pub last_valid_block_height: u64,
+}
+
 #[must_use]
 pub fn is_token_program(owner: &Pubkey) -> bool {
     owner == &TOKEN_PROGRAM || owner == &TOKEN_2022_PROGRAM

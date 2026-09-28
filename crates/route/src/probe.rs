@@ -41,6 +41,7 @@ impl RouteError {
                 QuoteError::Arrays(_) => "arrays",
                 QuoteError::TransferHook => "transfer_hook",
             },
+            Self::Window(_) => "window",
         }
     }
 }

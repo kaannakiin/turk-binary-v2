@@ -22,7 +22,7 @@ mod raydium_cpmm;
 mod whirlpool;
 
 pub use account::AccountRef;
-pub use error::{DecodeError, MintDecodeError, QuoteError};
+pub use error::{DecodeError, MintDecodeError, QuoteError, WindowError};
 pub use state::{QuoteInput, QuoteOut, VenueState};
 
 #[cfg(test)]

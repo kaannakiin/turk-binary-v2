@@ -1834,6 +1834,7 @@ dependencies = [
  "base64 0.22.1",
  "flate2",
  "litesvm",
+ "router-wire",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2122,6 +2123,10 @@ dependencies = [
  "untrusted",
  "windows-sys",
 ]
+
+[[package]]
+name = "router-wire"
+version = "0.1.0"
 
 [[package]]
 name = "rustc-demangle"

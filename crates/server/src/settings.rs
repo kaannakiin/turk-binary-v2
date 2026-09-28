@@ -15,6 +15,7 @@ pub struct ServerSettings {
     pub shutdown_timeout_ms: u64,
     pub ready: ReadySettings,
     pub quote: QuoteSettings,
+    pub swap: SwapSettings,
 }
 
 impl ServerSettings {
@@ -44,6 +45,7 @@ impl Default for ServerSettings {
             shutdown_timeout_ms: 5_000,
             ready: ReadySettings::default(),
             quote: QuoteSettings::default(),
+            swap: SwapSettings::default(),
         }
     }
 }
@@ -119,6 +121,47 @@ impl Default for QuoteSettings {
             max_arrays: 8,
             timeout_ms: 2_000,
             max_queued: 32,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SwapSettings {
+    pub default_slippage_bps: u16,
+    pub max_quote_age_slots: u64,
+    pub blockhash_refresh_ms: u64,
+    pub max_blockhash_age_ms: u64,
+}
+
+impl SwapSettings {
+    #[must_use]
+    pub fn blockhash_refresh(&self) -> Duration {
+        Duration::from_millis(self.blockhash_refresh_ms)
+    }
+
+    #[must_use]
+    pub fn max_blockhash_age(&self) -> Duration {
+        Duration::from_millis(self.max_blockhash_age_ms)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), ServerError> {
+        if self.default_slippage_bps > 10_000 {
+            return Err(ServerError::Settings(
+                "swap.default_slippage_bps is at most 10000",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for SwapSettings {
+    fn default() -> Self {
+        Self {
+            default_slippage_bps: 50,
+            max_quote_age_slots: 32,
+            blockhash_refresh_ms: 2_000,
+            max_blockhash_age_ms: 20_000,
         }
     }
 }

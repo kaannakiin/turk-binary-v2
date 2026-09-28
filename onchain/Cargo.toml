@@ -1,0 +1,49 @@
+# Its own workspace: `cargo build-sbf` compiles the program with platform-tools'
+# rustc, and pinocchio's stack must not unify with the bot's dependency graph.
+[workspace]
+resolver = "3"
+members = ["crates/router-core", "crates/router-wire", "programs/router"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+publish = false
+
+[workspace.dependencies]
+pinocchio = { version = "0.11.2", features = ["alloc", "cpi"] }
+pinocchio-system = "0.6.1"
+router-core = { path = "crates/router-core" }
+router-wire = { path = "crates/router-wire" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# pinocchio's own APIs take `&AccountView` everywhere; by-value views would not match them.
+trivially_copy_pass_by_ref = "allow"
+arithmetic_side_effects = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_precision_loss = "deny"
+cast_sign_loss = "deny"
+float_arithmetic = "deny"
+expect_used = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1

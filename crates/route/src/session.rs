@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
-use domain::{ChainClock, Pubkey};
+use domain::{ChainClock, Pubkey, SwapWindow};
 use graph::{EdgeId, PoolId, Topology};
 
 use crate::error::RouteError;
@@ -123,6 +123,14 @@ impl SearchSession {
         let decoded = &pin(&mut self.pins, &self.topology, &self.table, edge.pool())?.decoded;
         decoded.usable()?;
         decoded.quote(&self.clock, amount_in, edge.a_to_b(), max_arrays)
+    }
+
+    /// The swap accounts of `edge`'s pool as pinned, so they belong to the
+    /// state the route was priced on.
+    pub fn swap_window(&mut self, edge: EdgeId) -> Result<SwapWindow, RouteError> {
+        let decoded = &pin(&mut self.pins, &self.topology, &self.table, edge.pool())?.decoded;
+        decoded.usable()?;
+        Ok(decoded.state.swap_window(edge.a_to_b())?)
     }
 
     pub(crate) fn pin(&mut self, pool: PoolId) -> Result<&Pin, RouteError> {

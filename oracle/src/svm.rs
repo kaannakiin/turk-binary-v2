@@ -112,7 +112,22 @@ impl Machine {
         }
     }
 
+    pub fn add_program(&mut self, id: Pubkey, bytes: &[u8]) {
+        self.svm
+            .add_program(id, bytes)
+            .unwrap_or_else(|e| panic!("loading {id}: {e:?}"));
+    }
+
+    pub fn set_account(&mut self, key: Pubkey, account: Account) {
+        self.svm.set_account(key, account).expect("set account");
+    }
+
     fn send(&mut self, instructions: &[Instruction]) -> Result<(), String> {
+        self.send_measured(instructions).map(|_| ())
+    }
+
+    /// The compute units the transaction consumed.
+    pub fn send_measured(&mut self, instructions: &[Instruction]) -> Result<u64, String> {
         self.svm.expire_blockhash();
         let tx = Transaction::new_signed_with_payer(
             instructions,
@@ -121,7 +136,7 @@ impl Machine {
             self.svm.latest_blockhash(),
         );
         let keys = tx.message.account_keys.clone();
-        self.svm.send_transaction(tx).map(|_| ()).map_err(|failed| {
+        self.svm.send_transaction(tx).map(|meta| meta.compute_units_consumed).map_err(|failed| {
             if let solana_transaction::TransactionError::InsufficientFundsForRent {
                 account_index,
             } = failed.err
@@ -195,13 +210,16 @@ impl Machine {
     }
 
     pub fn swap(&mut self, swap: Instruction) -> Result<(), String> {
-        let mut budget = vec![2];
-        budget.extend_from_slice(&COMPUTE_UNITS.to_le_bytes());
-        let limit = Instruction {
-            program_id: COMPUTE_BUDGET,
-            accounts: Vec::new(),
-            data: budget,
-        };
-        self.send(&[limit, swap])
+        self.send(&[compute_limit(), swap])
+    }
+}
+
+pub fn compute_limit() -> Instruction {
+    let mut budget = vec![2];
+    budget.extend_from_slice(&COMPUTE_UNITS.to_le_bytes());
+    Instruction {
+        program_id: COMPUTE_BUDGET,
+        accounts: Vec::new(),
+        data: budget,
     }
 }

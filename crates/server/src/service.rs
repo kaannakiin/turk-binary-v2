@@ -2,11 +2,11 @@ use std::num::{NonZeroU8, NonZeroU64};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use domain::{DexKind, Pubkey, Slot};
+use domain::{DexKind, Pubkey, Slot, SwapWindow};
 use graph::{MintId, PoolNode, Topology};
-use route::{Filter, Goal, PoolFeed, Query, QuoteReader, RouteError, Verdict};
+use route::{Filter, Goal, PoolFeed, Query, QuoteReader, RouteError, SearchSession, Verdict};
 
-use crate::settings::QuoteSettings;
+use crate::settings::{QuoteSettings, SwapSettings};
 
 /// Where the engine's quote reader appears once it has started; requests
 /// before that answer `NOT_READY`.
@@ -34,12 +34,14 @@ impl<F: PoolFeed> QuoteSlot<F> {
     pub(crate) fn service(
         &self,
         settings: QuoteSettings,
+        swap: SwapSettings,
         max_clock_stall: Duration,
     ) -> Option<QuoteService<F>> {
         let quotes = self.0.get()?.clone();
         Some(QuoteService {
             quotes,
             settings,
+            swap,
             max_clock_stall,
         })
     }
@@ -60,6 +62,17 @@ pub(crate) struct DexFilter {
     /// Empty admits every DEX.
     pub only: Vec<DexKind>,
     pub except: Vec<DexKind>,
+}
+
+impl DexFilter {
+    /// Keeps only the venues the router can swap through.
+    pub(crate) fn swappable(mut self) -> Self {
+        if self.only.is_empty() {
+            self.only = DexKind::ALL.to_vec();
+        }
+        self.only.retain(|&dex| tx::supports(dex));
+        self
+    }
 }
 
 impl Filter for DexFilter {
@@ -97,6 +110,19 @@ pub(crate) struct RoutedLeg {
     pub amount_out: u64,
 }
 
+/// A route a client priced earlier with `/quote` and sends back.
+#[derive(Debug, Clone)]
+pub(crate) struct QuotedRoute {
+    pub routed: Routed,
+    pub min_out: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct Priced {
+    pub routed: Routed,
+    pub windows: Vec<SwapWindow>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ServiceError {
     #[error("{0} is not a mint of any watched pool")]
@@ -113,6 +139,16 @@ pub(crate) enum ServiceError {
     NoRoute(SearchQuality),
     #[error("a pool of the route changed while it was priced again")]
     RouteChanged(#[source] Changed),
+    #[error("the quote is {age} slots old, at most {max} are accepted")]
+    QuoteExpired { age: u64, max: u64 },
+    #[error("the quote does not match the market: {0}")]
+    QuoteMismatch(&'static str),
+    #[error("{pool} cannot be swapped: {reason}")]
+    NoWindow {
+        pool: Pubkey,
+        #[source]
+        reason: RouteError,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -128,6 +164,7 @@ pub(crate) enum Changed {
 pub(crate) struct QuoteService<F> {
     quotes: QuoteReader<F>,
     settings: QuoteSettings,
+    swap: SwapSettings,
     max_clock_stall: Duration,
 }
 
@@ -135,6 +172,20 @@ impl<F: PoolFeed> QuoteService<F> {
     /// Runs on a search thread. The search's session opens here, not when
     /// the request arrived, so a queued request pins no state while it waits.
     pub(crate) fn route(&self, request: &RouteRequest) -> Result<Routed, ServiceError> {
+        self.price(request, false).map(|priced| priced.routed)
+    }
+
+    /// Searches only the venues the router supports, and returns the swap
+    /// accounts of the pools as the route was priced on them.
+    pub(crate) fn route_to_swap(&self, request: &RouteRequest) -> Result<Priced, ServiceError> {
+        let request = RouteRequest {
+            dexes: request.dexes.clone().swappable(),
+            ..request.clone()
+        };
+        self.price(&request, true)
+    }
+
+    fn price(&self, request: &RouteRequest, windows: bool) -> Result<Priced, ServiceError> {
         self.fresh()?;
         let mut session = self.quotes.session().map_err(|_| ServiceError::NotReady)?;
         let query = self.query(session.topology(), request)?;
@@ -163,6 +214,14 @@ impl<F: PoolFeed> QuoteService<F> {
                 }));
             }
         }
+        let windows = if windows {
+            path.legs
+                .iter()
+                .map(|leg| window(&mut now, leg.edge))
+                .collect::<Result<_, _>>()?
+        } else {
+            Vec::new()
+        };
         let topology = now.topology();
         let legs = path
             .legs
@@ -179,7 +238,7 @@ impl<F: PoolFeed> QuoteService<F> {
                 }
             })
             .collect();
-        Ok(Routed {
+        let routed = Routed {
             from: request.from,
             to: request.to,
             amount_in: request.amount.get(),
@@ -188,6 +247,70 @@ impl<F: PoolFeed> QuoteService<F> {
             cross_stream: path.cross_stream(),
             search,
             legs,
+        };
+        Ok(Priced { routed, windows })
+    }
+
+    /// Trusts the quote's amounts and threshold; the router enforces the
+    /// threshold on chain. Checks only that the route is one this market
+    /// can build: known pools of the stated venues, joined mint to mint.
+    pub(crate) fn quoted(&self, quote: &QuotedRoute) -> Result<Priced, ServiceError> {
+        self.fresh()?;
+        let mut session = self.quotes.session().map_err(|_| ServiceError::NotReady)?;
+        let now = session.clock().slot.0;
+        let quoted_at = quote.routed.slot.0;
+        if quoted_at > now {
+            return Err(ServiceError::QuoteMismatch(
+                "contextSlot is ahead of the market",
+            ));
+        }
+        let age = now - quoted_at;
+        if age > self.swap.max_quote_age_slots {
+            return Err(ServiceError::QuoteExpired {
+                age,
+                max: self.swap.max_quote_age_slots,
+            });
+        }
+        let routed = &quote.routed;
+        let (Some(first), Some(last)) = (routed.legs.first(), routed.legs.last()) else {
+            return Err(ServiceError::QuoteMismatch("the route has no leg"));
+        };
+        if first.from != routed.from || last.to != routed.to {
+            return Err(ServiceError::QuoteMismatch(
+                "the legs do not join the route's mints",
+            ));
+        }
+        if first.amount_in != routed.amount_in || last.amount_out != routed.amount_out {
+            return Err(ServiceError::QuoteMismatch(
+                "the legs do not add up to the route's amounts",
+            ));
+        }
+        if quote.min_out == 0 || quote.min_out > routed.amount_out {
+            return Err(ServiceError::QuoteMismatch(
+                "otherAmountThreshold must be positive and at most toTokenAmount",
+            ));
+        }
+        if routed
+            .legs
+            .windows(2)
+            .any(|pair| pair[0].to != pair[1].from)
+        {
+            return Err(ServiceError::QuoteMismatch(
+                "a leg does not spend what the last one paid",
+            ));
+        }
+        let edges = routed
+            .legs
+            .iter()
+            .map(|leg| quoted_edge(session.topology(), leg))
+            .collect::<Result<Vec<_>, _>>()?;
+        let windows = edges
+            .into_iter()
+            .map(|edge| window(&mut session, edge))
+            .collect::<Result<_, _>>()?;
+        Ok(Priced {
+            routed: routed.clone(),
+            windows,
         })
     }
 
@@ -247,4 +370,37 @@ impl<F: PoolFeed> QuoteService<F> {
             per_pair: NonZeroU8::new(self.settings.per_pair),
         })
     }
+}
+
+fn window(session: &mut SearchSession, edge: graph::EdgeId) -> Result<SwapWindow, ServiceError> {
+    session
+        .swap_window(edge)
+        .map_err(|reason| ServiceError::NoWindow {
+            pool: session.topology().pool(edge.pool()).pubkey,
+            reason,
+        })
+}
+
+fn quoted_edge(topology: &Topology, leg: &RoutedLeg) -> Result<graph::EdgeId, ServiceError> {
+    let pool = topology
+        .pool_id(&leg.pool)
+        .ok_or(ServiceError::QuoteMismatch("a leg's pool is not watched"))?;
+    if topology.pool(pool).dex != leg.dex {
+        return Err(ServiceError::QuoteMismatch(
+            "a leg names the wrong venue for its pool",
+        ));
+    }
+    let edge = topology
+        .mint_id(&leg.from)
+        .and_then(|from| topology.edge(pool, from))
+        .ok_or(ServiceError::QuoteMismatch(
+            "a leg spends a mint its pool does not hold",
+        ))?;
+    let (_, to) = topology.edge_ends(edge);
+    if *topology.mint(to) != leg.to {
+        return Err(ServiceError::QuoteMismatch(
+            "a leg pays a mint its pool does not pay",
+        ));
+    }
+    Ok(edge)
 }

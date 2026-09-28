@@ -146,7 +146,7 @@ Used by `serve` only (see [architecture.md](architecture.md#http-api)). Both add
 
 | Key                   | Default            | Meaning                                                                                                                                                       |
 | --------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `api_addr`            | `"127.0.0.1:8080"` | Address of `POST /route`.                                                                                                                                     |
+| `api_addr`            | `"127.0.0.1:8080"` | Address of `POST /quote`, `/swap-instructions` and `/swap`.                                                                                                   |
 | `ops_addr`            | `"127.0.0.1:9100"` | Address of `/health` and `/ready`. `0.0.0.0:9100` exposes them beyond the host.                                                                               |
 | `drain_delay_ms`      | `0`                | After ctrl-c or `SIGTERM`, how long `/ready` answers 503 while the API keeps serving, so a load balancer moves traffic first. Skipped when the engine failed. |
 | `read_timeout_ms`     | `5000`             | Request headers, and on the API the body, must arrive within this; a client that stops sending is cut off.                                                    |
@@ -154,11 +154,11 @@ Used by `serve` only (see [architecture.md](architecture.md#http-api)). Both add
 
 ### `[server.ready]`
 
-| Key                  | Default | Meaning                                                                                                                                            |
-| -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `startup_percent`    | `90`    | `/ready` first turns 200 once this share of the eligible pools is ready. Eligible: ready, or not ready for a reason that clears by itself.         |
-| `floor_percent`      | `50`    | Once ready, `/ready` fails again only below this share. One pool or one stream shard dropping out leaves the service ready.                        |
-| `max_clock_stall_ms` | `10000` | `/ready` fails, and `POST /route` answers `STALE_DATA`, when the Clock sysvar's slot has not moved for longer than this: the streams have stalled. |
+| Key                  | Default | Meaning                                                                                                                                      |
+| -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startup_percent`    | `90`    | `/ready` first turns 200 once this share of the eligible pools is ready. Eligible: ready, or not ready for a reason that clears by itself.   |
+| `floor_percent`      | `50`    | Once ready, `/ready` fails again only below this share. One pool or one stream shard dropping out leaves the service ready.                  |
+| `max_clock_stall_ms` | `10000` | `/ready` fails, and the API answers `STALE_DATA`, when the Clock sysvar's slot has not moved for longer than this: the streams have stalled. |
 
 ### `[server.quote]`
 
@@ -171,6 +171,15 @@ Used by `serve` only (see [architecture.md](architecture.md#http-api)). Both add
 | `max_arrays`       | `8`      | Tick or bin arrays one quote may cross. The transaction that carries a route has to pass the same arrays ([dexes.md](dexes.md)).                         |
 | `timeout_ms`       | `2000`   | How long a request waits for its search, queue time included, before it answers `TIMEOUT`. A search already running still finishes and keeps its thread. |
 | `max_queued`       | `32`     | Searches that may wait for a thread. Past `[threads] search` running plus this many waiting, a request answers `OVERLOADED` at once.                     |
+
+### `[server.swap]`
+
+| Key                    | Default | Meaning                                                                                                               |
+| ---------------------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
+| `default_slippage_bps` | `50`    | Slippage of `otherAmountThreshold` when a request gives no `slippageBps`. At most 10000.                              |
+| `max_quote_age_slots`  | `32`    | A `quoteResponse` whose `contextSlot` is further behind the market's Clock answers `QUOTE_EXPIRED`.                   |
+| `blockhash_refresh_ms` | `2000`  | How often `serve` fetches the latest blockhash (`getLatestBlockhash`, `confirmed`) for `/swap`.                       |
+| `max_blockhash_age_ms` | `20000` | `/swap` answers `NO_BLOCKHASH` when the last fetched blockhash is older than this, for example while the RPC is down. |
 
 ## Top level
 

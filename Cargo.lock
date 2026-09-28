@@ -4886,6 +4886,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "router-wire"
+version = "0.1.0"
+
+[[package]]
 name = "rpc"
 version = "0.1.0"
 dependencies = [
@@ -5304,6 +5308,7 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "axum",
  "base64 0.22.1",
  "bytes",
@@ -5323,6 +5328,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tx",
 ]
 
 [[package]]
@@ -10047,6 +10053,24 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "tx"
+version = "0.1.0"
+dependencies = [
+ "domain",
+ "router-wire",
+ "serde",
+ "serde_json",
+ "solana-hash 4.7.0",
+ "solana-instruction 3.5.1",
+ "solana-message 4.6.0",
+ "solana-pubkey 4.4.0",
+ "solana-signature 3.6.0",
+ "solana-transaction 4.3.0",
+ "thiserror 2.0.21",
+ "wincode",
 ]
 
 [[package]]

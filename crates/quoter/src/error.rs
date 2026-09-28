@@ -28,6 +28,14 @@ pub enum DecodeError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum WindowError {
+    #[error("{0} has no swap window yet")]
+    Unsupported(DexKind),
+    #[error("{0:?} is not known yet")]
+    Incomplete(Role),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum QuoteError {
     #[error("{0} has no quote yet")]
     Unsupported(DexKind),

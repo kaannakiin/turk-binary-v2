@@ -25,6 +25,7 @@ struct Running {
     quotes: QuoteReader<MarketReader>,
     reader: MarketReader,
     topology: Arc<Topology>,
+    rpc: Arc<RpcGateway>,
     config: config::AppConfig,
 }
 
@@ -89,6 +90,7 @@ impl Running {
             decoding,
             reader,
             topology,
+            rpc,
             config,
         })
     }
@@ -162,8 +164,16 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
     let threads = server::search_threads(config.threads.search, cores);
     let health = server::Health::new(settings.ready);
     let quotes = server::QuoteSlot::default();
+    let blockhashes = server::BlockhashSlot::default();
     let pool = server::SearchPool::start(threads, settings.quote.max_queued)?;
-    let api = server::ApiServer::bind(&settings, health.clone(), pool, quotes.clone()).await?;
+    let api = server::ApiServer::bind(
+        &settings,
+        health.clone(),
+        pool,
+        quotes.clone(),
+        blockhashes.clone(),
+    )
+    .await?;
     let ops = server::OpsServer::bind(&settings, health.clone()).await?;
     tracing::info!(api = %api.local_addr()?, ops = %ops.local_addr()?, search = threads, "listening");
     let servers = (tokio::spawn(api.run()), tokio::spawn(ops.run()));
@@ -174,8 +184,16 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
         () = &mut stop => return stop_servers(&health, servers).await,
     };
     quotes.attach(running.quotes.clone());
+    let rpc = Arc::clone(&running.rpc);
+    let refresh = tokio::spawn(
+        blockhashes.refresh(settings.swap.blockhash_refresh(), move || {
+            let rpc = Arc::clone(&rpc);
+            async move { rpc.get_latest_blockhash().await }
+        }),
+    );
     health.serving(running.reader.clone());
     let result = running.run(&mut stop).await;
+    refresh.abort();
     health.drain();
     if result.is_ok() {
         tokio::time::sleep(settings.drain_delay()).await;
