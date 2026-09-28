@@ -6,6 +6,9 @@ use std::sync::Arc;
 use domain::Pubkey;
 use graph::{EdgeId, MintId, PoolNode, Topology};
 
+use crate::error::RouteError;
+use crate::feed::PoolFeed;
+use crate::reader::QuoteReader;
 use crate::session::SearchSession;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +83,33 @@ pub struct Search {
     /// paths tried and `None` does not mean there is no path: a later leg
     /// may refuse, or share writes with, every candidate kept.
     pub pruned: bool,
+}
+
+impl<F: PoolFeed> QuoteReader<F> {
+    /// Quotes `path`, found in a session of this reader, again from its
+    /// first input in a new session: the current state and Clock. A
+    /// session's `verify` checks state only; fees and activation also
+    /// follow the Clock.
+    pub fn requote(&self, path: &Path, max_arrays: u8) -> Result<Path, RouteError> {
+        let mut session = self.session()?;
+        let mut amount = path.legs.first().map_or(0, |leg| leg.amount_in);
+        let legs = path
+            .legs
+            .iter()
+            .map(|leg| {
+                let quote = session.quote(leg.edge, amount, max_arrays)?;
+                let requoted = Leg {
+                    amount_in: amount,
+                    amount_out: quote.out.amount_out,
+                    cross_stream: quote.cross_stream,
+                    ..*leg
+                };
+                amount = quote.out.amount_out;
+                Ok(requoted)
+            })
+            .collect::<Result<_, RouteError>>()?;
+        Ok(Path { legs })
+    }
 }
 
 impl SearchSession {

@@ -1,10 +1,13 @@
 //! Loads the ready universe `just snapshot-universe` captured and publishes
 //! it through the route decoder, as the pipeline threads do.
 
+// Each test and bench target includes this file and uses a part of it.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::io::BufReader;
 use std::num::NonZeroU8;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -59,16 +62,17 @@ struct Account {
 }
 
 #[derive(Clone)]
-pub struct Feed(ChainClock);
+pub struct Feed(Arc<Mutex<ChainClock>>);
 
 impl PoolFeed for Feed {
     fn clock(&self) -> Option<ChainClock> {
-        Some(self.0)
+        Some(*self.0.lock().expect("clock lock"))
     }
 }
 
 pub struct Universe {
     pub reader: QuoteReader<Feed>,
+    pub feed: Feed,
     pub topology: Arc<Topology>,
     pub slot: u64,
     pub skipped: Vec<(Pubkey, String)>,
@@ -89,8 +93,12 @@ impl AccountView for Accounts {
 /// `ROUTE_UNIVERSE` names another capture than the default one.
 #[must_use]
 pub fn load() -> Universe {
-    let path = std::env::var("ROUTE_UNIVERSE").unwrap_or_else(|_| DEFAULT.to_owned());
-    let file = std::fs::File::open(&path)
+    load_from(&std::env::var("ROUTE_UNIVERSE").unwrap_or_else(|_| DEFAULT.to_owned()))
+}
+
+#[must_use]
+pub fn load_from(path: &str) -> Universe {
+    let file = std::fs::File::open(path)
         .unwrap_or_else(|e| panic!("{path}: {e}; capture it with `just snapshot-universe`"));
     let snapshot: Snapshot =
         serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
@@ -136,8 +144,10 @@ pub fn load() -> Universe {
     for view in views {
         decoder.publish(&Arc::new(view));
     }
+    let feed = Feed(Arc::new(Mutex::new(clock)));
     Universe {
-        reader: decoding.reader(Feed(clock)),
+        reader: decoding.reader(feed.clone()),
+        feed,
         topology,
         slot: snapshot.clock.slot,
         skipped,
@@ -214,6 +224,12 @@ fn mints(view: &PoolView) -> Option<(Pubkey, Pubkey)> {
             .map(|(dep, _)| dep.pubkey)
     };
     Some((side(Side::A)?, side(Side::B)?))
+}
+
+impl Feed {
+    pub fn set(&self, clock: ChainClock) {
+        *self.0.lock().expect("clock lock") = clock;
+    }
 }
 
 impl Universe {
