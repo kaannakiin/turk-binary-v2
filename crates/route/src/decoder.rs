@@ -11,7 +11,7 @@ use market::{PoolView, Readiness, Reason, StoredAccount, ViewSink};
 use quoter::{AccountRef, DecodeError, VenueState};
 
 use crate::feed::PoolFeed;
-use crate::reader::{Decoded, QuoteReader, Table};
+use crate::reader::{Decoded, QuoteReader, Revision, Table};
 use crate::stats::{RouteStatsSnapshot, Stats};
 
 /// What was last decoded for one account. A fork rollback moves the order
@@ -186,6 +186,7 @@ impl Decoding {
         QuoteReader {
             feed,
             table: Arc::clone(&self.table),
+            topology: Arc::clone(&self.topology),
         }
     }
 
@@ -239,6 +240,7 @@ impl Decoder {
                     view: Arc::clone(view),
                     error: None,
                     panicked: false,
+                    revision: Revision::default(),
                 },
             );
             self.mark(&pool, false);
@@ -257,6 +259,7 @@ impl Decoder {
             error: entry.errors.values().next().cloned(),
             panicked,
             view: Arc::clone(view),
+            revision: Revision::default(),
         };
         if panicked {
             self.pools.remove(&pool);
