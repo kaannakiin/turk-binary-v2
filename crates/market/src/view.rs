@@ -50,6 +50,14 @@ impl PoolView {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoolCounts {
+    pub ready: usize,
+    /// Ready, or not ready for a reason that clears by itself.
+    pub eligible: usize,
+    pub total: usize,
+}
+
 type Cells = HashMap<Pubkey, Arc<ArcSwap<PoolView>>, ahash::RandomState>;
 
 /// The pool set changes only with the universe, so the map is swapped
@@ -109,6 +117,27 @@ impl MarketReader {
                 (view.pool, view.dex, view.readiness)
             })
             .collect()
+    }
+
+    #[must_use]
+    pub fn pool_counts(&self) -> PoolCounts {
+        let cells = self.snapshots.pools.load();
+        let mut counts = PoolCounts {
+            ready: 0,
+            eligible: 0,
+            total: cells.len(),
+        };
+        for cell in cells.values() {
+            match cell.load().readiness {
+                Readiness::Ready => {
+                    counts.ready += 1;
+                    counts.eligible += 1;
+                }
+                Readiness::NotReady(reason) if !reason.is_permanent() => counts.eligible += 1,
+                Readiness::NotReady(_) => {}
+            }
+        }
+        counts
     }
 
     #[must_use]

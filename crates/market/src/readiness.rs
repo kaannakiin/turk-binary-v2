@@ -26,6 +26,18 @@ pub enum Reason {
     Closed,
 }
 
+impl Reason {
+    /// Only a change to the pool's own accounts or the code clears these;
+    /// the rest clear as streams and seeds catch up.
+    #[must_use]
+    pub const fn is_permanent(self) -> bool {
+        matches!(
+            self,
+            Self::Unverified | Self::Invalid | Self::Unsubscribable | Self::Closed
+        )
+    }
+}
+
 pub(crate) struct Inputs<'a> {
     pub deps: &'a [Dependency],
     pub accounts: &'a [Option<StoredAccount>],
