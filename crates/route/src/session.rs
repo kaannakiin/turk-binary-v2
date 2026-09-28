@@ -17,7 +17,43 @@ pub struct SearchSession {
     pub(crate) topology: Arc<Topology>,
     table: Arc<Table>,
     clock: ChainClock,
-    pins: HashMap<PoolId, Arc<Decoded>, ahash::RandomState>,
+    pins: HashMap<PoolId, Pin, ahash::RandomState>,
+}
+
+type Pins = HashMap<PoolId, Pin, ahash::RandomState>;
+
+pub(crate) struct Pin {
+    decoded: Arc<Decoded>,
+    writes: Box<[Pubkey]>,
+}
+
+impl Pin {
+    fn new(decoded: Arc<Decoded>) -> Self {
+        let writes = decoded
+            .view
+            .accounts
+            .iter()
+            .filter(|(dep, _)| dep.role.swap_writes())
+            .map(|(dep, _)| dep.pubkey)
+            .collect();
+        Self { decoded, writes }
+    }
+}
+
+fn pin<'p>(
+    pins: &'p mut Pins,
+    topology: &Topology,
+    table: &Table,
+    id: PoolId,
+) -> Result<&'p Pin, RouteError> {
+    match pins.entry(id) {
+        Entry::Occupied(pinned) => Ok(pinned.into_mut()),
+        Entry::Vacant(slot) => {
+            let pool = topology.pool(id).pubkey;
+            let decoded = table.load(&pool).ok_or(RouteError::UnknownPool(pool))?;
+            Ok(slot.insert(Pin::new(decoded)))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +96,7 @@ impl SearchSession {
     #[must_use]
     pub fn active(&self, pool: PoolId) -> bool {
         match self.pins.get(&pool) {
-            Some(pinned) => pinned.usable().is_ok(),
+            Some(pinned) => pinned.decoded.usable().is_ok(),
             None => self.topology.activity().is_active(pool),
         }
     }
@@ -71,19 +107,31 @@ impl SearchSession {
         amount_in: u64,
         max_arrays: u8,
     ) -> Result<Quote, RouteError> {
-        let decoded = match self.pins.entry(edge.pool()) {
-            Entry::Occupied(pinned) => pinned.into_mut(),
-            Entry::Vacant(slot) => {
-                let pool = self.topology.pool(edge.pool()).pubkey;
-                let decoded = self
-                    .table
-                    .load(&pool)
-                    .ok_or(RouteError::UnknownPool(pool))?;
-                slot.insert(decoded)
-            }
-        };
+        let decoded = &pin(&mut self.pins, &self.topology, &self.table, edge.pool())?.decoded;
         decoded.usable()?;
         decoded.quote(&self.clock, amount_in, edge.a_to_b(), max_arrays)
+    }
+
+    pub(crate) fn pin(&mut self, pool: PoolId) -> Result<&Pin, RouteError> {
+        pin(&mut self.pins, &self.topology, &self.table, pool)
+    }
+
+    /// Whether a swap through `pool` writes an account a swap through one of
+    /// `others` writes: in one transaction the later swap would run on state
+    /// the quote did not see. A pool not pinned yet counts as sharing.
+    pub(crate) fn shares_writes(
+        &self,
+        pool: PoolId,
+        others: impl IntoIterator<Item = PoolId>,
+    ) -> bool {
+        let Some(pin) = self.pins.get(&pool) else {
+            return true;
+        };
+        others.into_iter().any(|other| {
+            self.pins
+                .get(&other)
+                .is_none_or(|o| o.writes.iter().any(|key| pin.writes.contains(key)))
+        })
     }
 
     #[must_use]
@@ -102,7 +150,7 @@ impl SearchSession {
                 return Verdict::Unusable { pool, reason };
             }
             match self.pins.get(&id) {
-                Some(pinned) if pinned.revision == now.revision => current.push(Pinned {
+                Some(pinned) if pinned.decoded.revision == now.revision => current.push(Pinned {
                     pool,
                     revision: now.revision,
                 }),
