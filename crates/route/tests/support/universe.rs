@@ -16,7 +16,7 @@ use market::{PoolView, Readiness, StoredAccount, ViewSink};
 use route::{Decoding, Goal, PoolFeed, Query, QuoteReader};
 use serde::Deserialize;
 
-pub const PATH: &str = concat!(
+const DEFAULT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../oracle/snapshots/universe.json.gz"
 );
@@ -86,10 +86,12 @@ impl AccountView for Accounts {
     }
 }
 
+/// `ROUTE_UNIVERSE` names another capture than the default one.
 #[must_use]
 pub fn load() -> Universe {
-    let file = std::fs::File::open(PATH)
-        .unwrap_or_else(|e| panic!("{PATH}: {e}; capture it with `just snapshot-universe`"));
+    let path = std::env::var("ROUTE_UNIVERSE").unwrap_or_else(|_| DEFAULT.to_owned());
+    let file = std::fs::File::open(&path)
+        .unwrap_or_else(|e| panic!("{path}: {e}; capture it with `just snapshot-universe`"));
     let snapshot: Snapshot =
         serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
             .expect("the snapshot parses");
