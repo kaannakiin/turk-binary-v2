@@ -164,7 +164,7 @@ Pools are decoded on their partition's pipeline thread, inside the engine's publ
 
 - **Incremental decode.** Per pool the decoder remembers, for every dependency, the update order, owner, lamports and data buffer it last decoded. Any difference counts as a change: a fork rollback moves the order back and RPC seeds share one write version, so "newer" would miss them. Only changed accounts go through `quoter::VenueState::apply`; a dependency that leaves the closure is applied as absent. The state is shared with what was published, so a publish that changes nothing copies nothing.
 - **Readiness.** Only `Ready` pools are decoded. `Closed` and `Invalid` pools drop their state.
-- **Output.** Each pool's state is published into a lock-free table together with the `PoolView` it was decoded from. `route::QuoteReader::quote` runs on the caller's thread and refuses when the pool is not ready, a dependency failed to decode, or no Clock is known yet. It reads one cell: the readiness, the view and the state decoded from it are published together, and before the market publishes the view, so a quote never pairs a view with state decoded from another. Time-dependent inputs (fees by epoch, activation times) come from the Clock sysvar at quote time, so a Clock update needs no re-decode.
+- **Output.** Each pool's state is published into a lock-free table together with the `PoolView` it was decoded from. `route::QuoteReader::quote` runs on the caller's thread and refuses when the pool is not ready, a dependency failed to decode, or no Clock is known yet. It reads one cell: the readiness, the view and the state decoded from it are published together, and before the market publishes the view, so a quote never pairs a view with state decoded from another. Each publish carries the pool's `Revision`, which moves only when the readiness, a decode error, a panic, the cross-stream flag or the decoded state changed; a republish that changes nothing keeps it. Time-dependent inputs (fees by epoch, activation times) come from the Clock sysvar at quote time, so a Clock update needs no re-decode.
 - **Activity.** Right after decoding a pool, the decoder writes the pool's activity bit in the [graph](#graph).
 - **Panics.** A venue panic while decoding or quoting is caught: the pool's state is discarded and rebuilt on its next change, and `panics` counts it.
 - **Decode time.** Every publish is timed into one lock-free histogram shared by all partitions; the `route` line reports its p50, p99 and max over the last stats interval.
@@ -176,14 +176,26 @@ Pools are decoded on their partition's pipeline thread, inside the engine's publ
 
 - **Layout.** Mints and pools get dense `u32` ids (`MintId`, `PoolId`), valid for one process. An edge is `PoolId << 1 | b_to_a`, so it needs no table of its own. Outgoing edges are stored per mint, grouped by the mint they lead to: every pool between the same two mints sits in one run, which a search quotes together. Incoming edges are grouped the same way, for closing cycles.
 - **Left out.** A pool without two known mints (a Pump bonding curve given by address) or with the same mint on both sides gets no edge. `graph built` counts them as `unplaced` and lists them at debug level.
-- **Activity.** One bit per pool: the pool is `Ready`, its DEX has a quoter venue, and every account decoded. The pool's pipeline thread writes the bit right after decoding it, so each bit has one writer and never runs ahead of the decoded state.
+- **Activity.** One bit per pool: the pool is `Ready`, its DEX has a quoter venue, and every account decoded. The pool's pipeline thread writes the bit right after decoding it, so each bit has one writer and never runs ahead of the decoded state. The bit is a pruning hint only: a search decides from the state it pinned (see [Read contract](#read-contract)), never from the bit.
 - **The bit is coarse on purpose.** An active pool can still refuse a quote: a transfer-hook mint, or one direction disabled. A search treats any refused quote as a dead edge for that search.
 - **Stats.** `graph built` at start (mints, pools, pairs, edges, unplaced, build time); each stats tick, `graph` (active pools, flips). `just bench graph` measures building the graph and scanning a hub on synthetic power-law universes of 10k and 100k pools.
 
 ### Search (next phase)
 
-Not implemented yet; the layout above is built for it.
+The read contract is in place; the algorithm is not implemented yet. The layout above is built for it.
 
+#### Read contract
+
+A search reads through a `route::SearchSession`, taken from `QuoteReader::session`. The topology holds no prices or search state; everything a search derives lives in its session.
+
+- **Clock.** The session takes the Clock once, so fees by epoch and activation times stay the same for every quote in one search.
+- **Pins.** The first quote through a pool pins its published state; every later quote of that pool in the session uses the pin, whatever the decoder publishes meanwhile. A new session sees the new state. Pools are pinned at different moments, so the pins are not one chain snapshot; the finalist check and simulation guard what is sent.
+- **Pruning.** `SearchSession::active` answers from the pin once a pool is pinned and from the activity bit before, so a bit flip mid-search does not contradict the quotes.
+- **Finalist check.** `SearchSession::verify` compares each pool of a candidate against the latest publish: `Unusable` when a pool can no longer be quoted, `Stale` when one changed its `Revision` since it was pinned (or was never quoted in the session) and must be quoted again, `Current` otherwise. `Current` covers state only; it does not quote the amount again. `PoolId`s stay inside the session; a verdict names pools by address and revision, so a later rebuilt topology cannot misread them.
+
+#### Algorithm
+
+- An exhaustive depth-first search comes first, as the reference the faster search is tested against.
 - A query `(in, out, amount)` runs a hop-layered Bellman-Ford over the graph with real integer exact-in quotes, keeping the best few labels per (depth, mint). Pool uniqueness and the account budget are enforced during the search, not afterwards. Depth is bounded by what the executor can land: 64 account locks per transaction, and the on-chain router's client takes up to 4 hops.
 - Arbitrage is the cycle case: when pool u→v changes, search forward from v and close at u; the amount comes from a golden-section search on integers.
 - The quoter is exact-in only, so no amount-aware search runs backwards from the output mint.

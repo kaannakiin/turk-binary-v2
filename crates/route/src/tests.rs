@@ -10,11 +10,11 @@ use bytes::Bytes;
 use dex::{Dependency, OwnerRule, Role, Scope, Side};
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 use domain::{ChainClock, DexKind, Pubkey, Slot, UpdateOrder, WriteVersion};
-use graph::{PoolSeed, Topology};
+use graph::{EdgeId, PoolSeed, Topology};
 use market::{PoolView, Readiness, Reason, StoredAccount, ViewSink};
 use quoter::{AccountRef, QuoteInput, VenueState};
 
-use crate::{Decoder, Decoding, PoolFeed, Quote, QuoteReader, RouteError};
+use crate::{Decoder, Decoding, PoolFeed, Quote, QuoteReader, RouteError, Verdict};
 
 #[derive(Clone)]
 struct FakeFeed;
@@ -123,6 +123,12 @@ fn view(recorded: &Recorded, readiness: Readiness, order: u64) -> PoolView {
     }
 }
 
+fn halve_base_vault(recorded: &mut Recorded) {
+    let vault = &mut recorded.accounts[1].2;
+    let amount = u64::from_le_bytes(vault[64..72].try_into().expect("amount"));
+    vault[64..72].copy_from_slice(&(amount / 2).to_le_bytes());
+}
+
 fn oracle(recorded: &Recorded, feed: &FakeFeed, amount_in: u64) -> u64 {
     let mut state = VenueState::new(DexKind::PumpAmm);
     for (role, owner, data) in &recorded.accounts {
@@ -167,7 +173,10 @@ struct Rig {
 }
 
 fn rig(pools: &[(Pubkey, DexKind)]) -> Rig {
-    let topology = topology_of(pools);
+    rig_on(topology_of(pools))
+}
+
+fn rig_on(topology: Arc<Topology>) -> Rig {
     let mut decoding = Decoding::new(Arc::clone(&topology));
     let feed = FakeFeed;
     Rig {
@@ -185,6 +194,17 @@ impl Rig {
 
     fn quote(&self, pool: &Pubkey) -> Result<Quote, RouteError> {
         self.reader.quote(pool, 1_000_000, false, 0)
+    }
+
+    /// The b-to-a edge, the direction [`oracle`] quotes.
+    fn edge(&self, pool: &Pubkey) -> EdgeId {
+        let id = self.topology.pool_id(pool).expect("placed pool");
+        self.topology
+            .out_pairs(self.topology.pool(id).mint_b)
+            .flat_map(|(_, edges)| edges)
+            .copied()
+            .find(|edge| edge.pool() == id)
+            .expect("the pool leaves its mint b")
     }
 
     fn active(&self, pool: &Pubkey) -> bool {
@@ -211,9 +231,7 @@ fn an_account_moved_back_by_a_rollback_is_decoded_again() {
     rig.publish(view(&recorded, Readiness::Ready, 20));
     rig.quote(&recorded.pool).unwrap();
 
-    let vault = &mut recorded.accounts[1].2;
-    let amount = u64::from_le_bytes(vault[64..72].try_into().expect("amount"));
-    vault[64..72].copy_from_slice(&(amount / 2).to_le_bytes());
+    halve_base_vault(&mut recorded);
     rig.publish(view(&recorded, Readiness::Ready, 19));
     let expected = oracle(&recorded, &rig.feed, 1_000_000);
     assert_eq!(rig.quote(&recorded.pool).unwrap().out.amount_out, expected);
@@ -262,4 +280,64 @@ fn a_ready_pool_that_cannot_be_quoted_stays_inactive() {
     ));
     assert!(!rig.active(&broken.pool));
     assert!(!rig.active(&unsupported.pool));
+}
+
+#[test]
+fn a_session_keeps_the_state_it_pinned_while_a_new_session_sees_the_update() {
+    let mut recorded = recorded();
+    let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);
+    let edge = rig.edge(&recorded.pool);
+    rig.publish(view(&recorded, Readiness::Ready, 50));
+    let before = oracle(&recorded, &rig.feed, 1_000_000);
+    let mut old = rig.reader.session().unwrap();
+    assert_eq!(
+        old.quote(edge, 1_000_000, 0).unwrap().out.amount_out,
+        before
+    );
+
+    halve_base_vault(&mut recorded);
+    rig.publish(view(&recorded, Readiness::Ready, 51));
+    let after = oracle(&recorded, &rig.feed, 1_000_000);
+    assert_ne!(before, after);
+    let mut new = rig.reader.session().unwrap();
+
+    assert_eq!(
+        old.quote(edge, 1_000_000, 0).unwrap().out.amount_out,
+        before
+    );
+    assert_eq!(new.quote(edge, 1_000_000, 0).unwrap().out.amount_out, after);
+    assert!(matches!(old.verify([edge.pool()]), Verdict::Stale(pools) if pools == [recorded.pool]));
+    assert!(matches!(new.verify([edge.pool()]), Verdict::Current(_)));
+}
+
+#[test]
+fn an_unchanged_republish_keeps_a_pinned_pool_current() {
+    let recorded = recorded();
+    let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);
+    let edge = rig.edge(&recorded.pool);
+    let unchanged = view(&recorded, Readiness::Ready, 60);
+    rig.publish(unchanged.clone());
+    let mut session = rig.reader.session().unwrap();
+    session.quote(edge, 1_000_000, 0).unwrap();
+
+    rig.publish(unchanged);
+    assert!(matches!(session.verify([edge.pool()]), Verdict::Current(_)));
+}
+
+#[test]
+fn a_pool_unusable_after_pinning_stays_consistent_in_its_session_but_fails_the_finalist_check() {
+    let recorded = recorded();
+    let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);
+    let edge = rig.edge(&recorded.pool);
+    rig.publish(view(&recorded, Readiness::Ready, 70));
+    let mut session = rig.reader.session().unwrap();
+    session.quote(edge, 1_000_000, 0).unwrap();
+
+    rig.publish(view(&recorded, Readiness::NotReady(Reason::Syncing), 70));
+    assert!(!rig.active(&recorded.pool));
+    assert!(session.active(edge.pool()));
+    assert!(matches!(
+        session.verify([edge.pool()]),
+        Verdict::Unusable { pool, reason: RouteError::NotReady(Reason::Syncing) } if pool == recorded.pool
+    ));
 }

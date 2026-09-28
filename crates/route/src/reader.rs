@@ -3,12 +3,18 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use domain::{DexKind, Pubkey};
+use domain::{ChainClock, DexKind, Pubkey};
+use graph::Topology;
 use market::{PoolView, Readiness};
 use quoter::{DecodeError, QuoteInput, QuoteOut, VenueState};
 
 use crate::error::RouteError;
 use crate::feed::PoolFeed;
+
+/// How many times a pool's published content has changed. A republish that
+/// changes nothing keeps it, so a pinned pool is not reported stale for it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Revision(u64);
 
 #[derive(Debug, Clone)]
 pub(crate) struct Decoded {
@@ -18,6 +24,55 @@ pub(crate) struct Decoded {
     pub state: Arc<VenueState>,
     pub error: Option<DecodeError>,
     pub panicked: bool,
+    /// Assigned by [`Table::publish`].
+    pub revision: Revision,
+}
+
+impl Decoded {
+    /// The decoder only replaces `state` when an account was applied, so an
+    /// unchanged pointer means no input changed.
+    fn same_content(&self, other: &Self) -> bool {
+        self.readiness == other.readiness
+            && self.panicked == other.panicked
+            && self.error == other.error
+            && self.view.cross_stream == other.view.cross_stream
+            && Arc::ptr_eq(&self.state, &other.state)
+    }
+
+    pub(crate) fn usable(&self) -> Result<(), RouteError> {
+        if let Readiness::NotReady(reason) = self.readiness {
+            return Err(RouteError::NotReady(reason));
+        }
+        if self.panicked {
+            return Err(RouteError::DecodePanicked);
+        }
+        if let Some(error) = &self.error {
+            return Err(RouteError::Decode(error.clone()));
+        }
+        Ok(())
+    }
+
+    /// Callers check [`Self::usable`] first.
+    pub(crate) fn quote(
+        &self,
+        clock: &ChainClock,
+        amount_in: u64,
+        a_to_b: bool,
+        max_arrays: u8,
+    ) -> Result<Quote, RouteError> {
+        let input = QuoteInput {
+            amount_in,
+            a_to_b,
+            clock,
+            max_arrays,
+        };
+        let out = catch_unwind(AssertUnwindSafe(|| self.state.quote(&input)))
+            .map_err(|_| RouteError::QuotePanicked)??;
+        Ok(Quote {
+            out,
+            cross_stream: self.view.cross_stream,
+        })
+    }
 }
 
 type Cells = HashMap<Pubkey, Arc<ArcSwap<Decoded>>, ahash::RandomState>;
@@ -30,11 +85,20 @@ pub(crate) struct Table {
 }
 
 impl Table {
-    pub(crate) fn publish(&self, pool: Pubkey, decoded: Decoded) {
+    /// Each pool has one writer, its partition thread, so reading the
+    /// previous revision and storing the next cannot race.
+    pub(crate) fn publish(&self, pool: Pubkey, mut decoded: Decoded) {
         if let Some(cell) = self.cells.load().get(&pool) {
+            let previous = cell.load();
+            decoded.revision = if previous.same_content(&decoded) {
+                previous.revision
+            } else {
+                Revision(previous.revision.0.wrapping_add(1))
+            };
             cell.store(Arc::new(decoded));
             return;
         }
+        decoded.revision = Revision::default();
         let cell = Arc::new(ArcSwap::from_pointee(decoded));
         self.cells.rcu(|cells| {
             let mut cells = Cells::clone(cells);
@@ -51,7 +115,7 @@ impl Table {
             .collect()
     }
 
-    fn load(&self, pool: &Pubkey) -> Option<Arc<Decoded>> {
+    pub(crate) fn load(&self, pool: &Pubkey) -> Option<Arc<Decoded>> {
         self.cells.load().get(pool).map(|cell| cell.load_full())
     }
 }
@@ -72,6 +136,7 @@ pub struct Quote {
 pub struct QuoteReader<F> {
     pub(crate) feed: F,
     pub(crate) table: Arc<Table>,
+    pub(crate) topology: Arc<Topology>,
 }
 
 impl<F: PoolFeed> QuoteReader<F> {
@@ -86,27 +151,8 @@ impl<F: PoolFeed> QuoteReader<F> {
             .table
             .load(pool)
             .ok_or(RouteError::UnknownPool(*pool))?;
-        if let Readiness::NotReady(reason) = decoded.readiness {
-            return Err(RouteError::NotReady(reason));
-        }
-        if decoded.panicked {
-            return Err(RouteError::DecodePanicked);
-        }
-        if let Some(error) = &decoded.error {
-            return Err(RouteError::Decode(error.clone()));
-        }
+        decoded.usable()?;
         let clock = self.feed.clock().ok_or(RouteError::NoClock)?;
-        let input = QuoteInput {
-            amount_in,
-            a_to_b,
-            clock: &clock,
-            max_arrays,
-        };
-        let out = catch_unwind(AssertUnwindSafe(|| decoded.state.quote(&input)))
-            .map_err(|_| RouteError::QuotePanicked)??;
-        Ok(Quote {
-            out,
-            cross_stream: decoded.view.cross_stream,
-        })
+        decoded.quote(&clock, amount_in, a_to_b, max_arrays)
     }
 }
