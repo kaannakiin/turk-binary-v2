@@ -17,7 +17,7 @@ use quoter::{AccountRef, QuoteInput, VenueState};
 
 use crate::{
     Decoder, Decoding, Everything, Filter, Goal, PoolFeed, Query, Quote, QuoteReader, RouteError,
-    Verdict,
+    Search, Verdict,
 };
 
 #[derive(Clone)]
@@ -734,4 +734,54 @@ fn pruning_keeps_the_runner_up_when_the_best_pool_is_taken() {
         .best
         .map(|path| path.legs.iter().map(|leg| leg.pool).collect::<Vec<_>>());
     assert_eq!(pools, Some(vec![deep.pool, shallow.pool]));
+}
+
+#[test]
+fn pruning_that_drops_the_only_way_on_says_so() {
+    let [a, b, c] = [(); 3].map(|()| Pubkey::new_unique());
+    let mut p1 = recorded();
+    scale_vault(&mut p1, BASE_VAULT, 3, 1);
+    let mut p2 = recorded();
+    scale_vault(&mut p2, BASE_VAULT, 2, 1);
+    let p3 = recorded();
+    let q = recorded();
+    let pays = |pool: &Recorded| fresh_quote(pool, &FakeFeed, AMOUNT, false).expect("quotes");
+    assert!(pays(&p1) > pays(&p2) && pays(&p2) > pays(&p3));
+
+    let mut pools = [
+        placed(&p1, b, a),
+        placed(&p2, b, a),
+        placed(&p3, b, a),
+        placed(&q, c, b),
+    ];
+    let written_by_q = pools[3].view.accounts[BASE_VAULT].0.pubkey;
+    pools[0].view.accounts[BASE_VAULT].0.pubkey = written_by_q;
+    pools[1].view.accounts[BASE_VAULT].0.pubkey = written_by_q;
+    let rig = universe(&pools);
+    let id = |mint: &Pubkey| rig.topology.mint_id(mint).expect("placed mint");
+    let search = |per_pair| {
+        rig.reader.session().unwrap().search(
+            &Query {
+                per_pair,
+                ..query(id(&a), Goal::To(id(&c)), 2, 10_000)
+            },
+            &Everything,
+        )
+    };
+    let pools_of = |found: &Search| {
+        found
+            .best
+            .as_ref()
+            .map(|path| path.legs.iter().map(|leg| leg.pool).collect::<Vec<_>>())
+    };
+
+    let exhaustive = search(None);
+    assert_eq!(pools_of(&exhaustive), Some(vec![p3.pool, q.pool]));
+    assert!(!exhaustive.pruned);
+
+    let pruned = search(NonZeroU8::new(2));
+    assert_eq!(
+        (pools_of(&pruned), pruned.exhausted, pruned.pruned),
+        (None, false, true)
+    );
 }
