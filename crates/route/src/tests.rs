@@ -2,6 +2,7 @@
 //! AMM pool; a fresh `VenueState` fed the same bytes is the oracle for what
 //! the decoder's incremental decode must reach.
 
+use std::num::NonZeroU8;
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -495,6 +496,7 @@ fn query(from: MintId, goal: Goal, max_hops: u8, max_quotes: u32) -> Query {
         max_hops,
         max_arrays: 0,
         max_quotes,
+        per_pair: None,
     }
 }
 
@@ -626,17 +628,25 @@ fn search_matches_the_exhaustive_reference() {
             Some(*mint) != avoid
         });
         assert!(expected.is_some(), "{goal:?} avoiding {avoid:?} has a path");
-        let mut session = rig.reader.session().unwrap();
-        let found = session.search(
-            &query(id(&x), goal, 3, 10_000),
-            &Avoid(avoid.map(|mint| id(&mint))),
-        );
-        assert!(!found.exhausted);
-        let found = found.best.map(|path| {
-            let pools = path.legs.iter().map(|leg| leg.pool).collect::<Vec<_>>();
-            (pools, path.amount_out())
-        });
-        assert_eq!(found, expected, "{goal:?} avoiding {avoid:?}");
+        for per_pair in [None, NonZeroU8::new(3)] {
+            let mut session = rig.reader.session().unwrap();
+            let found = session.search(
+                &Query {
+                    per_pair,
+                    ..query(id(&x), goal, 3, 10_000)
+                },
+                &Avoid(avoid.map(|mint| id(&mint))),
+            );
+            assert!(!found.exhausted);
+            let found = found.best.map(|path| {
+                let pools = path.legs.iter().map(|leg| leg.pool).collect::<Vec<_>>();
+                (pools, path.amount_out())
+            });
+            assert_eq!(
+                found, expected,
+                "{goal:?} avoiding {avoid:?}, {per_pair:?} per pair"
+            );
+        }
         multi_hop |= expected.is_some_and(|(pools, _)| pools.len() > 1);
     }
     assert!(multi_hop);
@@ -699,4 +709,29 @@ fn a_spent_budget_is_reported_apart_from_no_route() {
 
     let unreachable = session.search(&query(id(&x), Goal::To(id(&w)), 3, 10_000), &Everything);
     assert_eq!((unreachable.best, unreachable.exhausted), (None, false));
+}
+
+#[test]
+fn pruning_keeps_the_runner_up_when_the_best_pool_is_taken() {
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let shallow = recorded();
+    let mut deep = recorded();
+    scale_vault(&mut deep, BASE_VAULT, 4, 1);
+    scale_vault(&mut deep, QUOTE_VAULT, 4, 1);
+    let rig = universe(&[placed(&shallow, y, x), placed(&deep, y, x)]);
+    let there = |pool: &Recorded| fresh_quote(pool, &rig.feed, AMOUNT, false).expect("quotes");
+    assert!(there(&deep) > there(&shallow));
+
+    let from = rig.topology.mint_id(&x).expect("placed mint");
+    let found = rig.reader.session().unwrap().search(
+        &Query {
+            per_pair: NonZeroU8::new(1),
+            ..query(from, Goal::Cycle, 2, 10_000)
+        },
+        &Everything,
+    );
+    let pools = found
+        .best
+        .map(|path| path.legs.iter().map(|leg| leg.pool).collect::<Vec<_>>());
+    assert_eq!(pools, Some(vec![deep.pool, shallow.pool]));
 }

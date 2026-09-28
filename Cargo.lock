@@ -4868,6 +4868,7 @@ dependencies = [
  "arc-swap",
  "base64 0.22.1",
  "bytes",
+ "criterion",
  "dex",
  "domain",
  "flate2",
