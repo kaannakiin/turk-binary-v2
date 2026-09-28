@@ -106,6 +106,9 @@ deny = [
     { crate = "solana-rpc-client", wrappers = ["rpc"] },
     { crate = "yellowstone-grpc-client", wrappers = ["grpc"] },
     { crate = "yellowstone-grpc-proto", wrappers = ["grpc", "yellowstone-grpc-client"] },
+    # HTTP serving only through `server`; `tonic` and `reqwest` use them internally.
+    { crate = "axum", wrappers = ["server", "tonic"] },
+    { crate = "tower-http", wrappers = ["server", "reqwest"] },
     # DEX SDKs only through `quoter`.
     { crate = "raydium_amm", wrappers = ["quoter"] },
     { crate = "raydium-cp-swap", wrappers = ["quoter"] },

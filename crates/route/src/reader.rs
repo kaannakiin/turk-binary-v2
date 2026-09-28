@@ -140,6 +140,11 @@ pub struct QuoteReader<F> {
 }
 
 impl<F: PoolFeed> QuoteReader<F> {
+    #[must_use]
+    pub fn clock_advanced_at(&self) -> Option<std::time::Instant> {
+        self.feed.clock_advanced_at()
+    }
+
     pub fn quote(
         &self,
         pool: &Pubkey,

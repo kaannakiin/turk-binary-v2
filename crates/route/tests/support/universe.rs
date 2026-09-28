@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::io::BufReader;
 use std::num::NonZeroU8;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -62,11 +63,18 @@ struct Account {
 }
 
 #[derive(Clone)]
-pub struct Feed(Arc<Mutex<ChainClock>>);
+pub struct Feed {
+    clock: Arc<Mutex<ChainClock>>,
+    advanced_at: Arc<Mutex<Instant>>,
+}
 
 impl PoolFeed for Feed {
     fn clock(&self) -> Option<ChainClock> {
-        Some(*self.0.lock().expect("clock lock"))
+        Some(*self.clock.lock().expect("clock lock"))
+    }
+
+    fn clock_advanced_at(&self) -> Option<Instant> {
+        Some(*self.advanced_at.lock().expect("clock lock"))
     }
 }
 
@@ -144,7 +152,10 @@ pub fn load_from(path: &str) -> Universe {
     for view in views {
         decoder.publish(&Arc::new(view));
     }
-    let feed = Feed(Arc::new(Mutex::new(clock)));
+    let feed = Feed {
+        clock: Arc::new(Mutex::new(clock)),
+        advanced_at: Arc::new(Mutex::new(Instant::now())),
+    };
     Universe {
         reader: decoding.reader(feed.clone()),
         feed,
@@ -228,7 +239,12 @@ fn mints(view: &PoolView) -> Option<(Pubkey, Pubkey)> {
 
 impl Feed {
     pub fn set(&self, clock: ChainClock) {
-        *self.0.lock().expect("clock lock") = clock;
+        *self.clock.lock().expect("clock lock") = clock;
+    }
+
+    /// When the Clock last moved, as the market would have noted it.
+    pub fn set_advanced_at(&self, at: Instant) {
+        *self.advanced_at.lock().expect("clock lock") = at;
     }
 }
 

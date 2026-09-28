@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use dex::Dependency;
@@ -50,6 +51,14 @@ impl PoolView {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoolCounts {
+    pub ready: usize,
+    /// Ready, or not ready for a reason that clears by itself.
+    pub eligible: usize,
+    pub total: usize,
+}
+
 type Cells = HashMap<Pubkey, Arc<ArcSwap<PoolView>>, ahash::RandomState>;
 
 /// The pool set changes only with the universe, so the map is swapped
@@ -57,7 +66,13 @@ type Cells = HashMap<Pubkey, Arc<ArcSwap<PoolView>>, ahash::RandomState>;
 #[derive(Default)]
 pub(crate) struct Snapshots {
     pools: ArcSwap<Cells>,
-    clock: ArcSwapOption<ChainClock>,
+    clock: ArcSwapOption<ClockCell>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClockCell {
+    clock: ChainClock,
+    advanced_at: Instant,
 }
 
 impl Snapshots {
@@ -77,14 +92,18 @@ impl Snapshots {
 
     /// Every partition writes its own stream's Clock into this one cell, and a
     /// rolled-back fork moves one partition's Clock back; only a newer slot
-    /// replaces the cell.
+    /// replaces the cell, and only it moves `advanced_at`.
     pub(crate) fn set_clock(&self, clock: Option<ChainClock>) {
         let Some(clock) = clock else {
             return;
         };
+        let now = Instant::now();
         self.clock.rcu(|current| match current {
-            Some(current) if current.slot >= clock.slot => Some(Arc::clone(current)),
-            _ => Some(Arc::new(clock)),
+            Some(current) if current.clock.slot >= clock.slot => Some(Arc::clone(current)),
+            _ => Some(Arc::new(ClockCell {
+                clock,
+                advanced_at: now,
+            })),
         });
     }
 }
@@ -112,6 +131,27 @@ impl MarketReader {
     }
 
     #[must_use]
+    pub fn pool_counts(&self) -> PoolCounts {
+        let cells = self.snapshots.pools.load();
+        let mut counts = PoolCounts {
+            ready: 0,
+            eligible: 0,
+            total: cells.len(),
+        };
+        for cell in cells.values() {
+            match cell.load().readiness {
+                Readiness::Ready => {
+                    counts.ready += 1;
+                    counts.eligible += 1;
+                }
+                Readiness::NotReady(reason) if !reason.is_permanent() => counts.eligible += 1,
+                Readiness::NotReady(_) => {}
+            }
+        }
+        counts
+    }
+
+    #[must_use]
     pub fn readiness(&self, pool: &Pubkey) -> Option<Readiness> {
         self.pool_view(pool).map(|view| view.readiness)
     }
@@ -129,7 +169,23 @@ impl MarketReader {
     /// the chain's notion of time.
     #[must_use]
     pub fn clock(&self) -> Option<ChainClock> {
-        self.snapshots.clock.load().as_deref().copied()
+        self.snapshots
+            .clock
+            .load()
+            .as_deref()
+            .map(|cell| cell.clock)
+    }
+
+    /// Host time when the Clock's slot last moved. The Clock rides every
+    /// stream, so a feed whose Clock stopped has stopped as a whole, however
+    /// ready its pools still look.
+    #[must_use]
+    pub fn clock_advanced_at(&self) -> Option<Instant> {
+        self.snapshots
+            .clock
+            .load()
+            .as_deref()
+            .map(|cell| cell.advanced_at)
     }
 
     #[must_use]
@@ -155,11 +211,18 @@ mod tests {
     }
 
     #[test]
-    fn a_partition_behind_another_does_not_move_the_clock_back() {
+    fn a_partition_behind_another_does_not_move_the_clock_or_its_freshness_back() {
         let snapshots = Snapshots::default();
         snapshots.set_clock(Some(clock(200)));
+        let advanced = snapshots
+            .clock
+            .load()
+            .as_deref()
+            .map(|cell| cell.advanced_at);
         snapshots.set_clock(Some(clock(199)));
         snapshots.set_clock(None);
-        assert_eq!(snapshots.clock.load().as_deref().copied(), Some(clock(200)));
+        let cell = snapshots.clock.load().as_deref().copied();
+        assert_eq!(cell.map(|cell| cell.clock), Some(clock(200)));
+        assert_eq!(cell.map(|cell| cell.advanced_at), advanced);
     }
 }

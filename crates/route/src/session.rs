@@ -99,6 +99,11 @@ impl SearchSession {
         &self.topology
     }
 
+    #[must_use]
+    pub fn clock(&self) -> &ChainClock {
+        &self.clock
+    }
+
     /// A pruning hint. Once a pool is pinned its pinned state answers, so a
     /// flip of the activity bit mid-search does not contradict the quotes.
     #[must_use]

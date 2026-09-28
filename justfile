@@ -32,6 +32,10 @@ ci: lint deny
 watch config="config.toml":
     cargo run -p turk-binary -- watch --config {{config}}
 
+# `watch` plus POST /route on `server.api_addr` and /health, /ready on `server.ops_addr` (read-only).
+serve config="config.toml":
+    cargo run -p turk-binary -- serve --config {{config}}
+
 # Read-only checks of what the gRPC provider supports, e.g. `just probe slots,clock`.
 probe kinds="" config="config.toml":
     cargo run -p turk-binary -- probe --config {{config}} {{kinds}}

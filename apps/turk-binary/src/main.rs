@@ -21,6 +21,11 @@ enum Command {
         #[arg(long, default_value = "config.toml")]
         config: PathBuf,
     },
+    /// `watch` plus the quote API and `/health`, `/ready` (read-only, builds no transactions).
+    Serve {
+        #[arg(long, default_value = "config.toml")]
+        config: PathBuf,
+    },
     /// Check what the gRPC provider supports (read-only, sends no transactions).
     Probe {
         #[arg(long, default_value = "config.toml")]
@@ -30,25 +35,7 @@ enum Command {
         kinds: Vec<grpc::ProbeKind>,
     },
     /// Measure how a transaction's account writes and its status arrive on one stream (read-only).
-    TxnProbe {
-        #[arg(long, default_value = "config.toml")]
-        config: PathBuf,
-        #[arg(long, default_value_t = 30)]
-        minutes: u64,
-        #[arg(long, default_value_t = 20)]
-        per_dex: usize,
-        #[arg(long, default_value_t = 2_000)]
-        orphan_after_ms: u64,
-        /// Only pools of this DEX, e.g. `raydium_amm_v4`.
-        #[arg(long)]
-        only: Option<String>,
-        /// Write every received message's metadata as TSV.
-        #[arg(long)]
-        out: Option<PathBuf>,
-        /// Write a replay fixture: the pool stream's account bytes, statuses and full transactions.
-        #[arg(long)]
-        record: Option<PathBuf>,
-    },
+    TxnProbe(run::TxnProbeArgs),
     /// Write ready pools' account views and the Clock, for the `LiteSVM` oracle (read-only).
     Snapshot(run::SnapshotArgs),
 }
@@ -75,26 +62,9 @@ fn main() -> anyhow::Result<()> {
 async fn run(command: Command) -> anyhow::Result<()> {
     match command {
         Command::Watch { config } => run::watch(&config).await,
+        Command::Serve { config } => run::serve(&config).await,
         Command::Probe { config, kinds } => run::probe(&config, &kinds).await,
         Command::Snapshot(args) => run::snapshot(&args).await,
-        Command::TxnProbe {
-            config,
-            minutes,
-            per_dex,
-            orphan_after_ms,
-            only,
-            out,
-            record,
-        } => {
-            let args = run::TxnProbeArgs {
-                minutes,
-                per_dex,
-                orphan_after_ms,
-                only: only.as_deref(),
-                out: out.as_deref(),
-                record: record.as_deref(),
-            };
-            run::txn_probe(&config, args).await
-        }
+        Command::TxnProbe(args) => run::txn_probe(&args).await,
     }
 }

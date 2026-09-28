@@ -59,6 +59,28 @@ probe_amount = 1000000    # watch quotes this raw amount both ways through every
 
 [threads]
 pipeline = 0              # threads that read the gRPC streams, apply writes and decode pools; 0 = automatic
+search = 0                # serve only: route search threads; 0 = a quarter of the cores
+
+[server]                      # serve only
+api_addr = "127.0.0.1:8080"   # POST /route
+ops_addr = "127.0.0.1:9100"   # /health and /ready
+drain_delay_ms = 0            # /ready answers 503 this long before the listeners close
+read_timeout_ms = 5000        # headers (and the API body) must arrive within this
+shutdown_timeout_ms = 5000
+
+[server.ready]
+startup_percent = 90          # share of eligible pools ready before /ready first turns 200
+floor_percent = 50            # once ready, /ready fails again only below this share
+max_clock_stall_ms = 10000    # /ready fails once the Clock's slot has not moved for this long
+
+[server.quote]
+default_max_hops = 3
+max_hops = 4
+max_quotes = 100000           # work budget of one search, not a deadline
+per_pair = 2                  # pools kept per pair while searching; 0 = all
+max_arrays = 8
+timeout_ms = 2000
+max_queued = 32               # searches waiting for a thread before OVERLOADED
 
 [grpc.transport]
 http2_keep_alive_interval_ms = 15000

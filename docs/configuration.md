@@ -131,13 +131,46 @@ After a reconnect, only that stream's accounts are read again over RPC (see [arc
 
 ## `[threads]`
 
-Thread pools, named after what they do. The route search gets its own key when it lands.
+Thread pools, named after what they do.
 
 | Key        | Default | Meaning                                                                                                                                                                                                                                                                                                                           |
 | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `search`   | `0`     | `serve` only: route search threads (`search-{i}`), one search each. `0` takes a quarter of the cores, at least one.                                                                                                                                                                                                               |
 | `pipeline` | `0`     | Pipeline threads (`pipe-p{i}`), one per partition. Each reads its own gRPC streams, applies their writes and decodes its pools. `0` picks the largest divisor of `grpc.streams` up to half the cores; otherwise 1 to `grpc.streams`. Shard `i` feeds partition `i % pipeline`, so a divisor gives every partition as many shards. |
 
 Besides these, `watch` runs a fixed two-thread runtime (`app`) for startup, the stats line and, in `blocks_meta` mode, the slot feed. `watch` logs the resolved counts at start (`threads`).
+
+## `[server]`
+
+Used by `serve` only (see [architecture.md](architecture.md#http-api)). Both addresses are bound before the engine starts, so a taken port fails at once.
+
+| Key                   | Default            | Meaning                                                                                                                                                       |
+| --------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api_addr`            | `"127.0.0.1:8080"` | Address of `POST /route`.                                                                                                                                     |
+| `ops_addr`            | `"127.0.0.1:9100"` | Address of `/health` and `/ready`. `0.0.0.0:9100` exposes them beyond the host.                                                                               |
+| `drain_delay_ms`      | `0`                | After ctrl-c or `SIGTERM`, how long `/ready` answers 503 while the API keeps serving, so a load balancer moves traffic first. Skipped when the engine failed. |
+| `read_timeout_ms`     | `5000`             | Request headers, and on the API the body, must arrive within this; a client that stops sending is cut off.                                                    |
+| `shutdown_timeout_ms` | `5000`             | After the drain, one deadline for requests in flight and running searches; connections still open then are aborted. Keep it above `quote.timeout_ms`.         |
+
+### `[server.ready]`
+
+| Key                  | Default | Meaning                                                                                                                                            |
+| -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startup_percent`    | `90`    | `/ready` first turns 200 once this share of the eligible pools is ready. Eligible: ready, or not ready for a reason that clears by itself.         |
+| `floor_percent`      | `50`    | Once ready, `/ready` fails again only below this share. One pool or one stream shard dropping out leaves the service ready.                        |
+| `max_clock_stall_ms` | `10000` | `/ready` fails, and `POST /route` answers `STALE_DATA`, when the Clock sysvar's slot has not moved for longer than this: the streams have stalled. |
+
+### `[server.quote]`
+
+| Key                | Default  | Meaning                                                                                                                                                  |
+| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `default_max_hops` | `3`      | Pools a route may pass when the request gives no `maxHops`.                                                                                              |
+| `max_hops`         | `4`      | Largest `maxHops` a request may ask for.                                                                                                                 |
+| `max_quotes`       | `100000` | Quote budget of one search, all its widening attempts together. A work budget, not a deadline: filtering, pinning and ranking are not counted.           |
+| `per_pair`         | `2`      | Pools kept per pair while searching (see [architecture.md](architecture.md#algorithm)); `0` keeps every one.                                             |
+| `max_arrays`       | `8`      | Tick or bin arrays one quote may cross. The transaction that carries a route has to pass the same arrays ([dexes.md](dexes.md)).                         |
+| `timeout_ms`       | `2000`   | How long a request waits for its search, queue time included, before it answers `TIMEOUT`. A search already running still finishes and keeps its thread. |
+| `max_queued`       | `32`     | Searches that may wait for a thread. Past `[threads] search` running plus this many waiting, a request answers `OVERLOADED` at once.                     |
 
 ## Top level
 

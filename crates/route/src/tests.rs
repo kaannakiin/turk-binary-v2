@@ -33,6 +33,10 @@ impl PoolFeed for FakeFeed {
             unix_timestamp: 1_785_840_058,
         })
     }
+
+    fn clock_advanced_at(&self) -> Option<std::time::Instant> {
+        Some(std::time::Instant::now())
+    }
 }
 
 struct Recorded {

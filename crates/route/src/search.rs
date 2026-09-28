@@ -93,13 +93,19 @@ impl<F: PoolFeed> QuoteReader<F> {
     /// session's `verify` checks state only; fees and activation also
     /// follow the Clock.
     pub fn requote(&self, path: &Path, max_arrays: u8) -> Result<Path, RouteError> {
-        let mut session = self.session()?;
+        self.session()?.requote(path, max_arrays)
+    }
+}
+
+impl SearchSession {
+    /// Quotes `path` again from its first input at this session's state and Clock.
+    pub fn requote(&mut self, path: &Path, max_arrays: u8) -> Result<Path, RouteError> {
         let mut amount = path.legs.first().map_or(0, |leg| leg.amount_in);
         let legs = path
             .legs
             .iter()
             .map(|leg| {
-                let quote = session.quote(leg.edge, amount, max_arrays)?;
+                let quote = self.quote(leg.edge, amount, max_arrays)?;
                 let requoted = Leg {
                     amount_in: amount,
                     amount_out: quote.out.amount_out,
@@ -112,9 +118,7 @@ impl<F: PoolFeed> QuoteReader<F> {
             .collect::<Result<_, RouteError>>()?;
         Ok(Path { legs })
     }
-}
 
-impl SearchSession {
     /// A cycle may come back at a loss; whether it pays is the caller's call.
     pub fn search(&mut self, query: &Query, filter: &impl Filter) -> Search {
         let topology = Arc::clone(&self.topology);
