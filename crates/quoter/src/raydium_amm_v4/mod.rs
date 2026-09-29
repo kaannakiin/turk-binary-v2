@@ -1,32 +1,42 @@
 use dex::{Role, Side};
-use domain::Pubkey;
+use domain::chain::TOKEN_PROGRAM;
+use domain::{DexKind, Pubkey, SwapWindow, TokenSide, WindowAccount};
 use raydium_amm::math::{Calculator, CheckedCeilDiv, SwapDirection, U128};
 use raydium_amm::state::{AmmInfo, AmmStatus};
 
 use crate::account::AccountRef;
-use crate::error::{DecodeError, QuoteError};
+use crate::error::{DecodeError, QuoteError, WindowError};
 use crate::state::{QuoteInput, QuoteOut};
-use crate::token::token_amount;
+use crate::token::token_account;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Vault {
     mint: Pubkey,
     amount: u64,
+    frozen: bool,
 }
+
+// src: raydium-io/raydium-amm@d26944bfb76fb5fa8f91e5d440c2050ed358ef81
+// program/src/processor.rs (AUTHORITY_AMM); the oracle checks the PDA independently.
+const AUTHORITY: Pubkey = Pubkey::from_str_const("5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1");
 
 /// Side A is the coin vault, side B the pc vault. The program reads no mint
 /// and no Clock beyond `pool_open_time`, and has no Token-2022 path.
 #[derive(Clone, Default)]
 pub(crate) struct AmmV4 {
+    address: Option<Pubkey>,
     amm: Option<AmmInfo>,
     vaults: [Option<Vault>; 2],
+    mints: [bool; 2],
 }
 
 impl std::fmt::Debug for AmmV4 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AmmV4")
+            .field("address", &self.address)
             .field("amm", &self.amm.is_some())
             .field("vaults", &self.vaults)
+            .field("mints", &self.mints)
             .finish()
     }
 }
@@ -48,9 +58,11 @@ fn decode_amm_info(data: &[u8]) -> Option<AmmInfo> {
 
 fn vault(account: &AccountRef<'_>) -> Option<Vault> {
     let mint = Pubkey::new_from_array(account.data.get(..32)?.try_into().ok()?);
+    let held = token_account(&account.owner, account.data, &mint)?;
     Some(Vault {
         mint,
-        amount: token_amount(&account.owner, account.data, &mint)?,
+        amount: held.amount,
+        frozen: held.frozen,
     })
 }
 
@@ -60,6 +72,13 @@ impl AmmV4 {
         let exists = account.exists();
         match account.role {
             Role::Pool => {
+                if exists && account.owner != dex::spec(DexKind::RaydiumAmmV4).program_id {
+                    return Err(DecodeError::Owner {
+                        role: account.role,
+                        owner: account.owner,
+                    });
+                }
+                self.address = exists.then_some(account.key);
                 self.amm = if exists {
                     Some(decode_amm_info(account.data).ok_or_else(layout)?)
                 } else {
@@ -67,11 +86,36 @@ impl AmmV4 {
                 };
             }
             Role::Vault(side) => {
+                if exists && account.owner != TOKEN_PROGRAM {
+                    return Err(DecodeError::Owner {
+                        role: account.role,
+                        owner: account.owner,
+                    });
+                }
+                // src: solana-program/token@spl-token-interface-v3.0.0
+                // interface/src/state.rs (legacy Account::LEN = 165).
+                if exists && account.data.len() != 165 {
+                    return Err(layout());
+                }
                 self.vaults[side_index(side)] = if exists {
                     Some(vault(account).ok_or_else(layout)?)
                 } else {
                     None
                 };
+            }
+            Role::Mint(side) => {
+                if exists && account.owner != TOKEN_PROGRAM {
+                    return Err(DecodeError::Owner {
+                        role: account.role,
+                        owner: account.owner,
+                    });
+                }
+                // src: solana-program/token@spl-token-interface-v3.0.0
+                // interface/src/state.rs (legacy Mint::LEN = 82; initialized byte 45).
+                if exists && (account.data.len() != 82 || account.data[45] != 1) {
+                    return Err(layout());
+                }
+                self.mints[side_index(side)] = exists;
             }
             _ => {}
         }
@@ -80,6 +124,11 @@ impl AmmV4 {
 
     // src: kaannakiin/raydium-amm@e310ed8c438737f7c9bf7a56374ec53ae36d37c9 program/src/processor.rs (process_swap_base_in)
     pub(crate) fn quote(&self, input: &QuoteInput<'_>) -> Result<QuoteOut, QuoteError> {
+        for side in [Side::A, Side::B] {
+            if !self.mints[side_index(side)] {
+                return Err(QuoteError::Incomplete(Role::Mint(side)));
+            }
+        }
         let amm = self
             .amm
             .as_ref()
@@ -93,6 +142,9 @@ impl AmmV4 {
         }
         if pc.mint != Pubkey::new_from_array(amm.pc_vault_mint.to_bytes()) {
             return Err(QuoteError::Inconsistent(Role::Vault(Side::B)));
+        }
+        if coin.frozen || pc.frozen {
+            return Err(QuoteError::VaultFrozen);
         }
         let status = amm.status;
         if !AmmStatus::valid_status(status) || !AmmStatus::from_u64(status).swap_permission() {
@@ -142,6 +194,61 @@ impl AmmV4 {
             fee_in: u64::try_from(swap_fee.as_u128()).map_err(|_| QuoteError::Math)?,
             fee_out: 0,
             arrays_used: 0,
+        })
+    }
+
+    // src: raydium-io/raydium-amm@d26944bfb76fb5fa8f91e5d440c2050ed358ef81
+    // program/src/instruction.rs (swap_base_in_v2 account order and flags).
+    pub(crate) fn swap_window(&self, a_to_b: bool) -> Result<SwapWindow, WindowError> {
+        for side in [Side::A, Side::B] {
+            if !self.mints[side_index(side)] {
+                return Err(WindowError::Incomplete(Role::Mint(side)));
+            }
+        }
+        let address = self.address.ok_or(WindowError::Incomplete(Role::Pool))?;
+        let amm = self
+            .amm
+            .as_ref()
+            .ok_or(WindowError::Incomplete(Role::Pool))?;
+        let [coin, pc] = [Side::A, Side::B].map(|side| {
+            self.vaults[side_index(side)].ok_or(WindowError::Incomplete(Role::Vault(side)))
+        });
+        let (coin, pc) = (coin?, pc?);
+        let coin_mint = Pubkey::new_from_array(amm.coin_vault_mint.to_bytes());
+        let pc_mint = Pubkey::new_from_array(amm.pc_vault_mint.to_bytes());
+        if coin.mint != coin_mint {
+            return Err(WindowError::Inconsistent(Role::Vault(Side::A)));
+        }
+        if pc.mint != pc_mint {
+            return Err(WindowError::Inconsistent(Role::Vault(Side::B)));
+        }
+        let fixed = |key, writable| WindowAccount::Fixed { key, writable };
+        let side = |mint| TokenSide {
+            mint,
+            token_program: TOKEN_PROGRAM,
+        };
+        let (source, destination) = if a_to_b {
+            (coin_mint, pc_mint)
+        } else {
+            (pc_mint, coin_mint)
+        };
+        Ok(SwapWindow {
+            kind: DexKind::RaydiumAmmV4,
+            program_id: dex::spec(DexKind::RaydiumAmmV4).program_id,
+            tail: 0,
+            optional_tail: 0,
+            accounts: vec![
+                fixed(TOKEN_PROGRAM, false),
+                fixed(address, true),
+                fixed(AUTHORITY, false),
+                fixed(Pubkey::new_from_array(amm.coin_vault.to_bytes()), true),
+                fixed(Pubkey::new_from_array(amm.pc_vault.to_bytes()), true),
+                WindowAccount::UserSource,
+                WindowAccount::UserDestination,
+                WindowAccount::User,
+            ],
+            source: side(source),
+            destination: side(destination),
         })
     }
 }

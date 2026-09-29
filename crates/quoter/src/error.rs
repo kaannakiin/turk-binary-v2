@@ -33,6 +33,12 @@ pub enum WindowError {
     Unsupported(DexKind),
     #[error("{0:?} is not known yet")]
     Incomplete(Role),
+    #[error("{0:?} does not match the pool")]
+    Inconsistent(Role),
+    #[error("a mint of the pair has an active transfer hook")]
+    TransferHook,
+    #[error("the quote's tick arrays are not available in this pool state")]
+    Arrays,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -53,4 +59,12 @@ pub enum QuoteError {
     Arrays(u8),
     #[error("a mint of the pair has a transfer hook")]
     TransferHook,
+    #[error("a mint of the pair is paused")]
+    MintPaused,
+    #[error("a mint of the pair is non-transferable")]
+    NonTransferable,
+    #[error("the output mint freezes new token accounts")]
+    FrozenByDefault,
+    #[error("a pool token account is frozen")]
+    VaultFrozen,
 }

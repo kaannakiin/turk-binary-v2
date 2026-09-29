@@ -14,7 +14,8 @@ use orca_whirlpools_core::{
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError};
 use crate::state::{QuoteInput, QuoteOut};
-use crate::token22::{Mint, decode_mint};
+use crate::token::any_token_account;
+use crate::token22::{Mint, check_transfer, decode_mint};
 
 // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052 programs/whirlpool/src/util/sparse_swap.rs (get_start_tick_indexes: three arrays per swap)
 const SWAP_TICK_ARRAYS: usize = 3;
@@ -30,6 +31,7 @@ pub(crate) struct Whirlpools {
     oracle: Option<OracleFacade>,
     arrays: BTreeMap<i32, Option<Arc<TickArrayFacade>>>,
     mints: [Option<Mint>; 2],
+    vaults_frozen: [Option<bool>; 2],
 }
 
 impl std::fmt::Debug for Whirlpools {
@@ -156,6 +158,15 @@ impl Whirlpools {
                     None
                 };
             }
+            Role::Vault(side) => {
+                self.vaults_frozen[side_index(side)] = if exists {
+                    let held = any_token_account(&account.owner, account.data)
+                        .ok_or(DecodeError::Layout { role: account.role })?;
+                    Some(held.frozen)
+                } else {
+                    None
+                };
+            }
             _ => {}
         }
         Ok(())
@@ -203,8 +214,14 @@ impl Whirlpools {
                 .ok_or(QuoteError::Incomplete(Role::Mint(side)))
         });
         let (mint_a, mint_b) = (mint_a?, mint_b?);
-        if mint_a.has_active_hook() || mint_b.has_active_hook() {
-            return Err(QuoteError::TransferHook);
+        let (sold, bought) = if input.a_to_b {
+            (mint_a, mint_b)
+        } else {
+            (mint_b, mint_a)
+        };
+        check_transfer(sold, bought)?;
+        if self.vaults_frozen.contains(&Some(true)) {
+            return Err(QuoteError::VaultFrozen);
         }
         let now = u64::try_from(input.clock.unix_timestamp).unwrap_or(0);
         let adaptive = if is_adaptive(pool) {

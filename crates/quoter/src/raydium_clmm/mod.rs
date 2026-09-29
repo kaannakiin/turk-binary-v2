@@ -5,6 +5,8 @@ use std::sync::Arc;
 use anchor_lang_032::prelude::{AccountInfo, Pubkey as AnchorPubkey};
 use anchor_lang_032::{AccountDeserialize, Discriminator};
 use dex::{Role, Side};
+use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
+use domain::{DexKind, Pubkey, SwapWindow, TokenSide, WindowAccount};
 use raydium_clmm::error::ErrorCode;
 use raydium_clmm::instructions::{SwapInternalResult, swap_internal_with_key};
 use raydium_clmm::libraries::tick_math;
@@ -13,9 +15,10 @@ use raydium_clmm::states::{
 };
 
 use crate::account::AccountRef;
-use crate::error::{DecodeError, QuoteError};
+use crate::error::{DecodeError, QuoteError, WindowError};
 use crate::state::{QuoteInput, QuoteOut};
-use crate::token22::{Mint, TransferFee, decode_mint};
+use crate::token::any_token_account;
+use crate::token22::{Mint, TransferFee, check_transfer, decode_mint};
 
 /// Side A is token 0, side B token 1. Tick arrays are keyed by start index.
 #[derive(Default)]
@@ -26,6 +29,7 @@ pub(crate) struct Clmm {
     extension: Option<Arc<(Vec<u8>, TickArrayBitmapExtension)>>,
     arrays: BTreeMap<i32, Arc<TickArrayState>>,
     mints: [Option<Mint>; 2],
+    vaults_frozen: [Option<bool>; 2],
 }
 
 impl Clone for Clmm {
@@ -37,6 +41,7 @@ impl Clone for Clmm {
             extension: self.extension.clone(),
             arrays: self.arrays.clone(),
             mints: self.mints.clone(),
+            vaults_frozen: self.vaults_frozen,
         }
     }
 }
@@ -123,6 +128,15 @@ impl Clmm {
                     None
                 };
             }
+            Role::Vault(side) => {
+                self.vaults_frozen[side_index(side)] = if exists {
+                    let held = any_token_account(&account.owner, account.data)
+                        .ok_or(DecodeError::Layout { role: account.role })?;
+                    Some(held.frozen)
+                } else {
+                    None
+                };
+            }
             _ => {}
         }
         Ok(())
@@ -203,7 +217,7 @@ impl Clmm {
         } else {
             tick_math::MAX_SQRT_PRICE_X64 - 1
         };
-        let (result, _) = swap_internal_with_key(
+        let (result, used) = swap_internal_with_key(
             config,
             &mut pool_cell.borrow_mut(),
             &mut arrays,
@@ -223,7 +237,6 @@ impl Clmm {
                 QuoteError::Liquidity
             }
         })?;
-        let used = u8::try_from(given - arrays.len()).unwrap_or(u8::MAX);
         Ok((result, used))
     }
 
@@ -244,8 +257,14 @@ impl Clmm {
                 .ok_or(QuoteError::Incomplete(Role::Mint(side)))
         });
         let (mint_0, mint_1) = (mint_0?, mint_1?);
-        if mint_0.has_active_hook() || mint_1.has_active_hook() {
-            return Err(QuoteError::TransferHook);
+        let (sold, bought) = if input.a_to_b {
+            (mint_0, mint_1)
+        } else {
+            (mint_1, mint_0)
+        };
+        check_transfer(sold, bought)?;
+        if self.vaults_frozen.contains(&Some(true)) {
+            return Err(QuoteError::VaultFrozen);
         }
         let now = u64::try_from(input.clock.unix_timestamp).unwrap_or(0);
         if now <= pool.open_time {
@@ -295,6 +314,182 @@ impl Clmm {
             fee_in: if fee_on_input { venue_fee } else { 0 },
             fee_out: if fee_on_input { 0 } else { venue_fee },
             arrays_used,
+        })
+    }
+
+    // src: kaannakiin/raydium-clmm@1de19c560b751cb685dea31e1aeb18f2f2602525 programs/amm/src/states/pool.rs (bitmap walk)
+    fn window_arrays(
+        &self,
+        pool: &PoolState,
+        a_to_b: bool,
+        arrays_used: u8,
+        max_arrays: u8,
+        guard: bool,
+    ) -> Result<(Vec<i32>, u8, bool), WindowError> {
+        if arrays_used == 0 || arrays_used > max_arrays {
+            return Err(WindowError::Arrays);
+        }
+        let extension = self.extension.as_ref().map(|e| e.1);
+        let (_, first) = pool
+            .get_first_initialized_tick_array(&extension, a_to_b)
+            .map_err(|_| WindowError::Arrays)?;
+        let mut starts = Vec::with_capacity(usize::from(arrays_used) + usize::from(guard));
+        let mut next = Some(first);
+        while starts.len() < usize::from(arrays_used) {
+            let start = next.ok_or(WindowError::Arrays)?;
+            if !self.arrays.contains_key(&start) {
+                return Err(WindowError::Incomplete(Role::TickArray { start }));
+            }
+            starts.push(start);
+            next = pool
+                .next_initialized_tick_array_start_index(&extension, start, a_to_b)
+                .map_err(|_| WindowError::Arrays)?;
+        }
+        let mut optional_tail = 0;
+        let bound = i64::from(pool.tick_spacing) * 60 * 512;
+        let required_needs_extension = starts
+            .iter()
+            .any(|start| i64::from(*start) < -bound || i64::from(*start) >= bound);
+        if guard
+            && starts.len() < usize::from(max_arrays)
+            && let Some(start) = next.filter(|start| {
+                self.arrays.contains_key(start)
+                    && (required_needs_extension
+                        || (i64::from(*start) >= -bound && i64::from(*start) < bound))
+            })
+        {
+            starts.push(start);
+            optional_tail = 1;
+        }
+        if required_needs_extension && self.extension.is_none() {
+            return Err(WindowError::Incomplete(Role::TickArrayBitmapExtension));
+        }
+        Ok((starts, optional_tail, required_needs_extension))
+    }
+
+    // src: kaannakiin/raydium-clmm@1de19c560b751cb685dea31e1aeb18f2f2602525 programs/amm/src/instructions/swap_v2.rs (SwapSingleV2 account order)
+    fn fixed_accounts(
+        &self,
+        pool: &PoolState,
+        pool_key: AnchorPubkey,
+        a_to_b: bool,
+    ) -> (Vec<WindowAccount>, TokenSide, TokenSide) {
+        let key = |anchor: AnchorPubkey| Pubkey::new_from_array(anchor.to_bytes());
+        let fixed = |key, writable| WindowAccount::Fixed { key, writable };
+        let (
+            source_vault,
+            destination_vault,
+            source_mint,
+            destination_mint,
+            source_state,
+            destination_state,
+        ) = if a_to_b {
+            (
+                pool.token_vault_0,
+                pool.token_vault_1,
+                pool.token_mint_0,
+                pool.token_mint_1,
+                &self.mints[0],
+                &self.mints[1],
+            )
+        } else {
+            (
+                pool.token_vault_1,
+                pool.token_vault_0,
+                pool.token_mint_1,
+                pool.token_mint_0,
+                &self.mints[1],
+                &self.mints[0],
+            )
+        };
+        let token_program = |state: &Option<Mint>| {
+            if state.as_ref().is_some_and(|mint| mint.token_2022) {
+                TOKEN_2022_PROGRAM
+            } else {
+                TOKEN_PROGRAM
+            }
+        };
+        let source = TokenSide {
+            mint: key(source_mint),
+            token_program: token_program(source_state),
+        };
+        let destination = TokenSide {
+            mint: key(destination_mint),
+            token_program: token_program(destination_state),
+        };
+        let accounts = vec![
+            WindowAccount::User,
+            fixed(key(pool.amm_config), false),
+            fixed(key(pool_key), true),
+            WindowAccount::UserSource,
+            WindowAccount::UserDestination,
+            fixed(key(source_vault), true),
+            fixed(key(destination_vault), true),
+            fixed(key(pool.observation_key), true),
+            fixed(TOKEN_PROGRAM, false),
+            fixed(TOKEN_2022_PROGRAM, false),
+            fixed(
+                Pubkey::from_str_const("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+                false,
+            ),
+            fixed(source.mint, false),
+            fixed(destination.mint, false),
+        ];
+        (accounts, source, destination)
+    }
+
+    // src: kaannakiin/raydium-clmm@1de19c560b751cb685dea31e1aeb18f2f2602525 programs/amm/src/instructions/swap_v2.rs (extension then tick-array remaining accounts)
+    // src: raydium-io/raydium-clmm@ed7c84a54ced59c55981780546adb0b4583dcf85 programs/amm/src/states/tick_array.rs, pool.rs (PDA seeds and bitmap walk)
+    pub(crate) fn swap_window(
+        &self,
+        a_to_b: bool,
+        arrays_used: u8,
+        max_arrays: u8,
+        guard: bool,
+    ) -> Result<SwapWindow, WindowError> {
+        let pool = self
+            .pool
+            .as_deref()
+            .ok_or(WindowError::Incomplete(Role::Pool))?;
+        let pool_key = self.key.ok_or(WindowError::Incomplete(Role::Pool))?;
+        for side in [Side::A, Side::B] {
+            let mint = self.mints[side_index(side)]
+                .as_ref()
+                .ok_or(WindowError::Incomplete(Role::Mint(side)))?;
+            if mint.has_active_hook() {
+                return Err(WindowError::TransferHook);
+            }
+        }
+        let (starts, optional_tail, needs_extension) =
+            self.window_arrays(pool, a_to_b, arrays_used, max_arrays, guard)?;
+        let program = dex::spec(DexKind::RaydiumClmm).program_id;
+        let (mut accounts, source, destination) = self.fixed_accounts(pool, pool_key, a_to_b);
+        let fixed = |key, writable| WindowAccount::Fixed { key, writable };
+        if needs_extension {
+            let extension_key = Pubkey::find_program_address(
+                &[b"pool_tick_array_bitmap_extension", &pool_key.to_bytes()],
+                &program,
+            )
+            .0;
+            accounts.push(fixed(extension_key, true));
+        }
+        for start in &starts {
+            let array = Pubkey::find_program_address(
+                &[b"tick_array", &pool_key.to_bytes(), &start.to_be_bytes()],
+                &program,
+            )
+            .0;
+            accounts.push(fixed(array, true));
+        }
+        let count = u8::try_from(starts.len()).map_err(|_| WindowError::Arrays)?;
+        Ok(SwapWindow {
+            kind: DexKind::RaydiumClmm,
+            program_id: program,
+            accounts,
+            source,
+            destination,
+            tail: count | if needs_extension { 0x80 } else { 0 },
+            optional_tail,
         })
     }
 }

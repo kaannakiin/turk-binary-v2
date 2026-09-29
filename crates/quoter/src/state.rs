@@ -123,9 +123,23 @@ impl VenueState {
 
     /// The accounts of this pool's swap instruction; side A in when `a_to_b`.
     pub fn swap_window(&self, a_to_b: bool) -> Result<SwapWindow, WindowError> {
+        self.swap_window_for_quote(a_to_b, 0, 0, false)
+    }
+
+    pub fn swap_window_for_quote(
+        &self,
+        a_to_b: bool,
+        arrays_used: u8,
+        max_arrays: u8,
+        guard: bool,
+    ) -> Result<SwapWindow, WindowError> {
         match &self.inner {
+            #[cfg(feature = "raydium-amm-v4")]
+            Inner::RaydiumAmmV4(state) => state.swap_window(a_to_b),
             #[cfg(feature = "raydium-cpmm")]
             Inner::RaydiumCpmm(state) => state.swap_window(a_to_b),
+            #[cfg(feature = "raydium-clmm")]
+            Inner::RaydiumClmm(state) => state.swap_window(a_to_b, arrays_used, max_arrays, guard),
             other => Err(WindowError::Unsupported(other.kind())),
         }
     }

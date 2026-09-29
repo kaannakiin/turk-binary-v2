@@ -7,8 +7,8 @@ use domain::{DexKind, Pubkey};
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError};
 use crate::state::{QuoteInput, QuoteOut};
-use crate::token::token_amount;
-use crate::token22::{Mint, TransferFee, decode_mint};
+use crate::token::token_account;
+use crate::token22::{Mint, TransferFee, check_transfer, decode_mint};
 
 use layout::{FeeConfig, GlobalConfig, Pool};
 use math::FeeInputs;
@@ -21,6 +21,7 @@ const POOL_AUTHORITY_SEED: &[u8] = b"pool-authority";
 struct Vault {
     mint: Pubkey,
     amount: u64,
+    frozen: bool,
 }
 
 struct Reserves<'a> {
@@ -94,9 +95,13 @@ impl PumpSwap {
                         .and_then(|b| <[u8; 32]>::try_from(b).ok())
                         .map(Pubkey::new_from_array)
                         .ok_or_else(layout)?;
-                    let amount =
-                        token_amount(&account.owner, account.data, &mint).ok_or_else(layout)?;
-                    Some(Vault { mint, amount })
+                    let held =
+                        token_account(&account.owner, account.data, &mint).ok_or_else(layout)?;
+                    Some(Vault {
+                        mint,
+                        amount: held.amount,
+                        frozen: held.frozen,
+                    })
                 } else {
                     None
                 };
@@ -132,7 +137,7 @@ impl PumpSwap {
         Ok(())
     }
 
-    fn reserves(&self) -> Result<Reserves<'_>, QuoteError> {
+    fn reserves(&self, a_to_b: bool) -> Result<Reserves<'_>, QuoteError> {
         let pool = self
             .pool
             .as_ref()
@@ -167,8 +172,14 @@ impl PumpSwap {
         if global.disable_flags != 0 {
             return Err(QuoteError::Disabled);
         }
-        if base_mint.has_active_hook() || quote_mint.has_active_hook() {
-            return Err(QuoteError::TransferHook);
+        let (sold, bought) = if a_to_b {
+            (base_mint, quote_mint)
+        } else {
+            (quote_mint, base_mint)
+        };
+        check_transfer(sold, bought)?;
+        if base_vault.frozen || quote_vault.frozen {
+            return Err(QuoteError::VaultFrozen);
         }
 
         let base_reserve = u128::from(base_vault.amount);
@@ -205,7 +216,7 @@ impl PumpSwap {
             base_reserve,
             raw_quote_reserve,
             effective_quote_reserve,
-        } = self.reserves()?;
+        } = self.reserves(input.a_to_b)?;
         let fees = math::fees(&FeeInputs {
             global,
             fee_config,

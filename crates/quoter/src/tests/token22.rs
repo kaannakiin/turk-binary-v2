@@ -1,16 +1,25 @@
 use domain::chain::TOKEN_2022_PROGRAM;
+use spl_token_2022_interface::extension::default_account_state::DefaultAccountState;
+use spl_token_2022_interface::extension::non_transferable::NonTransferable;
+use spl_token_2022_interface::extension::pausable::PausableConfig;
 use spl_token_2022_interface::extension::transfer_fee::{self, TransferFeeConfig};
 use spl_token_2022_interface::extension::transfer_hook::TransferHook;
 use spl_token_2022_interface::extension::{
-    AccountType, BaseStateWithExtensions, ExtensionType, StateWithExtensions,
+    AccountType, BaseStateWithExtensions, BaseStateWithExtensionsMut, ExtensionType,
+    StateWithExtensions, StateWithExtensionsMut,
 };
-use spl_token_2022_interface::state::Mint;
+use spl_token_2022_interface::state::{AccountState, Mint};
 
 use super::captured;
-use crate::error::MintDecodeError;
-use crate::token22::{TransferFee, decode_mint};
+use crate::error::{MintDecodeError, QuoteError};
+use crate::token22::{Restrictions, TransferFee, check_transfer, decode_mint};
 
 const MINT_TLV_START: usize = 166;
+
+fn is_mint(data: &[u8]) -> bool {
+    let base = ExtensionType::try_calculate_account_len::<Mint>(&[]).expect("base length");
+    data.len() == base || data.get(MINT_TLV_START - 1) == Some(&(AccountType::Mint as u8))
+}
 const TLV_HEADER: usize = 4;
 
 /// Every extension type the interface knows, checked against its own
@@ -55,11 +64,13 @@ fn every_mint_extension_length_matches_the_interface() {
 fn captured_mints_decode_as_the_interface_decodes_them() {
     let mints: Vec<_> = captured()
         .into_iter()
-        .filter(|(_, owner, _)| *owner == TOKEN_2022_PROGRAM)
+        .filter(|(_, owner, data)| *owner == TOKEN_2022_PROGRAM && is_mint(data))
         .collect();
     assert!(mints.len() >= 10, "Token-2022 mint fixtures");
     let mut fee_mints = 0;
     let mut hook_mints = 0;
+    let mut restricted = Restrictions::default();
+    let mut running_pausable = 0;
     for (key, owner, data) in mints {
         let local = decode_mint(&owner, &data).unwrap_or_else(|e| panic!("{key}: {e}"));
         let canonical = StateWithExtensions::<Mint>::unpack(&data).expect("interface decodes");
@@ -116,10 +127,63 @@ fn captured_mints_decode_as_the_interface_decodes_them() {
                 "{key}"
             );
         }
+        let pausable = canonical.get_extension::<PausableConfig>().ok();
+        let expected = Restrictions {
+            paused: pausable.is_some_and(|config| bool::from(config.paused)),
+            non_transferable: canonical.get_extension::<NonTransferable>().is_ok(),
+            default_frozen: canonical
+                .get_extension::<DefaultAccountState>()
+                .is_ok_and(|default| default.state == AccountState::Frozen as u8),
+        };
+        assert_eq!(local.restrictions, expected, "{key}");
+        restricted.paused |= expected.paused;
+        restricted.default_frozen |= expected.default_frozen;
+        running_pausable += usize::from(pausable.is_some() && !expected.paused);
     }
     assert!(
         fee_mints >= 5 && hook_mints >= 1,
         "fixtures cover fee and hook mints"
+    );
+    // src: mainnet getAccountInfo jsonParsed at slot 451609545: Pre2Y4ga… and Pre5X98d… paused,
+    // EMFTTUnt… and FJiust6A… defaultAccountState frozen, XsoCS1Tf… (SPYx) pausable and running.
+    assert!(
+        restricted.paused && restricted.default_frozen && running_pausable >= 1,
+        "fixtures cover a paused mint, a running pausable one and a frozen default state"
+    );
+}
+
+/// No non-transferable mint was among the 3030 pool-listed mints scanned at
+/// slot 451609545, so the interface builds one.
+#[test]
+fn a_non_transferable_mint_refuses_both_directions() {
+    let len = ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::NonTransferable])
+        .expect("mint length");
+    let mut data = vec![0u8; len];
+    let mut state =
+        StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut data).expect("uninitialized");
+    state
+        .init_extension::<NonTransferable>(true)
+        .expect("extension");
+    state.base.decimals = 6;
+    state.base.is_initialized = true;
+    state.pack_base();
+    state.init_account_type().expect("account type");
+
+    let fixed = decode_mint(&TOKEN_2022_PROGRAM, &data).expect("decodes");
+    let other = captured()
+        .into_iter()
+        .find(|(_, owner, data)| *owner == TOKEN_2022_PROGRAM && is_mint(data))
+        .and_then(|(_, owner, data)| decode_mint(&owner, &data).ok())
+        .expect("a transferable mint");
+
+    assert!(fixed.restrictions.non_transferable);
+    assert_eq!(
+        check_transfer(&fixed, &other),
+        Err(QuoteError::NonTransferable)
+    );
+    assert_eq!(
+        check_transfer(&other, &fixed),
+        Err(QuoteError::NonTransferable)
     );
 }
 

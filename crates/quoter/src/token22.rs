@@ -1,7 +1,7 @@
 use domain::Pubkey;
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 
-use crate::error::MintDecodeError;
+use crate::error::{MintDecodeError, QuoteError};
 
 // src: spl-token-interface@3.0.0 src/state.rs (Mint::LEN, Mint::unpack_from_slice)
 const MINT_LEN: usize = 82;
@@ -14,13 +14,21 @@ const ACCOUNT_TYPE: usize = 165;
 const ACCOUNT_TYPE_MINT: u8 = 1;
 // src: spl-token-2022-interface@3.1.2 src/extension/mod.rs (ExtensionType)
 const EXT_TRANSFER_FEE_CONFIG: u16 = 1;
+const EXT_DEFAULT_ACCOUNT_STATE: u16 = 6;
+const EXT_NON_TRANSFERABLE: u16 = 9;
 const EXT_TRANSFER_HOOK: u16 = 14;
 const EXT_TOKEN_METADATA: u16 = 19;
+const EXT_PAUSABLE: u16 = 26;
 // src: spl-token-2022-interface@3.1.2 src/extension/transfer_fee/mod.rs (TransferFeeConfig, TransferFee)
 const OLDER_FEE: usize = 72;
 const NEWER_FEE: usize = 90;
 // src: spl-token-2022-interface@3.1.2 src/extension/transfer_hook/mod.rs (TransferHook)
 const HOOK_PROGRAM: usize = 32;
+// src: spl-token-2022-interface@3.1.2 src/extension/pausable/mod.rs (PausableConfig: authority, paused)
+const PAUSED: usize = 32;
+// src: spl-token-2022-interface@3.1.2 src/extension/default_account_state/mod.rs (DefaultAccountState),
+// src/state.rs (AccountState::Frozen = 2)
+const ACCOUNT_STATE_FROZEN: u8 = 2;
 // src: spl-token-2022-interface@3.1.2 src/extension/transfer_fee/mod.rs (ONE_IN_BASIS_POINTS)
 const ONE_IN_BASIS_POINTS: u128 = 10_000;
 
@@ -109,7 +117,17 @@ pub(crate) struct Mint {
     pub freeze_authority: Option<Pubkey>,
     pub transfer_fee: Option<TransferFeeSchedule>,
     pub transfer_hook: Option<TransferHook>,
+    pub restrictions: Restrictions,
     pub extensions: Vec<u16>,
+}
+
+/// What stops Token-2022 moving the mint: `Pausable` while paused,
+/// `NonTransferable`, and a `DefaultAccountState` of frozen for new accounts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Restrictions {
+    pub paused: bool,
+    pub non_transferable: bool,
+    pub default_frozen: bool,
 }
 
 impl Mint {
@@ -121,6 +139,30 @@ impl Mint {
     pub(crate) fn has_active_hook(&self) -> bool {
         self.transfer_hook.is_some_and(|h| h.program.is_some())
     }
+}
+
+/// Whether Token-2022 would move both mints of a swap paying out `output`.
+/// A mint that freezes new accounts refuses only as the output: the swap may
+/// have to create the account it pays into, and an input account already
+/// holds a balance.
+// src: solana-program/token-2022@f4a1c94a10c43eb325f72d5a731055a869cb8b0f program/src/processor.rs
+// (process_transfer: MintPaused, NonTransferable; _process_initialize_account: DefaultAccountState)
+pub(crate) fn check_transfer(input: &Mint, output: &Mint) -> Result<(), QuoteError> {
+    for mint in [input, output] {
+        if mint.has_active_hook() {
+            return Err(QuoteError::TransferHook);
+        }
+        if mint.restrictions.paused {
+            return Err(QuoteError::MintPaused);
+        }
+        if mint.restrictions.non_transferable {
+            return Err(QuoteError::NonTransferable);
+        }
+    }
+    if output.restrictions.default_frozen {
+        return Err(QuoteError::FrozenByDefault);
+    }
+    Ok(())
 }
 
 fn u16_at(data: &[u8], offset: usize) -> Option<u16> {
@@ -214,6 +256,7 @@ pub(crate) fn decode_mint(owner: &Pubkey, data: &[u8]) -> Result<Mint, MintDecod
         },
         transfer_fee: None,
         transfer_hook: None,
+        restrictions: Restrictions::default(),
         extensions: Vec::new(),
     };
     if data.len() == MINT_LEN {
@@ -255,6 +298,11 @@ pub(crate) fn decode_mint(owner: &Pubkey, data: &[u8]) -> Result<Mint, MintDecod
                     authority: pubkey_at(payload, 0),
                     program: pubkey_at(payload, HOOK_PROGRAM),
                 });
+            }
+            EXT_PAUSABLE => mint.restrictions.paused = payload[PAUSED] != 0,
+            EXT_NON_TRANSFERABLE => mint.restrictions.non_transferable = true,
+            EXT_DEFAULT_ACCOUNT_STATE => {
+                mint.restrictions.default_frozen = payload[0] == ACCOUNT_STATE_FROZEN;
             }
             _ => {}
         }

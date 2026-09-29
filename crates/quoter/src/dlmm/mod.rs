@@ -14,7 +14,8 @@ use solana_sdk_2::pubkey::Pubkey as SdkPubkey;
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError};
 use crate::state::{QuoteInput, QuoteOut};
-use crate::token22::{Mint, decode_mint};
+use crate::token::any_token_account;
+use crate::token22::{Mint, check_transfer, decode_mint};
 
 // src: kaannakiin/dlmm-sdk@28e1f83f053aa64a80e33b5a0c71d5f509e2384d idls/dlmm.json (accounts LbPair, BinArray, BinArrayBitmapExtension)
 const LB_PAIR_DISCRIMINATOR: [u8; 8] = [33, 11, 49, 98, 181, 101, 177, 13];
@@ -29,6 +30,7 @@ pub(crate) struct Dlmm {
     extension: Option<Arc<BinArrayBitmapExtension>>,
     arrays: BTreeMap<i32, Arc<BinArray>>,
     mints: [Option<Mint>; 2],
+    vaults_frozen: [Option<bool>; 2],
 }
 
 impl Clone for Dlmm {
@@ -39,6 +41,7 @@ impl Clone for Dlmm {
             extension: self.extension.clone(),
             arrays: self.arrays.clone(),
             mints: self.mints.clone(),
+            vaults_frozen: self.vaults_frozen,
         }
     }
 }
@@ -152,6 +155,15 @@ impl Dlmm {
                     None
                 };
             }
+            Role::Vault(side) => {
+                self.vaults_frozen[side_index(side)] = if exists {
+                    let held = any_token_account(&account.owner, account.data)
+                        .ok_or(DecodeError::Layout { role: account.role })?;
+                    Some(held.frozen)
+                } else {
+                    None
+                };
+            }
             _ => {}
         }
         Ok(())
@@ -170,8 +182,14 @@ impl Dlmm {
                 .ok_or(QuoteError::Incomplete(Role::Mint(side)))
         });
         let (mint_x, mint_y) = (mint_x?, mint_y?);
-        if mint_x.has_active_hook() || mint_y.has_active_hook() {
-            return Err(QuoteError::TransferHook);
+        let (sold, bought) = if input.a_to_b {
+            (mint_x, mint_y)
+        } else {
+            (mint_y, mint_x)
+        };
+        check_transfer(sold, bought)?;
+        if self.vaults_frozen.contains(&Some(true)) {
+            return Err(QuoteError::VaultFrozen);
         }
         let clock = Clock {
             slot: input.clock.slot.0,

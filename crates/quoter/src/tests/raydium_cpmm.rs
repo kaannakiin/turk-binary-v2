@@ -1,7 +1,9 @@
 use dex::{Role, Side};
 use domain::DexKind;
+use spl_token_2022_interface::extension::{AccountType, ExtensionType};
 
 use super::sim::{Built, decode, pubkey_at, run, token_owner};
+use crate::{AccountRef, VenueState, WindowError};
 
 // src: raydium-io/raydium-cp-swap@59fb845a9e5bb569c8b2f3415f13b0c0ebcc6b92 programs/cp-swap/src/states/pool.rs (PoolState.token_0_mint, token_1_mint)
 const TOKEN_0_MINT: usize = 168;
@@ -68,13 +70,14 @@ const MAINNET_SWAP: [(&str, bool); 13] = [
     ("Euj3kuVVtK112iUZnL9D2YzNmAbMUQBSTqoAxAuiX3WT", true),
 ];
 
-#[test]
-fn the_swap_window_is_the_instruction_mainnet_executed() {
-    use crate::{AccountRef, VenueState};
-    use domain::{Pubkey, WindowAccount};
+fn mainnet_window_state(active_hook: bool) -> (VenueState, bool) {
+    use domain::Pubkey;
 
     let pool_key = Pubkey::from_str_const(MAINNET_SWAP[3].0);
-    let pool = std::fs::read(super::fixtures().join(format!("accounts/{pool_key}.bin"))).unwrap();
+    let pool = std::fs::read(super::fixtures().join(format!("accounts/{pool_key}.bin")))
+        .expect("captured pool");
+    let input_mint = Pubkey::from_str_const(MAINNET_SWAP[10].0);
+    let a_to_b = pubkey_at(&pool, TOKEN_0_MINT) == input_mint;
     let mut state = VenueState::new(DexKind::RaydiumCpmm);
     state
         .apply(&AccountRef {
@@ -84,9 +87,65 @@ fn the_swap_window_is_the_instruction_mainnet_executed() {
             lamports: 1,
             data: &pool,
         })
-        .unwrap();
+        .expect("captured pool decodes");
+
+    // The transaction fixture records instruction metas, not mint account bytes.
+    // These initialized mints supply only the status needed to build the window.
+    let mut source_mint = vec![0u8; 82];
+    source_mint[45] = 1;
+    let hook_len =
+        std::mem::size_of::<spl_token_2022_interface::extension::transfer_hook::TransferHook>();
+    source_mint.resize(166 + 4 + hook_len, 0);
+    source_mint[165] = AccountType::Mint as u8;
+    source_mint[166..168].copy_from_slice(&u16::from(ExtensionType::TransferHook).to_le_bytes());
+    source_mint[168..170]
+        .copy_from_slice(&u16::try_from(hook_len).expect("hook length").to_le_bytes());
+    if active_hook {
+        source_mint[202..234].copy_from_slice(&[7; 32]);
+    }
+    let mut destination_mint = vec![0u8; 82];
+    destination_mint[45] = 1;
+    for (role, key, owner, data) in [
+        (
+            if a_to_b { Side::A } else { Side::B },
+            input_mint,
+            Pubkey::from_str_const(MAINNET_SWAP[8].0),
+            &source_mint,
+        ),
+        (
+            if a_to_b { Side::B } else { Side::A },
+            Pubkey::from_str_const(MAINNET_SWAP[11].0),
+            Pubkey::from_str_const(MAINNET_SWAP[9].0),
+            &destination_mint,
+        ),
+    ] {
+        state
+            .apply(&AccountRef {
+                key,
+                role: Role::Mint(role),
+                owner,
+                lamports: 1,
+                data,
+            })
+            .expect("test mint decodes");
+    }
+    (state, a_to_b)
+}
+
+#[test]
+fn a_quoted_cpmm_window_rejects_an_active_transfer_hook() {
+    let (state, a_to_b) = mainnet_window_state(true);
+    assert_eq!(state.swap_window(a_to_b), Err(WindowError::TransferHook));
+    let (inert, a_to_b) = mainnet_window_state(false);
+    assert!(inert.swap_window(a_to_b).is_ok());
+}
+
+#[test]
+fn the_swap_window_is_the_instruction_mainnet_executed() {
+    use domain::{Pubkey, WindowAccount};
+
+    let (state, a_to_b) = mainnet_window_state(false);
     let input_mint = Pubkey::from_str_const(MAINNET_SWAP[10].0);
-    let a_to_b = pubkey_at(&pool, TOKEN_0_MINT) == input_mint;
 
     let window = state.swap_window(a_to_b).unwrap();
 

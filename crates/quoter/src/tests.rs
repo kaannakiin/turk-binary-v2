@@ -14,7 +14,14 @@ mod raydium_clmm;
 mod raydium_cpmm;
 mod sim;
 mod svm;
+mod token;
 mod token22;
+#[cfg(all(
+    feature = "raydium-cpmm",
+    feature = "raydium-clmm",
+    feature = "whirlpool"
+))]
+mod transfers;
 #[cfg(feature = "whirlpool")]
 mod whirlpool;
 
