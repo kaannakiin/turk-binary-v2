@@ -18,7 +18,20 @@ just test-onchain    # nextest over the onchain workspace
 
 **Program ID:** `TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3`, not deployed.
 
-**Status:** one venue adapter, Raydium CPMM (kind 2). `just router-replay` runs every swap of the CPMM program replay corpus through the router, built by `/swap-instructions`, on the same accounts, Clock and mainnet bytecode: twice, as `/swap-instructions`' instructions and as `/swap`'s unsigned v1 transaction, only signed. All 126 pay exactly what the venue paid alone both ways, in at most 42,293 compute units with their setup (`crates/tx/src/tests/fixtures/router_replay.json`). What the replay does not cover yet is in [open-work.md](open-work.md).
+**Status:** one venue adapter, Raydium CPMM (kind 2). `just router-replay` runs every swap of the CPMM program replay corpus through the router, built by `/swap-instructions`, on the same accounts, Clock and mainnet bytecode: twice, as `/swap-instructions`' instructions and as `/swap`'s unsigned v1 transaction, only signed. All 126 pay exactly what the venue paid alone both ways, in at most 42,293 compute units with their setup (`crates/tx/src/tests/fixtures/router_replay.json`).
+
+The same command runs the scenarios the replay leaves out (`oracle router-scenarios`, results in `crates/tx/src/tests/fixtures/router_scenarios.json`, asserted by `tx`'s `scenarios` tests). They run over `scenario_pools.json.gz`, eight CPMM pools captured at one slot by `scripts/capture_cpmm_pools.py`, and each expected payout is what the pools paid swapped on their own:
+
+- SOL → USDC → NEAR as `/swap` builds it, with 500 USDC already in the intermediate account: the second hop spends only what the first paid, the 500 USDC stay, and the setup creates the NEAR account within the transaction's budgets.
+- SOL wrapped with and without an existing WSOL account, and SOL unwrapped as the output: the lamports come out exactly as the amounts, rent and fee say. Closing a funded WSOL account also unwraps what it held before.
+- Token-2022: SOL → DHC into a Token-2022 account the setup creates; SOL → USDC → DAILY (3% transfer fee), where the user receives what the fee leaves; DAILY → USDC, where the user is debited the full input; SOL → IMG → USDC, where the 5% fee mint sits between the hops and the second hop spends exactly what arrived; SOL → SOLADAO at epochs 1043 and 1045, either side of its fee change from 30% to 25%; WIWI → MU, a mint with a transfer hook extension but no hook program.
+- Every threshold `/swap` built is the pools' own payout less the default 50 bps, transfer fee included: the quote was exact.
+- A threshold one unit above the payout fails with `SlippageExceeded` and moves no token; at the payout the route passes.
+- A venue that misbehaves: `onchain/programs/short-venue`, a test double never deployed, loaded at CPMM's address and moving what the scenario sets. Taking one unit below 95% of the offer or one unit above it fails with `ActualInOutOfBand`; exactly 95% passes and leaves the rest with the user. Paying nothing fails with `ZeroHopOutput`, taking output back from the user with `BalanceRegression`.
+- The `/swap-instructions` route with one byte or one account wrong, each refused by its own check: a zero `min_out` or input, wire version 2, zero or five hops, an unknown hop kind, a destination the user does not own, a source that is not a token account, a cycle without profit, a source or destination the hops do not start or end on, a window one account short or long, another program in a window's venue slot, and a config account owned by the router but not at its PDA.
+- The admin instructions with the router deployed under its own upgrade authority: `initialize` refused to a stranger, with another ProgramData or a zero admin, accepted after someone sent lamports to the config first, refused a second time; routes refused before `initialize` and while paused; `set_paused` and `set_admin` refused to anyone but the admin, including the upgrade authority, and to an unsigned admin.
+
+What neither covers yet is in [open-work.md](open-work.md).
 
 **Deploy:** give the program at most 256 KiB of space (`--max-len`); `tx` budgets the router's loaded data at that size. Not deployed; nothing here has run on mainnet.
 

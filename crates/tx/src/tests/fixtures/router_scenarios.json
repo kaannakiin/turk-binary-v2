@@ -1,0 +1,1948 @@
+{
+  "provenance": {
+    "corpus_sha256": "042e8b5e2410cec6201fc44a87a10f5adba07cf935f9dd9726b20d1850bbcdef",
+    "router_sha256": "b026b0a17364d8e719bce0c523d85895a1c956cb5d58f683bccc4d1f60b66636",
+    "litesvm": "0.17.0"
+  },
+  "keys": {
+    "user": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+    "upgrade_authority": "7v54NWdBtkjuAFJrLGsS2SXnuk8nKam81mZJeeYxVFi9",
+    "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+    "next_admin": "AoVsGaj8MSJ6xwKxfFxo9iZWH3enC8RRTXKH2fx2F8os",
+    "stranger": "oapfTk8FG2np1vSoGANkbijWiQApHZMFAytSdCoass9"
+  },
+  "swaps": [
+    {
+      "name": "two_hops_over_a_funded_intermediate",
+      "plan": "two_hop",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 1794328982,
+      "venue_out": [
+        8548637,
+        1803345711
+      ],
+      "compute_units": 88743,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": 1803345711
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 500000000,
+          "after": 500000000
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": 1488440
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999992522800,
+        "after": 999991029360
+      }
+    },
+    {
+      "name": "wrap_without_a_wsol_account",
+      "plan": "wrap_in",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 8505893,
+      "venue_out": [
+        8548637
+      ],
+      "compute_units": 66602,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 8548637
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999988037480,
+        "after": 999886544040
+      }
+    },
+    {
+      "name": "wrap_over_a_funded_wsol_account",
+      "plan": "wrap_in",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 8505893,
+      "venue_out": [
+        8548637
+      ],
+      "compute_units": 57528,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 8548637
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 5000000,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 6488440,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999882058720,
+        "after": 999787053720
+      }
+    },
+    {
+      "name": "unwrap_without_a_wsol_account",
+      "plan": "unwrap_out",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 62651578,
+      "venue_out": [
+        62966411
+      ],
+      "compute_units": 46819,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 10000000,
+          "after": 0
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999782568400,
+        "after": 999845529811
+      }
+    },
+    {
+      "name": "token_2022_output_created_by_the_setup",
+      "plan": "token_2022_out",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 5300682840,
+      "venue_out": [
+        5327319438
+      ],
+      "compute_units": 52632,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": 5327319438
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": 1513840
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999841019091,
+        "after": 999839500251
+      }
+    },
+    {
+      "name": "transfer_fee_output_over_two_hops",
+      "plan": "transfer_fee_out",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 8398158215636,
+      "venue_out": [
+        8548637,
+        8440360015715
+      ],
+      "compute_units": 103637,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": 8440360015715
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 0
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": 1574800
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999833430131,
+        "after": 999830361891
+      }
+    },
+    {
+      "name": "transfer_fee_input",
+      "plan": "transfer_fee_in",
+      "epoch": 1045,
+      "amount_in": 10000000000000,
+      "min_out": 9432901,
+      "venue_out": [
+        9480303
+      ],
+      "compute_units": 56138,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": 10000000000000,
+          "after": 0
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 9480303
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999825703851,
+        "after": 999824210411
+      }
+    },
+    {
+      "name": "transfer_fee_intermediate",
+      "plan": "transfer_fee_intermediate",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 10505821,
+      "venue_out": [
+        21123375256,
+        10558615
+      ],
+      "compute_units": 111106,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 10558615
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": 1574800
+        }
+      },
+      "lamports": {
+        "before": 999818140291,
+        "after": 999815072051
+      }
+    },
+    {
+      "name": "transfer_fee_after_its_change",
+      "plan": "transfer_fee_after_its_change",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 333418670578,
+      "venue_out": [
+        335094141285
+      ],
+      "compute_units": 54655,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": 335094141285
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": 1574800
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999810500371,
+        "after": 999808920571
+      }
+    },
+    {
+      "name": "transfer_fee_before_its_change",
+      "plan": "transfer_fee_before_its_change",
+      "epoch": 1043,
+      "amount_in": 100000000,
+      "min_out": 311190759206,
+      "venue_out": [
+        312754531866
+      ],
+      "compute_units": 54651,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": 312754531866
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": 1574800
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999804348891,
+        "after": 999802769091
+      }
+    },
+    {
+      "name": "hook_extension_without_a_program",
+      "plan": "hook_extension_without_a_program",
+      "epoch": 1045,
+      "amount_in": 100000000000,
+      "min_out": 10174,
+      "venue_out": [
+        10226
+      ],
+      "compute_units": 61070,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": 100000000000,
+          "after": 0
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": 10226
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": 1559560
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999798039931,
+        "after": 999796475371
+      }
+    },
+    {
+      "name": "threshold_one_above_the_payout",
+      "plan": "single",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 8548638,
+      "venue_out": [
+        8548637
+      ],
+      "error": "InstructionError(1, Custom(6013)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 100000000
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 101488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999787504731,
+        "after": 999787499731
+      }
+    },
+    {
+      "name": "threshold_at_the_payout",
+      "plan": "single",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 8548637,
+      "venue_out": [
+        8548637
+      ],
+      "compute_units": 31953,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 8548637
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999781520971,
+        "after": 999781515971
+      }
+    },
+    {
+      "name": "venue_takes_one_below_the_band",
+      "plan": "single",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 1,
+      "venue_out": [
+        8548637
+      ],
+      "error": "InstructionError(1, Custom(6010)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 200000000,
+          "after": 200000000
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 201488440,
+          "after": 201488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999775537211,
+        "after": 999775532211
+      }
+    },
+    {
+      "name": "venue_takes_the_band_floor",
+      "plan": "single",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 1,
+      "venue_out": [
+        8548637
+      ],
+      "compute_units": 14617,
+      "fee": 5000,
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 1
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 200000000,
+          "after": 105000000
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 201488440,
+          "after": 106488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999769553451,
+        "after": 999769548451
+      }
+    },
+    {
+      "name": "venue_takes_one_more_than_offered",
+      "plan": "single",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 1,
+      "venue_out": [
+        8548637
+      ],
+      "error": "InstructionError(1, Custom(6010)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 200000000,
+          "after": 200000000
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 201488440,
+          "after": 201488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999763569691,
+        "after": 999763564691
+      }
+    },
+    {
+      "name": "venue_pays_nothing",
+      "plan": "single",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 1,
+      "venue_out": [
+        8548637
+      ],
+      "error": "InstructionError(1, Custom(6011)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177b",
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 200000000,
+          "after": 200000000
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 201488440,
+          "after": 201488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999757585931,
+        "after": 999757580931
+      }
+    },
+    {
+      "name": "venue_takes_output_back",
+      "plan": "single",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 1,
+      "venue_out": [
+        8548637
+      ],
+      "error": "InstructionError(1, Custom(6012)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177c",
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 10,
+          "after": 10
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 200000000,
+          "after": 200000000
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 201488440,
+          "after": 201488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999751602171,
+        "after": 999751597171
+      }
+    },
+    {
+      "name": "venue_closes_the_source",
+      "plan": "single",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 1,
+      "venue_out": [
+        8548637
+      ],
+      "error": "InstructionError(1, Custom(6010)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
+      "tokens": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 100000000
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
+          "before": null,
+          "after": null
+        },
+        "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX": {
+          "before": null,
+          "after": null
+        },
+        "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs": {
+          "before": null,
+          "after": null
+        },
+        "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {
+          "before": null,
+          "after": null
+        },
+        "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ": {
+          "before": null,
+          "after": null
+        },
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 101488440
+        },
+        "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999745618411,
+        "after": 999745613411
+      }
+    }
+  ],
+  "refusals": [
+    {
+      "name": "zero_min_out",
+      "error": "InstructionError(1, Custom(6001)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1771"
+    },
+    {
+      "name": "zero_in_amount",
+      "error": "InstructionError(1, Custom(6001)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1771"
+    },
+    {
+      "name": "wire_version_2",
+      "error": "InstructionError(1, Custom(6003)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1773"
+    },
+    {
+      "name": "no_hops",
+      "error": "InstructionError(1, Custom(6002)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1772"
+    },
+    {
+      "name": "five_hops",
+      "error": "InstructionError(1, Custom(6002)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1772"
+    },
+    {
+      "name": "unknown_hop_kind",
+      "error": "InstructionError(1, Custom(6006)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1776"
+    },
+    {
+      "name": "destination_owned_by_someone_else",
+      "error": "InstructionError(1, Custom(6004)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1774"
+    },
+    {
+      "name": "source_not_a_token_account",
+      "error": "InstructionError(1, Custom(6008)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1778"
+    },
+    {
+      "name": "cycle_without_profit",
+      "error": "InstructionError(1, Custom(6014)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177e"
+    },
+    {
+      "name": "source_not_the_first_hop_input",
+      "error": "InstructionError(1, Custom(6009)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1779"
+    },
+    {
+      "name": "destination_not_the_last_hop_output",
+      "error": "InstructionError(1, Custom(6009)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1779"
+    },
+    {
+      "name": "window_one_account_short",
+      "error": "InstructionError(1, Custom(6005)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1775"
+    },
+    {
+      "name": "window_one_account_extra",
+      "error": "InstructionError(1, Custom(6007)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777"
+    },
+    {
+      "name": "venue_program_swapped",
+      "error": "InstructionError(1, Custom(6007)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777"
+    },
+    {
+      "name": "config_at_another_address",
+      "error": "InstructionError(1, InvalidSeeds) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: Provided seeds do not result in a valid address"
+    },
+    {
+      "name": "user_not_signing",
+      "error": "InstructionError(1, MissingRequiredSignature) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: missing required signature for instruction"
+    }
+  ],
+  "admin": [
+    {
+      "name": "route_before_initialize",
+      "error": "InstructionError(1, InvalidAccountOwner) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: Invalid account owner"
+    },
+    {
+      "name": "initialize_by_a_stranger",
+      "error": "InstructionError(0, Custom(6017)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1781"
+    },
+    {
+      "name": "initialize_with_another_program_data",
+      "error": "InstructionError(0, Custom(6018)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1782"
+    },
+    {
+      "name": "initialize_with_another_system_program",
+      "error": "InstructionError(0, IncorrectProgramId) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: incorrect program id for instruction"
+    },
+    {
+      "name": "initialize_off_the_config_address",
+      "error": "InstructionError(0, InvalidSeeds) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: Provided seeds do not result in a valid address"
+    },
+    {
+      "name": "initialize_with_a_zero_admin",
+      "error": "InstructionError(0, Custom(6016)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1780"
+    },
+    {
+      "name": "lamports_sent_to_the_config_first"
+    },
+    {
+      "name": "initialize",
+      "config": {
+        "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+        "paused": true
+      }
+    },
+    {
+      "name": "initialize_again",
+      "error": "InstructionError(0, Custom(0)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x0",
+      "config": {
+        "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+        "paused": true
+      }
+    },
+    {
+      "name": "route_while_paused",
+      "error": "InstructionError(1, Custom(6000)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1770",
+      "config": {
+        "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+        "paused": true
+      }
+    },
+    {
+      "name": "unpause_by_the_upgrade_authority",
+      "error": "InstructionError(0, Custom(6015)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177f",
+      "config": {
+        "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+        "paused": true
+      }
+    },
+    {
+      "name": "unpause_without_the_admin_signing",
+      "error": "InstructionError(0, MissingRequiredSignature) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: missing required signature for instruction",
+      "config": {
+        "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+        "paused": true
+      }
+    },
+    {
+      "name": "unpause",
+      "config": {
+        "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+        "paused": false
+      }
+    },
+    {
+      "name": "route",
+      "paid": 8548637,
+      "config": {
+        "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+        "paused": false
+      }
+    },
+    {
+      "name": "set_a_zero_admin",
+      "error": "InstructionError(0, Custom(6016)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1780",
+      "config": {
+        "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+        "paused": false
+      }
+    },
+    {
+      "name": "set_admin",
+      "config": {
+        "admin": "AoVsGaj8MSJ6xwKxfFxo9iZWH3enC8RRTXKH2fx2F8os",
+        "paused": false
+      }
+    },
+    {
+      "name": "pause_by_the_previous_admin",
+      "error": "InstructionError(0, Custom(6015)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177f",
+      "config": {
+        "admin": "AoVsGaj8MSJ6xwKxfFxo9iZWH3enC8RRTXKH2fx2F8os",
+        "paused": false
+      }
+    },
+    {
+      "name": "pause",
+      "config": {
+        "admin": "AoVsGaj8MSJ6xwKxfFxo9iZWH3enC8RRTXKH2fx2F8os",
+        "paused": true
+      }
+    },
+    {
+      "name": "route_after_pause",
+      "error": "InstructionError(1, Custom(6000)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1770",
+      "config": {
+        "admin": "AoVsGaj8MSJ6xwKxfFxo9iZWH3enC8RRTXKH2fx2F8os",
+        "paused": true
+      }
+    }
+  ]
+}

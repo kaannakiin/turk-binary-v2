@@ -42,10 +42,12 @@ test-onchain *args:
 
 # LiteSVM: every swap the CPMM replay corpus paid, sent through the router as /swap-instructions
 # builds it, on the same accounts and mainnet bytecode. Writes crates/tx/src/tests/fixtures/router_replay.json.
-router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz":
+router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz" scenario_pools="crates/tx/src/tests/fixtures/scenario_pools.json.gz":
     NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
-    ROUTER_PLANS={{justfile_directory()}}/target/router-plans.json cargo nextest run -p server --run-ignored only router_replay_plans --no-capture
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/short-venue/Cargo.toml
+    ROUTER_PLANS={{justfile_directory()}}/target/router-plans.json ROUTER_SCENARIO_PLANS={{justfile_directory()}}/target/router-scenario-plans.json cargo nextest run -p server --run-ignored only router_ --no-capture
     cargo run --manifest-path oracle/Cargo.toml -- router {{corpus}} target/router-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_replay.json
+    cargo run --manifest-path oracle/Cargo.toml -- router-scenarios {{scenario_pools}} target/router-scenario-plans.json oracle/programs onchain/target/deploy/router.so onchain/target/deploy/short_venue.so crates/tx/src/tests/fixtures/router_scenarios.json
 
 watch config="config.toml":
     cargo run -p turk-binary -- watch --config {{config}}

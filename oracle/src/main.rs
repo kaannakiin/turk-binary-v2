@@ -6,6 +6,7 @@
 
 mod router;
 mod rpc;
+mod scenarios;
 mod snapshot;
 mod svm;
 mod venue;
@@ -269,8 +270,10 @@ fn write(path: &Path, fixture: &Fixture<'_>) {
 
 fn main() {
     let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-    if args.first().is_some_and(|mode| mode.as_os_str() == "router") {
-        return router::main(&args[1..]);
+    match args.first().and_then(|mode| mode.to_str()) {
+        Some("router") => return router::main(&args[1..]),
+        Some("router-scenarios") => return scenarios::main(&args[1..]),
+        _ => {}
     }
     let [snapshot_path, programs, out_dir] = args.as_slice() else {
         eprintln!("usage: oracle SNAPSHOT PROGRAMS_DIR OUT_DIR");

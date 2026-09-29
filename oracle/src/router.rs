@@ -18,16 +18,47 @@ use solana_pubkey::Pubkey;
 
 use crate::rpc;
 use crate::snapshot::{Account, Clock, Pool, Stored};
-use crate::svm::{self, Machine};
+use crate::svm::{self, Machine, Sent};
 
 // src: onchain/programs/router/src/lib.rs (declare_id!)
-const ROUTER: Pubkey = Pubkey::from_str_const("TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3");
+pub const ROUTER: Pubkey = Pubkey::from_str_const("TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3");
 
 #[derive(Deserialize)]
-struct Corpus {
-    clock: Clock,
-    pools: Vec<Pool>,
-    extra: Vec<Account>,
+pub struct Corpus {
+    pub clock: Clock,
+    pub pools: Vec<Pool>,
+    pub extra: Vec<Account>,
+}
+
+impl Corpus {
+    /// The corpus and the gzipped bytes it was read from.
+    pub fn read(path: &Path) -> (Self, Vec<u8>) {
+        let raw = std::fs::read(path).expect("reading the corpus");
+        let corpus = serde_json::from_reader(GzDecoder::new(BufReader::new(&raw[..])))
+            .expect("parsing the corpus");
+        (corpus, raw)
+    }
+
+    pub fn accounts(&self) -> HashMap<Pubkey, Option<Stored>> {
+        let mut accounts: HashMap<Pubkey, Option<Stored>> = HashMap::new();
+        for pool in &self.pools {
+            accounts.extend(pool.accounts());
+        }
+        for account in &self.extra {
+            accounts.insert(account.key(), account.stored());
+        }
+        accounts
+    }
+}
+
+pub fn machine(programs: &Path, router: &[u8]) -> Machine {
+    let rent = rpc::fetch(&[svm::RENT])
+        .remove(&svm::RENT)
+        .flatten()
+        .expect("Rent sysvar");
+    let mut machine = Machine::new(programs, &rent.data);
+    machine.add_program(ROUTER, router);
+    machine
 }
 
 #[derive(Deserialize)]
@@ -51,7 +82,7 @@ struct Plan {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct InstructionBody {
+pub struct InstructionBody {
     program_id: String,
     accounts: Vec<AccountBody>,
     data: String,
@@ -66,7 +97,7 @@ struct AccountBody {
 }
 
 impl InstructionBody {
-    fn instruction(&self) -> Instruction {
+    pub fn instruction(&self) -> Instruction {
         Instruction {
             program_id: self.program_id.parse().expect("program id"),
             accounts: self
@@ -121,27 +152,12 @@ pub fn main(args: &[PathBuf]) {
         eprintln!("usage: oracle router CORPUS PLANS PROGRAMS_DIR ROUTER_SO OUT");
         std::process::exit(2);
     };
-    let corpus_raw = std::fs::read(corpus_path).expect("reading the corpus");
-    let corpus: Corpus = serde_json::from_reader(GzDecoder::new(BufReader::new(&corpus_raw[..])))
-        .expect("parsing the corpus");
+    let (corpus, corpus_raw) = Corpus::read(corpus_path);
     let plans: Plans = serde_json::from_slice(&std::fs::read(plans_path).expect("reading plans"))
         .expect("parsing plans");
     let router = std::fs::read(router_so).expect("reading the router program");
-
-    let rent = rpc::fetch(&[svm::RENT])
-        .remove(&svm::RENT)
-        .flatten()
-        .expect("Rent sysvar");
-    let mut machine = Machine::new(programs, &rent.data);
-    machine.add_program(ROUTER, &router);
-
-    let mut accounts: HashMap<Pubkey, Option<Stored>> = HashMap::new();
-    for pool in &corpus.pools {
-        accounts.extend(pool.accounts());
-    }
-    for account in &corpus.extra {
-        accounts.insert(account.key(), account.stored());
-    }
+    let mut machine = machine(programs, &router);
+    let accounts = corpus.accounts();
 
     let cases = plans
         .plans
@@ -152,7 +168,10 @@ pub fn main(args: &[PathBuf]) {
         .iter()
         .filter(|case| case.paid.as_deref() == Some(case.expected_out.as_str()))
         .count();
-    eprintln!("{} plans, {paid} paid exactly what the venue paid", cases.len());
+    eprintln!(
+        "{} plans, {paid} paid exactly what the venue paid",
+        cases.len()
+    );
 
     let replay = Replay {
         provenance: Provenance {
@@ -185,27 +204,37 @@ fn run(
     };
     let instructions = |plan: &Plan| {
         let mut all = vec![svm::compute_limit()];
-        all.extend(plan.setup_instructions.iter().map(InstructionBody::instruction));
+        all.extend(
+            plan.setup_instructions
+                .iter()
+                .map(InstructionBody::instruction),
+        );
         all.push(plan.swap_instruction.instruction());
-        all.extend(plan.cleanup_instructions.iter().map(InstructionBody::instruction));
+        all.extend(
+            plan.cleanup_instructions
+                .iter()
+                .map(InstructionBody::instruction),
+        );
         all
     };
     match replay(machine, clock, accounts, plan, |machine| {
         machine.send_measured(&instructions(plan))
     }) {
-        Ok((paid, units)) => {
+        Ok((paid, sent)) => {
             case.paid = Some(paid.to_string());
-            case.compute_units = Some(units);
+            case.compute_units = Some(sent.compute_units);
         }
         Err(error) => case.error = Some(error),
     }
-    let transaction = STANDARD.decode(&plan.transaction).expect("base64 transaction");
+    let transaction = STANDARD
+        .decode(&plan.transaction)
+        .expect("base64 transaction");
     match replay(machine, clock, accounts, plan, |machine| {
         machine.send_unsigned(&transaction)
     }) {
-        Ok((paid, units)) => {
+        Ok((paid, sent)) => {
             case.v1_paid = Some(paid.to_string());
-            case.v1_compute_units = Some(units);
+            case.v1_compute_units = Some(sent.compute_units);
         }
         Err(error) => case.v1_error = Some(error),
     }
@@ -219,8 +248,8 @@ fn replay(
     clock: &Clock,
     accounts: &HashMap<Pubkey, Option<Stored>>,
     plan: &Plan,
-    send: impl FnOnce(&mut Machine) -> Result<u64, String>,
-) -> Result<(u64, u64), String> {
+    send: impl FnOnce(&mut Machine) -> Result<Sent, String>,
+) -> Result<(u64, Sent), String> {
     machine.set_clock(clock);
     machine.load(accounts);
     let (config, account) = unpaused_config();
@@ -241,11 +270,11 @@ fn replay(
         (&output, &program_of(&output)),
         amount_in,
     )?;
-    let units = send(machine)?;
-    Ok((machine.balance(&destination), units))
+    let sent = send(machine)?;
+    Ok((machine.balance(&destination), sent))
 }
 
-fn unpaused_config() -> (Pubkey, SolanaAccount) {
+pub fn unpaused_config() -> (Pubkey, SolanaAccount) {
     let (address, bump) = Pubkey::find_program_address(&[router_wire::CONFIG_SEED], &ROUTER);
     let config = router_wire::Config {
         admin: [1; 32],

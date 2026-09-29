@@ -16,15 +16,40 @@ The compute unit limit has the same shape: per-venue budgets from `just router-r
 
 ## Router behaviour not yet proven by execution
 
-`just router-replay` runs single-hop CPMM swaps with the user's accounts already created, SOL neither wrapped nor unwrapped, and the router's config written directly as initialized and unpaused. Before a mainnet deploy, each of these needs a run on the real program:
+`just router-replay` runs the router's own paths on mainnet's bytecode ([router.md](router.md) → Status lists them). Two refusals stay unreached because an earlier check always fires first: the venue program ID in `hop::invoke` (the adapter's window check precedes it) and an unsigned `initialize` payer (the payer there also pays the fee). The venues without an adapter are not reached at all.
 
-| Test                                                                          | What it proves                                                                                                                              |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Two hops with a balance already in the intermediate account                   | Only what the route produced is spent onward; the rest stays with the user.                                                                 |
-| A route that pays less than its threshold                                     | The transaction fails and every swap in it is rolled back.                                                                                  |
-| SOL wrapped and unwrapped, with and without a WSOL account                    | Setup and cleanup leave the balances stated; closing the WSOL account also unwraps SOL the user already held there, which the API must say. |
-| Setup that creates the output account                                         | The measured compute and loaded data still fit the budgets.                                                                                 |
-| `initialize` by the upgrade authority and by anyone else; pause; admin change | The admin checks hold in program execution, not only in review.                                                                             |
+## Transfer-hook mints
+
+`quoter` refuses any mint whose transfer hook names a program (`QuoteError::TransferHook`); a hook extension with no program routes like any other mint (scenario `hook_extension_without_a_program`). Checked 2026-09-29 from source and mainnet:
+
+- **What a hook can do.** Token-2022 runs the hook inside `TransferChecked`, after the balances have moved, with source, mint, destination and authority read-only and unsigned (solana-program/token-2022@f4a1c94 `program/src/processor.rs` `process_transfer`; solana-program/transfer-hook@ec70632 `interface/src/instruction.rs` `execute`). It cannot change the amount or move that transfer's tokens; it can only fail the transfer or act on the extra accounts it is given. Plain `Transfer` fails for a hook mint (`MintRequiredForTransfer`). So the router's balance checks stay sound; what a hook adds is failure, compute and accounts.
+- **Resolving it off chain.** The extra accounts live in the hook program's PDA `["extra-account-metas", mint]` as a TLV list of 35-byte `ExtraAccountMeta` entries (fixed keys, PDAs seeded by literals, instruction data, account keys or account data). A client resolves them from on-chain data (`spl_transfer_hook_interface::offchain::add_extra_account_metas_for_execute`), so the market can hold them in memory like any pool account. Seeds may depend on the transfer amount and the real source and destination, so resolution must use the hop's own accounts and amount.
+- **CPI depth.** Mainnet allows 5 instruction levels (anza-xyz/agave@fd02ff5 `program-runtime/src/execution_budget.rs` `MAX_INSTRUCTION_STACK_DEPTH`; the SIMD-0268 feature `6TkHkRmP7JZy1fdM6fg5uXn76wChQBWGokHBJzrLB3mj` has no account at slot 451587654). Router → venue → Token-2022 → hook is 4, so a hook may make one CPI of its own and no deeper chain.
+- **Which venues can pass hook accounts:**
+
+| Venue                     | Hook mints in pools                                                                                                                            | Swap passes hook accounts                                                                                                          |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Raydium AMM v4            | no (SPL Token only)                                                                                                                            | no                                                                                                                                 |
+| Raydium CPMM, CLMM        | only through an admin `SupportMintAssociated` (the allowlist in `is_supported_mint` excludes TransferHook); none found among 2459 listed mints | no: `transfer_checked` with the four base accounts (raydium-cp-swap@59fb845 `utils/token.rs`)                                      |
+| Orca Whirlpool            | with a `TokenBadge`; 11 badged mints with active hooks, e.g. `5oCpEpFo…` (hook `Dercf2y5…`, 33 pools)                                          | yes: `swap_v2` `RemainingAccountsInfo` slices `TransferHookA/B` (orca-so/whirlpools@408c945 `util/v2/remaining_accounts_utils.rs`) |
+| Meteora DLMM              | with a token badge; 15 badged mints with hooks, e.g. `5Kd9TCEP…` (hook `BFy4nC9A…`, 13 pools)                                                  | yes: `swap2` `remaining_accounts_info` slices `TransferHookX/Y` (dlmm-sdk@576919e `idls/dlmm.json`)                                |
+| Meteora DAMM v2           | only inert hooks without a badge; none found in pools                                                                                          | no remaining accounts in swap                                                                                                      |
+| Meteora DAMM v1, PumpSwap | none found                                                                                                                                     | no hook accounts in the instruction (closed source; from the IDL)                                                                  |
+
+OKX's open-source router passes no hook accounts either (`adapters/whirlpool.rs` sends `remaining_accounts_info = None`).
+
+Routing hook mints therefore belongs to the Whirlpool and DLMM adapters: the market subscribes each hook mint's validation PDA and the accounts its seeds read; `quoter` resolves the extras per hop and puts them in the window; the router's wire already carries `hook_a` and `hook_b` counts per hop for them; the adapter writes the `RemainingAccountsInfo` slices. Each hook's extras (9 to 15 on the Orca mints seen) come out of the 64-account budget, a writable extra must be writable in the transaction, and the hook programs to trust should be an allowlist, starting from the venues' badge lists.
+
+### How a cycle is told
+
+The router calls a route a cycle when its source and destination are the same **account**, and then requires `min_out > in_amount`. A route from the user's WSOL ATA to another WSOL account the user owns is not a cycle to it. `tx` compares mints and refuses such a route with `UNPROFITABLE_CYCLE`, so nothing the server builds reaches the program that way.
+
+OKX, whose router Pallas builds for, checks less (checked 2026-09-29):
+
+- Its open-source router ([okxlabs/Web3-DEX-Router-Solana-V1](https://github.com/okxlabs/Web3-DEX-Router-Solana-V1) @ `677d3ec`, `programs/dex-solana/src/instructions/common_swap.rs`) measures the destination account's balance change against `min_return` and never compares mints. When source and destination are one account, that change is output minus input, so a losing cycle fails its `checked_sub`. The deployed program, `6m2CDdhRgxpH4WjvdzxAYbGxwdGUz5MziiL5jek2kBma`, last ran at slot 436855038 and its ProgramData is closed.
+- Pallas builds for `proVF4pMXVaYqmy4NjniPh4pqKNfMmsihgd4wdkCX3u` ([okx/dex-solana-binary](https://github.com/okx/dex-solana-binary) `docs/api-swap-instruction.md`), whose source is not published. Its docs tell a cycle by mint in the API (`fromTokenAddress == toTokenAddress`), set the on-chain minimum to the quoted output less slippage, and say a cycle's quote may pay less than its input (`docs/cyclic-arbitrage.md`). Nothing on chain requires a profit.
+
+So our program is already stricter than both, and the mint check lives where they keep it, off chain. A mint check in the program would cost two account reads per route. Whether to add one is still open.
 
 ## CI
 

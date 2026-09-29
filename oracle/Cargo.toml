@@ -1,4 +1,4 @@
-# Its own workspace: LiteSVM 0.16 pins solana-address ~2.6 while `domain`
+# Its own workspace: LiteSVM 0.17 resolves solana-address 2.7 while `domain`
 # needs ^2.8, and LiteSVM with the Solana v4 transaction stack stays out of
 # the bot's dependency graph and its `cargo deny` policy. It never links
 # `quoter`: it writes what the programs paid, and `quoter`'s tests compare.
@@ -39,6 +39,7 @@ solana-account = "4"
 solana-clock = "3"
 solana-instruction.workspace = true
 solana-keypair = "3"
+solana-loader-v3-interface = { version = "8.1.1", features = ["wincode"] }
 solana-message = "4"
 solana-pubkey.workspace = true
 solana-rent = "4"

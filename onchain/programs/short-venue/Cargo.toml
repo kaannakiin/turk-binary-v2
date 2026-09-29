@@ -1,0 +1,24 @@
+[package]
+name = "short-venue"
+description = "Test double for the router scenarios, never deployed: a venue that takes what its config says, not what it is offered"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+pinocchio.workspace = true
+router-core.workspace = true
+
+# On the solana target these are syscalls; the host needs the curve to derive PDAs.
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+solana-address = { version = "2", features = ["curve25519"] }
+
+[lints]
+workspace = true

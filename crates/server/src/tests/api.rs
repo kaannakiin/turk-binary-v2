@@ -58,7 +58,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(threads: usize, max_queued: usize) -> Self {
-        let universe = universe::load_from(CPMM);
+        Self::over(CPMM, threads, max_queued)
+    }
+
+    fn over(corpus: &str, threads: usize, max_queued: usize) -> Self {
+        let universe = universe::load_from(corpus);
         let quotes = QuoteSlot::default();
         quotes.attach(universe.reader);
         Self {
@@ -558,6 +562,173 @@ async fn router_replay_plans() {
     let file = std::fs::File::create(&out).expect("creating the plans file");
     serde_json::to_writer(file, &json!({ "corpus": CPMM, "plans": plans })).expect("writing plans");
     eprintln!("{} plans written to {out}", plans.len());
+}
+
+const SCENARIO_POOLS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tx/src/tests/fixtures/scenario_pools.json.gz"
+);
+const NEAR: &str = "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG";
+const DHC: &str = "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ";
+const DAILY: &str = "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX";
+const IMG: &str = "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh";
+const SOLADAO: &str = "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi";
+const MU: &str = "MUxEsUKSMACyw5fZf68wxf5FLnZVhtU9CwH8uNNGay1";
+const WIWI: &str = "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs";
+// src: mainnet getAccountInfo AY2sSqL3… jsonParsed at slot 451583673 (transferFeeConfig: older
+// 3000 bps from epoch 1032, newer 2500 bps from epoch 1044).
+const BEFORE_THE_FEE_CHANGE: u64 = 1_043;
+
+/// Name, from, to, amount, wrap SOL, hops, Clock epoch.
+type Wanted<'a> = (&'a str, &'a str, &'a str, &'a str, bool, u8, Option<u64>);
+
+async fn scenario_quote(fixture: &Fixture, from: &str, to: &str, amount: &str, hops: u8) -> Value {
+    let request = json!({
+        "fromTokenAddress": from,
+        "toTokenAddress": to,
+        "amount": amount,
+        "maxHops": hops,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{from} → {to}: {quote}");
+    quote
+}
+
+async fn scenario_plan(
+    fixture: &Fixture,
+    name: &str,
+    quote: &Value,
+    wrap: bool,
+    epoch: Option<u64>,
+) -> Value {
+    let body = json!({
+        "userPublicKey": ORACLE_PAYER,
+        "wrapAndUnwrapSol": wrap,
+        "quoteResponse": quote,
+    });
+    let (status, _, built) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+    assert_eq!(status, StatusCode::OK, "{name}: {built}");
+    let (status, _, swap) = call(fixture.router(), post_to("/swap", &body)).await;
+    assert_eq!(status, StatusCode::OK, "{name}: {swap}");
+    let legs = quote["legs"].as_array().expect("legs");
+    json!({
+        "name": name,
+        "inputMint": quote["fromTokenAddress"],
+        "outputMint": quote["toTokenAddress"],
+        "amountIn": quote["fromTokenAmount"],
+        "epoch": epoch,
+        "legs": legs.iter().map(|leg| json!({
+            "pool": leg["poolAddress"],
+            "inputMint": leg["fromTokenAddress"],
+            "outputMint": leg["toTokenAddress"],
+        })).collect::<Vec<_>>(),
+        "setupInstructions": built["setupInstructions"],
+        "swapInstruction": built["swapInstruction"],
+        "cleanupInstructions": built["cleanupInstructions"],
+        "transaction": swap["transaction"],
+    })
+}
+
+/// The swaps `just router-replay` runs as scenarios over `scenario_pools`,
+/// each route pinned by its hop count. DHC, DAILY, IMG, SOLADAO, MU and WIWI
+/// are Token-2022 mints: DAILY, IMG and SOLADAO charge a transfer fee, and MU
+/// carries a transfer hook extension with no program.
+#[tokio::test]
+#[ignore = "writes the router scenario plans for `just router-replay`"]
+async fn router_scenario_plans() {
+    use route::PoolFeed as _;
+
+    let out = std::env::var("ROUTER_SCENARIO_PLANS").expect("names the plans file");
+    let fixture = Fixture::over(SCENARIO_POOLS, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let sol = sol_to_usdc()["fromTokenAddress"]
+        .as_str()
+        .expect("SOL")
+        .to_owned();
+    let clock = fixture.feed.clock().expect("the corpus Clock");
+    let wanted: [Wanted<'_>; 10] = [
+        ("two_hop", &sol, NEAR, "100000000", false, 2, None),
+        ("single", &sol, USDC, "100000000", false, 1, None),
+        ("wrap_in", &sol, USDC, "100000000", true, 1, None),
+        ("unwrap_out", USDC, &sol, "10000000", true, 1, None),
+        ("token_2022_out", &sol, DHC, "100000000", false, 1, None),
+        ("transfer_fee_out", &sol, DAILY, "100000000", false, 2, None),
+        (
+            "transfer_fee_in",
+            DAILY,
+            USDC,
+            "10000000000000",
+            false,
+            1,
+            None,
+        ),
+        (
+            "transfer_fee_after_its_change",
+            &sol,
+            SOLADAO,
+            "100000000",
+            false,
+            1,
+            None,
+        ),
+        (
+            "transfer_fee_before_its_change",
+            &sol,
+            SOLADAO,
+            "100000000",
+            false,
+            1,
+            Some(BEFORE_THE_FEE_CHANGE),
+        ),
+        (
+            "hook_extension_without_a_program",
+            WIWI,
+            MU,
+            "100000000000",
+            false,
+            1,
+            None,
+        ),
+    ];
+    let mut plans = Vec::new();
+    for (name, from, to, amount, wrap, hops, epoch) in wanted {
+        if let Some(epoch) = epoch {
+            fixture.feed.set(domain::ChainClock { epoch, ..clock });
+        }
+        let quote = scenario_quote(&fixture, from, to, amount, hops).await;
+        assert_eq!(
+            quote["legs"].as_array().expect("legs").len(),
+            usize::from(hops),
+            "{name}"
+        );
+        plans.push(scenario_plan(&fixture, name, &quote, wrap, epoch).await);
+        fixture.feed.set(clock);
+    }
+
+    // A client's own route, sent back as one quote: SOL → IMG and IMG → USDC, each quoted alone.
+    let first = scenario_quote(&fixture, &sol, IMG, "100000000", 1).await;
+    let paid = first["toTokenAmount"].as_str().expect("an amount");
+    let second = scenario_quote(&fixture, IMG, USDC, paid, 1).await;
+    let mut both = first.clone();
+    both["toTokenAddress"] = second["toTokenAddress"].clone();
+    both["toTokenAmount"] = second["toTokenAmount"].clone();
+    both["otherAmountThreshold"] = second["otherAmountThreshold"].clone();
+    both["legs"] = json!([first["legs"][0], second["legs"][0]]);
+    let both = both.as_object().expect("a quote").clone();
+    let both = Value::Object(
+        both.into_iter()
+            .filter(|(key, _)| key != "search" && key != "crossStream")
+            .collect(),
+    );
+    plans.push(scenario_plan(&fixture, "transfer_fee_intermediate", &both, false, None).await);
+
+    let file = std::fs::File::create(&out).expect("creating the plans file");
+    serde_json::to_writer(file, &json!({ "corpus": SCENARIO_POOLS, "plans": plans }))
+        .expect("writing plans");
+    eprintln!("{} scenario plans written to {out}", plans.len());
 }
 
 #[tokio::test]

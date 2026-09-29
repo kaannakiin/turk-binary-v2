@@ -461,3 +461,5 @@ fn a_cycle_is_built_only_when_its_threshold_exceeds_its_input() {
     }
     assert!(build(&cycle(1_001)).is_ok());
 }
+
+mod scenarios;

@@ -306,13 +306,13 @@ Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 }
 ```
 
-| Field                 | Required    | Meaning                                                                                           |
-| --------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
-| `userPublicKey`       | yes         | The wallet that signs, pays the fee and owns the token accounts.                                  |
-| `quoteRequest`        | one of them | A `/quote` body: the route is searched in this request, over the venues the router supports only. |
-| `quoteResponse`       | one of them | A `/quote` answer sent back unchanged: no search, no requote.                                     |
-| `wrapAndUnwrapSol`    | no          | Default `true`: a SOL input is wrapped into the user's WSOL account first and unwrapped after.    |
-| `priorityFeeLamports` | no          | The v1 transaction's priority fee, total lamports (not per compute unit). Default 0.              |
+| Field                 | Required    | Meaning                                                                                                                                                                                       |
+| --------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `userPublicKey`       | yes         | The wallet that signs, pays the fee and owns the token accounts.                                                                                                                              |
+| `quoteRequest`        | one of them | A `/quote` body: the route is searched in this request, over the venues the router supports only.                                                                                             |
+| `quoteResponse`       | one of them | A `/quote` answer sent back unchanged: no search, no requote.                                                                                                                                 |
+| `wrapAndUnwrapSol`    | no          | Default `true`: a SOL input is wrapped into the user's WSOL account first, a SOL output is paid into it, and the account is closed after, which unwraps WSOL the user already held there too. |
+| `priorityFeeLamports` | no          | The v1 transaction's priority fee, total lamports (not per compute unit). Default 0.                                                                                                          |
 
 A `quoteResponse`'s `search` and `crossStream` are echoed back as sent, or left out when it has none: nothing is searched or priced again to know them. A `quoteRequest` is searched over the pools its `dexes` and `excludeDexes` admit **and** the router can swap through; naming only venues the router lacks finds `NO_ROUTE`, never a route through another venue.
 
@@ -342,7 +342,7 @@ A `quoteResponse` is refused with `QUOTE_EXPIRED` when its `contextSlot` is more
 }
 ```
 
-- **Setup** creates every token account the route pays into (`CreateIdempotent`) and, for a SOL input, wraps it. **Cleanup** closes the WSOL account.
+- **Setup** creates every token account the route pays into (`CreateIdempotent`) and, for a SOL input, wraps it. **Cleanup** closes the WSOL account: all of its balance comes back as SOL, including WSOL the user held before the swap.
 - **The swap** is the router's `route` instruction ([router.md](router.md)): the router checks every hop's real balance change and that the route paid at least `otherAmountThreshold`.
 - **`computeUnitLimit`** is `tx::compute_unit_limit`: per-hop budgets above what `just router-replay` measured, plus a flat allowance for setup. There are no Compute Budget instructions: a v1 transaction carries the limit and the priority fee in its config (AGENTS.md → Transaction format).
 - **`loadedAccountsDataSizeLimit`** must be set too: a v1 transaction that leaves it unset may load 0 bytes and fails with `MaxLoadedAccountsDataSizeExceeded` before any instruction runs. `tx` sizes it from the programs and accounts of the transaction (`crates/tx/src/budget.rs`, see [open-work.md](open-work.md)); a program without a known size is refused.
@@ -412,11 +412,12 @@ A market failure skips the drain delay, since its state no longer updates, then 
 
 ## LiteSVM oracle
 
-`oracle/` is its own Cargo workspace, outside the bot's dependency graph and `cargo deny`: LiteSVM 0.16 and its Solana v4 stack cannot share a lockfile with `domain` (`solana-address` ~2.6 against ^2.8). It never links `quoter`.
+`oracle/` is its own Cargo workspace, outside the bot's dependency graph and `cargo deny`: LiteSVM 0.17 and its Solana v4 stack resolve `solana-address` 2.7, which cannot share a lockfile with `domain` (^2.8). It never links `quoter`.
 
 1. `just snapshot` (`turk-binary snapshot`) syncs the market like `watch`, then writes up to `--per-dex` ready pools per DEX with the accounts their views hold and the Clock. With `--all` (`just snapshot-universe`, to `oracle/snapshots/universe.json.gz`) it writes every ready pool: the frozen universe the route search is measured and compared on.
 2. `just oracle` dumps the deployed bytecode of every program a swap touches (`scripts/dump_programs.py`, public endpoint; `oracle/programs/programs.tsv` records each program's deploy slot and hash), loads it into LiteSVM with mainnet's Rent sysvar and the snapshot's Clock, and runs each pool's swaps both ways at fractions of the input reserve and a fixed ladder of sizes. The instructions come from `oracle/arb-swap-ix`, the previous repo's builders. Accounts a swap passes but no quote reads come from the public endpoint. The user's token accounts are created by the ATA program, so Token-2022 accounts get their extensions. What the program paid, or why it refused, is written to `crates/quoter/src/tests/fixtures/svm/`.
 3. `quoter`'s `svm` tests rebuild each pool's closure from the snapshot bytes with `dex::closure`, decode it as the route threads do and require every quote to equal the program's payout, and every refusal to be a refusal.
+4. `just router-replay` runs the router itself: `oracle router` and `oracle router-scenarios`, described in [router.md](router.md) → Status.
 
 ## Provider probes
 

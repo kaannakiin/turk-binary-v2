@@ -2,7 +2,7 @@
 # rustc, and pinocchio's stack must not unify with the bot's dependency graph.
 [workspace]
 resolver = "3"
-members = ["crates/router-core", "crates/router-wire", "programs/router"]
+members = ["crates/router-core", "crates/router-wire", "programs/router", "programs/short-venue"]
 
 [workspace.package]
 version = "0.1.0"

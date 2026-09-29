@@ -20,7 +20,7 @@ crates/server/      # lib: HTTP serving (axum): quote API, search thread pool, /
 crates/tx/          # lib: route → router instruction, ATA and WSOL setup/cleanup, v1 account budget; no I/O
 docs/               # user docs: architecture, config, DEX table
 oracle/             # separate workspace: LiteSVM replay of snapshot swaps on mainnet's deployed programs
-onchain/            # separate workspace: the pinocchio router program (router-wire, router-core, programs/router)
+onchain/            # separate workspace: the pinocchio router program (router-wire, router-core, programs/router) and programs/short-venue, a never-deployed test venue
 ```
 
 Every crate's `Cargo.toml`:
@@ -193,7 +193,7 @@ just find-fee-mints            # read-only, project RPC: Token-2022 mints whose 
 just lint-onchain              # router program workspace: fmt --check + clippy -D warnings
 just build-onchain             # cargo build-sbf → onchain/target/deploy/router.so
 just test-onchain              # router program workspace tests (nextest; ask first like any suite)
-just router-replay             # LiteSVM: the CPMM replay corpus's swaps through the router → tx fixture (ask first)
+just router-replay             # LiteSVM: the CPMM replay corpus's swaps and the router scenarios through the router → tx fixtures (ask first)
 just ci                        # everything CI runs
 ```
 
