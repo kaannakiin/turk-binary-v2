@@ -1,4 +1,4 @@
-use crate::{CONFIG_LEN, Config, DecodeError, Hop, Route, RouterInstruction};
+use crate::{CONFIG_LEN, Config, DecodeError, FlowRoute, FlowStep, Hop, Route, RouterInstruction};
 
 fn two_hop_route() -> RouterInstruction {
     let hops = [
@@ -55,6 +55,120 @@ fn every_instruction_matches_the_documented_bytes() {
 }
 
 #[test]
+fn flow_instruction_round_trips_with_bounded_slots_and_steps() {
+    let flow = FlowRoute::new(
+        1_000,
+        900,
+        3,
+        &[
+            FlowStep {
+                source_slot: 0,
+                destination_slot: 2,
+                numerator: 1,
+                denominator: 1,
+                hop: Hop {
+                    kind: 3,
+                    hook_a: 0,
+                    hook_b: 0,
+                    tail: 0,
+                    min_out: 900,
+                },
+            },
+            FlowStep {
+                source_slot: 2,
+                destination_slot: 1,
+                numerator: 1,
+                denominator: 1,
+                hop: Hop {
+                    kind: 3,
+                    hook_a: 0,
+                    hook_b: 0,
+                    tail: 0,
+                    min_out: 900,
+                },
+            },
+        ],
+    )
+    .unwrap();
+    let instruction = RouterInstruction::Flow(flow);
+    let encoded = instruction.encode();
+
+    assert_eq!(encoded[0], 4);
+    assert_eq!(RouterInstruction::decode(&encoded), Ok(instruction));
+}
+
+#[test]
+fn flow_rejects_invalid_allocation_and_non_dag_order() {
+    let hop = Hop {
+        kind: 3,
+        hook_a: 0,
+        hook_b: 0,
+        tail: 0,
+        min_out: 1,
+    };
+    assert_eq!(
+        FlowRoute::new(
+            100,
+            1,
+            3,
+            &[FlowStep {
+                source_slot: 0,
+                destination_slot: 2,
+                numerator: 2,
+                denominator: 1,
+                hop,
+            }],
+        ),
+        Err(DecodeError::FlowAllocation)
+    );
+    assert_eq!(
+        FlowRoute::new(
+            100,
+            1,
+            3,
+            &[FlowStep {
+                source_slot: 2,
+                destination_slot: 1,
+                numerator: 1,
+                denominator: 1,
+                hop,
+            }],
+        ),
+        Err(DecodeError::FlowGraph)
+    );
+    assert_eq!(
+        FlowRoute::new(
+            100,
+            1,
+            3,
+            &[FlowStep {
+                source_slot: 0,
+                destination_slot: 2,
+                numerator: 1,
+                denominator: 1,
+                hop,
+            }],
+        ),
+        Err(DecodeError::FlowGraph)
+    );
+    assert_eq!(
+        FlowRoute::new(
+            100,
+            1,
+            2,
+            &[FlowStep {
+                source_slot: 0,
+                destination_slot: 1,
+                numerator: 1,
+                denominator: 2,
+                hop,
+            }],
+        ),
+        Err(DecodeError::FlowGraph)
+    );
+}
+
+#[test]
 fn malformed_instruction_data_is_refused_with_its_reason() {
     let mut wrong_version = TWO_HOP_ROUTE_BYTES;
     wrong_version[1] = 1;
@@ -68,7 +182,7 @@ fn malformed_instruction_data_is_refused_with_its_reason() {
 
     let cases: [(&str, Vec<u8>, DecodeError); 10] = [
         ("empty", vec![], DecodeError::Length),
-        ("unknown tag", vec![4], DecodeError::UnknownInstruction),
+        ("unknown tag", vec![6], DecodeError::UnknownInstruction),
         (
             "route version",
             wrong_version.to_vec(),

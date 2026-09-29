@@ -4,8 +4,14 @@ use domain::DexKind;
 pub enum TxError {
     #[error("the route has no hop")]
     EmptyRoute,
+    #[error("the flow has no operation")]
+    EmptyFlow,
     #[error("the router runs at most {max} hops, the route has {hops}")]
     TooManyHops { hops: usize, max: usize },
+    #[error("the flow has {steps} operations, a flow holds at most {max}")]
+    TooManyFlowSteps { steps: usize, max: usize },
+    #[error("the flow has {slots} slots, a flow holds at most {max}")]
+    TooManyFlowSlots { slots: usize, max: usize },
     #[error("the router has no adapter for {0}")]
     Unsupported(DexKind),
     #[error("a cycle must require more than it spends: threshold {min_out}, input {amount_in}")]
@@ -16,6 +22,12 @@ pub enum TxError {
         "the route needs one positive minimum output per hop, with the last meeting the route minimum"
     )]
     InvalidHopThresholds,
+    #[error("the flow operations, windows, and thresholds must have equal lengths")]
+    InvalidFlowShape,
+    #[error("a flow operation does not match its slot token sides")]
+    FlowSlotMismatch,
+    #[error("a flow allocation is invalid")]
+    InvalidFlowAllocation,
     #[error("a swap window has an invalid optional account tail")]
     InvalidOptionalTail,
     #[error("the transaction needs {count} accounts, a v1 transaction holds {max}")]

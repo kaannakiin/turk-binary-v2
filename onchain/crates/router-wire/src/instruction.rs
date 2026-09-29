@@ -1,14 +1,20 @@
 use crate::route::HEADER_LEN;
-use crate::{DecodeError, Route, read_bool, read_key};
+use crate::{DecodeError, FlowRoute, Route, read_bool, read_key};
 
 const ROUTE: u8 = 0;
 const INITIALIZE: u8 = 1;
 const SET_PAUSED: u8 = 2;
 const SET_ADMIN: u8 = 3;
+const FLOW: u8 = 4;
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "FlowRoute keeps bounded steps inline so program decode does not allocate"
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RouterInstruction {
     Route(Route),
+    Flow(FlowRoute),
     Initialize { admin: [u8; 32] },
     SetPaused { paused: bool },
     SetAdmin { new_admin: [u8; 32] },
@@ -19,6 +25,7 @@ impl RouterInstruction {
         let (&tag, rest) = data.split_first().ok_or(DecodeError::Length)?;
         match tag {
             ROUTE => Route::decode(data).map(Self::Route),
+            FLOW => FlowRoute::decode(data).map(Self::Flow),
             INITIALIZE => Ok(Self::Initialize {
                 admin: exact_key(rest)?,
             }),
@@ -41,6 +48,10 @@ impl RouterInstruction {
         match self {
             Self::Route(route) => {
                 out.push(ROUTE);
+                route.encode_into(&mut out);
+            }
+            Self::Flow(route) => {
+                out.push(FLOW);
                 route.encode_into(&mut out);
             }
             Self::Initialize { admin } => {

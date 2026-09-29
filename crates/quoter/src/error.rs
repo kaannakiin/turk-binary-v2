@@ -43,6 +43,8 @@ pub enum WindowError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum QuoteError {
+    #[error("this venue has no verified sequential quote transition")]
+    TransitionUnsupported,
     #[error("{0} has no quote yet")]
     Unsupported(DexKind),
     #[error("{0:?} is not known yet")]

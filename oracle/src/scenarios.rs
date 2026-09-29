@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use arb_swap_ix::BootLayout;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use router_wire::{CONFIG_SEED, Config, Route, RouterInstruction};
+use router_wire::{CONFIG_SEED, Config, FlowRoute, Route, RouterInstruction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use solana_instruction::{AccountMeta, Instruction};
@@ -387,23 +387,35 @@ impl World<'_> {
 }
 
 fn min_out(route: &Instruction) -> u64 {
-    let RouterInstruction::Route(route) =
-        RouterInstruction::decode(&route.data).expect("a router instruction")
-    else {
-        panic!("not a route");
-    };
-    route.min_out()
+    match RouterInstruction::decode(&route.data).expect("a router instruction") {
+        RouterInstruction::Route(route) => route.min_out(),
+        RouterInstruction::Flow(route) => route.min_out(),
+        RouterInstruction::Initialize { .. }
+        | RouterInstruction::SetPaused { .. }
+        | RouterInstruction::SetAdmin { .. } => panic!("not a swap route"),
+    }
 }
 
 fn with_min_out(ix: &Instruction, min_out: u64) -> Instruction {
-    let RouterInstruction::Route(route) =
-        RouterInstruction::decode(&ix.data).expect("a router instruction")
-    else {
-        panic!("not a route");
+    let route = match RouterInstruction::decode(&ix.data).expect("a router instruction") {
+        RouterInstruction::Route(route) => RouterInstruction::Route(
+            Route::new(route.in_amount(), min_out, route.hops()).expect("a valid route"),
+        ),
+        RouterInstruction::Flow(route) => RouterInstruction::Flow(
+            FlowRoute::new(
+                route.in_amount(),
+                min_out,
+                route.slot_count(),
+                route.steps(),
+            )
+            .expect("a valid flow"),
+        ),
+        RouterInstruction::Initialize { .. }
+        | RouterInstruction::SetPaused { .. }
+        | RouterInstruction::SetAdmin { .. } => panic!("not a swap route"),
     };
-    let route = Route::new(route.in_amount(), min_out, route.hops()).expect("a valid route");
     Instruction {
-        data: RouterInstruction::Route(route).encode(),
+        data: route.encode(),
         ..ix.clone()
     }
 }

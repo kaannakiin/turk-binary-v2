@@ -48,6 +48,26 @@ enum Inner {
 }
 
 impl VenueState {
+    /// Whether sequential exact-in quotes can update this isolated pool state.
+    #[must_use]
+    pub fn supports_transition(&self) -> bool {
+        match &self.inner {
+            #[cfg(feature = "raydium-cpmm")]
+            Inner::RaydiumCpmm(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Prices and applies a swap on a private candidate state. Other venue
+    /// transitions require independent replay verification before enabling.
+    pub fn quote_and_apply(&mut self, input: &QuoteInput<'_>) -> Result<QuoteOut, QuoteError> {
+        match &mut self.inner {
+            #[cfg(feature = "raydium-cpmm")]
+            Inner::RaydiumCpmm(state) => state.quote_and_apply(input),
+            _ => Err(QuoteError::TransitionUnsupported),
+        }
+    }
+
     #[must_use]
     pub fn new(kind: DexKind) -> Self {
         let inner = match kind {

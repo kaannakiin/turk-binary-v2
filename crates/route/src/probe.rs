@@ -26,12 +26,15 @@ impl RouteError {
     #[must_use]
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::InvalidFlow => "invalid_flow",
+            Self::StatefulFlowUnsupported => "stateful_flow_unsupported",
             Self::UnknownPool(_) => "unknown_pool",
             Self::NotReady(_) => "not_ready",
             Self::NoClock => "no_clock",
             Self::Decode(_) => "decode",
             Self::DecodePanicked | Self::QuotePanicked => "panic",
             Self::Quote(error) => match error {
+                QuoteError::TransitionUnsupported => "stateful_flow_unsupported",
                 QuoteError::Unsupported(_) => "unsupported",
                 QuoteError::Incomplete(_) => "incomplete",
                 QuoteError::Inconsistent(_) => "inconsistent",

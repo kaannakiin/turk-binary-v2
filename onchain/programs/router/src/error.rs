@@ -11,6 +11,10 @@ pub fn decode(error: DecodeError) -> ProgramError {
         DecodeError::UnsupportedVersion => custom(RouterError::UnsupportedWireVersion),
         DecodeError::HopCount => custom(RouterError::BadHopCount),
         DecodeError::UnknownHopKind => custom(RouterError::UnknownHopKind),
+        DecodeError::FlowSlotCount
+        | DecodeError::FlowStepCount
+        | DecodeError::FlowAllocation
+        | DecodeError::FlowGraph => custom(RouterError::BadFlow),
         DecodeError::UnknownInstruction
         | DecodeError::Length
         | DecodeError::InvalidBool

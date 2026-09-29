@@ -1,0 +1,84 @@
+{
+  "provenance": {
+    "corpus_sha256": "042e8b5e2410cec6201fc44a87a10f5adba07cf935f9dd9726b20d1850bbcdef",
+    "router_sha256": "e6c137d91aa44ce989ac01c99bec31d44022802daeefc61dd012af3dbe53da56",
+    "litesvm": "0.17.0"
+  },
+  "cases": [
+    {
+      "pool": "fAjTnZ9QqJkUmrr8cXutkYhpVge2qqtSZNt9qKn7YC2",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "100000000",
+      "expected_out": "10143850221706",
+      "direct_paid": "10143850221706",
+      "over_threshold_rejected": true,
+      "over_threshold_state_unchanged": true,
+      "flow": {
+        "slot_count": 4,
+        "step_count": 4,
+        "slots": [
+          "So11111111111111111111111111111111111111112",
+          "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX",
+          "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh",
+          "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        ]
+      },
+      "paid": "10143850221706",
+      "compute_units": 188656,
+      "v1_paid": "10143850221706",
+      "v1_compute_units": 188506
+    },
+    {
+      "pool": "fAjTnZ9QqJkUmrr8cXutkYhpVge2qqtSZNt9qKn7YC2",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "100000000",
+      "expected_out": "8548616",
+      "direct_paid": "8548616",
+      "over_threshold_rejected": true,
+      "over_threshold_state_unchanged": true,
+      "flow": {
+        "slot_count": 2,
+        "step_count": 2,
+        "slots": [
+          "So11111111111111111111111111111111111111112",
+          "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        ]
+      },
+      "paid": "8548616",
+      "compute_units": 79147,
+      "v1_paid": "8548616",
+      "v1_compute_units": 78997
+    },
+    {
+      "pool": "fAjTnZ9QqJkUmrr8cXutkYhpVge2qqtSZNt9qKn7YC2",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "100000000",
+      "expected_out": "10143850221706",
+      "prefunded_intermediate": {
+        "slot": 3,
+        "amount": 1000000
+      },
+      "direct_paid": "10143850221706",
+      "over_threshold_rejected": true,
+      "over_threshold_state_unchanged": true,
+      "flow": {
+        "slot_count": 4,
+        "step_count": 4,
+        "slots": [
+          "So11111111111111111111111111111111111111112",
+          "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX",
+          "znv3FZt2HFAvzYf5LxzVyryh3mBXWuTRRng25gEZAjh",
+          "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        ]
+      },
+      "paid": "10143850221706",
+      "compute_units": 179577,
+      "v1_paid": "10143850221706",
+      "v1_compute_units": 179427
+    }
+  ],
+  "partial_input": {
+    "error": "InstructionError(3, Custom(6010)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C invoke [2] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 83 of 1373850 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 76 of 1368148 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 7109 of 1375171 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 15874 of 1383673 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
+    "state_unchanged": true
+  }
+}

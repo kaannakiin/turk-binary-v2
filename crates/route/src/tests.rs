@@ -632,6 +632,16 @@ fn search_matches_the_exhaustive_reference() {
             Some(*mint) != avoid
         });
         assert!(expected.is_some(), "{goal:?} avoiding {avoid:?} has a path");
+        let layered = rig.reader.session().unwrap().search_layered(
+            &query(id(&x), goal, 3, 10_000),
+            &Avoid(avoid.map(|mint| id(&mint))),
+        );
+        assert!(!layered.exhausted);
+        assert_eq!(
+            layered.best.as_ref().map(crate::Path::amount_out),
+            expected.as_ref().map(|(_, out)| *out),
+            "layered search must match the independently enumerated paths"
+        );
         for per_pair in [None, NonZeroU8::new(3)] {
             let mut session = rig.reader.session().unwrap();
             let found = session.search(
@@ -670,6 +680,130 @@ fn a_cycle_never_returns_through_the_same_pool() {
         .search(&query(from, Goal::Cycle, 3, 10_000), &Everything);
     assert_eq!((found.best, found.exhausted), (None, false));
     assert!(found.quotes > 0);
+}
+
+#[test]
+fn a_unique_protocol_can_be_used_once_per_cycle_but_is_not_excluded() {
+    struct Unique;
+    impl Filter for Unique {
+        fn unique_dex(&self, _: DexKind) -> bool {
+            true
+        }
+    }
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let first = recorded();
+    let second = recorded();
+    let rig = universe(&[placed(&first, y, x), placed(&second, y, x)]);
+    let from = rig.topology.mint_id(&x).unwrap();
+    let to = rig.topology.mint_id(&y).unwrap();
+    let mut session = rig.reader.session().unwrap();
+    assert!(
+        session
+            .search(&query(from, Goal::Cycle, 2, 100), &Everything)
+            .best
+            .is_some()
+    );
+    assert!(
+        session
+            .search(&query(from, Goal::Cycle, 2, 100), &Unique)
+            .best
+            .is_none()
+    );
+    assert!(
+        session
+            .search(&query(from, Goal::To(to), 1, 100), &Unique)
+            .best
+            .is_some()
+    );
+}
+
+#[test]
+fn expired_flow_search_spends_no_quote_budget() {
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let pool = recorded();
+    let rig = universe(&[placed(&pool, y, x)]);
+    let from = rig.topology.mint_id(&x).unwrap();
+    let to = rig.topology.mint_id(&y).unwrap();
+    let found = rig.reader.session().unwrap().search_flow(
+        &query(from, Goal::To(to), 1, 100),
+        &Everything,
+        crate::FlowOptions {
+            deadline: Some(std::time::Instant::now()),
+            ..Default::default()
+        },
+    );
+    assert!(found.exhausted && found.timed_out);
+    assert_eq!(found.quotes, 0);
+    assert!(found.best.is_none());
+}
+
+#[test]
+fn flow_search_preserves_the_single_route_and_accounts_for_each_credit() {
+    let [x, y, z] = [(); 3].map(|()| Pubkey::new_unique());
+    let first = recorded();
+    let second = recorded();
+    let last = recorded();
+    let rig = universe(&[
+        placed(&first, y, x),
+        placed(&second, y, x),
+        placed(&last, z, y),
+    ]);
+    let from = rig.topology.mint_id(&x).unwrap();
+    let to = rig.topology.mint_id(&z).unwrap();
+    let query = query(from, Goal::To(to), 2, 10_000);
+    let mut session = rig.reader.session().unwrap();
+    let baseline = session.search(&query, &Everything).best.unwrap();
+    let found = session.search_flow(&query, &Everything, crate::FlowOptions::default());
+    assert!(found.quotes <= query.max_quotes);
+    let flow = found.best.unwrap();
+    assert!(flow.amount_out >= baseline.amount_out());
+    assert_eq!(
+        flow.operations.len(),
+        3,
+        "two parallel pools followed by their shared suffix"
+    );
+    let mut credits = vec![0u64; flow.slots.len()];
+    credits[0] = query.amount_in;
+    for operation in &flow.operations {
+        let source = usize::from(operation.allocation.source);
+        let destination = usize::from(operation.allocation.destination);
+        credits[source] = credits[source]
+            .checked_sub(operation.leg.amount_in)
+            .expect("no double spending");
+        credits[destination] += operation.leg.amount_out;
+    }
+    assert_eq!(credits[1], flow.amount_out);
+    assert!(
+        credits
+            .iter()
+            .enumerate()
+            .all(|(slot, &amount)| slot == 1 || amount == 0)
+    );
+    assert_eq!(
+        flow.operations
+            .iter()
+            .filter(|op| op.leg.pool == last.pool)
+            .count(),
+        1,
+        "shared suffix executes once on the merged amount"
+    );
+    for options in [
+        crate::FlowOptions {
+            single_route_only: true,
+            ..Default::default()
+        },
+        crate::FlowOptions {
+            single_pool_per_hop: true,
+            ..Default::default()
+        },
+    ] {
+        let constrained = session
+            .search_flow(&query, &Everything, options)
+            .best
+            .unwrap();
+        assert_eq!(constrained.operations.len(), 2);
+        assert_eq!(constrained.amount_out, baseline.amount_out());
+    }
 }
 
 #[test]
@@ -713,6 +847,85 @@ fn a_spent_budget_is_reported_apart_from_no_route() {
 
     let unreachable = session.search(&query(id(&x), Goal::To(id(&w)), 3, 10_000), &Everything);
     assert_eq!((unreachable.best, unreachable.exhausted), (None, false));
+}
+
+// Gate: full-plan admission must preserve the best feasible incumbent. The
+// route boundary is the smallest seam; a structural pool restriction supplies
+// the expected winner independently of the pricing implementation.
+#[test]
+fn plan_admission_keeps_a_feasible_runner_up() {
+    struct Feasible(domain::Pubkey);
+    impl Filter for Feasible {
+        fn path(&self, _: &mut crate::SearchSession, path: &crate::Path) -> bool {
+            path.legs.iter().all(|leg| leg.pool == self.0)
+        }
+        fn flow(&self, _: &mut crate::SearchSession, flow: &crate::Flow) -> bool {
+            flow.operations.iter().all(|op| op.leg.pool == self.0)
+        }
+    }
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let shallow = recorded();
+    let mut deep = recorded();
+    scale_vault(&mut deep, BASE_VAULT, 4, 1);
+    scale_vault(&mut deep, QUOTE_VAULT, 4, 1);
+    let rig = universe(&[placed(&shallow, y, x), placed(&deep, y, x)]);
+    let from = rig.topology.mint_id(&x).expect("placed mint");
+    let to = rig.topology.mint_id(&y).expect("placed mint");
+    let query = query(from, Goal::To(to), 1, 10_000);
+    let mut session = rig.reader.session().unwrap();
+    assert_eq!(
+        session.search(&query, &Everything).best.unwrap().legs[0].pool,
+        deep.pool
+    );
+    let flow = session
+        .search_flow(
+            &query,
+            &Feasible(shallow.pool),
+            crate::FlowOptions::default(),
+        )
+        .best
+        .unwrap();
+    assert_eq!(flow.operations.len(), 1);
+    assert_eq!(flow.operations[0].leg.pool, shallow.pool);
+}
+
+// Gate: absence of a full-size single-route incumbent must not suppress split
+// discovery. An independent admission cap models limited per-pool capacity;
+// assertions cover feasibility and conservation, never a self-derived payout.
+#[test]
+fn split_discovery_does_not_require_a_full_size_single_route() {
+    struct Capped;
+    impl Filter for Capped {
+        fn path(&self, _: &mut crate::SearchSession, path: &crate::Path) -> bool {
+            path.legs.iter().all(|leg| leg.amount_in <= AMOUNT / 2)
+        }
+        fn flow(&self, _: &mut crate::SearchSession, flow: &crate::Flow) -> bool {
+            flow.operations
+                .iter()
+                .all(|op| op.leg.amount_in <= AMOUNT / 2)
+        }
+    }
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let first = recorded();
+    let second = recorded();
+    let rig = universe(&[placed(&first, y, x), placed(&second, y, x)]);
+    let from = rig.topology.mint_id(&x).expect("placed mint");
+    let to = rig.topology.mint_id(&y).expect("placed mint");
+    let query = query(from, Goal::To(to), 1, 10_000);
+    let mut session = rig.reader.session().unwrap();
+    assert!(session.search(&query, &Capped).best.is_none());
+    let flow = session
+        .search_flow(&query, &Capped, crate::FlowOptions::default())
+        .best
+        .expect("two partial pools fill the order");
+    assert_eq!(flow.operations.len(), 2);
+    assert_eq!(
+        flow.operations
+            .iter()
+            .map(|op| op.leg.amount_in)
+            .sum::<u64>(),
+        AMOUNT
+    );
 }
 
 #[test]

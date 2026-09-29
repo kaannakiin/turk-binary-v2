@@ -94,6 +94,43 @@ impl<F: PoolFeed> QuoteReader<F> {
 }
 
 impl SearchSession {
+    /// Private copies are created only for pools actually repeated by a plan.
+    pub(crate) fn transition_state(
+        &mut self,
+        pool: PoolId,
+    ) -> Result<quoter::VenueState, RouteError> {
+        let state = &self.pin(pool)?.decoded.state;
+        if !state.supports_transition() {
+            return Err(RouteError::StatefulFlowUnsupported);
+        }
+        Ok((**state).clone())
+    }
+
+    pub(crate) fn quote_transition(
+        &self,
+        state: &mut quoter::VenueState,
+        edge: EdgeId,
+        amount_in: u64,
+        max_arrays: u8,
+    ) -> Result<Quote, RouteError> {
+        let input = quoter::QuoteInput {
+            amount_in,
+            a_to_b: edge.a_to_b(),
+            clock: &self.clock,
+            max_arrays,
+        };
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            state.quote_and_apply(&input)
+        }))
+        .map_err(|_| RouteError::QuotePanicked)??;
+        Ok(Quote {
+            out,
+            cross_stream: self
+                .pins
+                .get(&edge.pool())
+                .is_some_and(|pin| pin.decoded.view.cross_stream),
+        })
+    }
     #[must_use]
     pub fn topology(&self) -> &Topology {
         &self.topology

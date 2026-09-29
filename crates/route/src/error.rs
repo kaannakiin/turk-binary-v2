@@ -4,6 +4,10 @@ use quoter::{DecodeError, QuoteError, WindowError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RouteError {
+    #[error("invalid exact-in flow")]
+    InvalidFlow,
+    #[error("flow needs an unverified shared-account state transition")]
+    StatefulFlowUnsupported,
     #[error("{0} is not in the universe")]
     UnknownPool(Pubkey),
     #[error("pool is not ready: {0:?}")]

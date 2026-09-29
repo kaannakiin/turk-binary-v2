@@ -30,6 +30,7 @@ bytes.workspace = true
 dex.workspace = true
 flate2.workspace = true
 serde_json.workspace = true
+stats_alloc.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 
 [lints]

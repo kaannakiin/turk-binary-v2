@@ -51,6 +51,15 @@ router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz"
     cargo run --manifest-path oracle/Cargo.toml -- router {{corpus}} target/router-plans.json oracle/programs onchain/target/deploy/router.so {{out}}
     cargo run --manifest-path oracle/Cargo.toml -- router-scenarios {{scenario_pools}} target/router-scenario-plans.json oracle/programs onchain/target/deploy/router.so onchain/target/deploy/short_venue.so crates/tx/src/tests/fixtures/router_scenarios.json
 
+# Four-step split/merge with an intermediate Token-2022 transfer-fee branch.
+# Direct venue swaps and both router forms replay on the same captured bank.
+router-flow-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/short-venue/Cargo.toml
+    ROUTER_FLOW_PLANS={{justfile_directory()}}/target/router-flow-plans.json cargo nextest run -p server --run-ignored only router_flow_plans
+    cargo run --manifest-path oracle/Cargo.toml -- router crates/tx/src/tests/fixtures/scenario_pools.json.gz target/router-flow-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_flow_replay.json onchain/target/deploy/short_venue.so
+    cargo nextest run -p tx split_merge_and_reused_cpmm_flows_match_direct_venue_execution
+
 # LiteSVM: three-token AMM v4/CPMM routes, profitable cycles and a Token-2022 fee hop.
 router-matrix-replay:
     NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml

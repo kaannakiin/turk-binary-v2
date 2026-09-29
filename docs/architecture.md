@@ -206,7 +206,8 @@ A search reads through a `route::SearchSession`, taken from `QuoteReader::sessio
 - **Choosing `k`.** `just test-universe <capture>` compares every `k` up to `max_hops` against the exhaustive search at 16 random amounts per query (0.01× to 990× of one SOL or 1,000 pump tokens, even over the decades; `ROUTE_SEED` picks them). Over four captures of slots 451,259,947–451,267,240 and two seeds, `k = 1` chose another path in up to 9 of 16 amounts of a pump-token cycle and paid up to 269 bps less, and up to 4 bps less on a SOL cycle; `k = 2` and `k = 3` matched the exhaustive path and payout everywhere. Searches use `k = 2`; the measurement says how often it loses on this universe, not that it never does.
 - **Budget.** `max_quotes` caps the quotes one search makes. `Search::exhausted` says the budget ran out first, so `best` is the best found rather than the best there is; no path at all is `best: None` with `exhausted` and `pruned` both false. `max_hops` is a request parameter, not a limit of the design.
 - **Result.** The highest final output wins; a cycle may come back at a loss, and whether it pays is the caller's decision. The legs carry their `EdgeId`s for `verify` in the same session.
-- Next: a query `(in, out, amount)` runs a hop-layered Bellman-Ford over the graph with real integer exact-in quotes, keeping the best few labels per (depth, mint). Pool uniqueness and the account budget are enforced during the search, not afterwards. Depth is bounded by what the executor can land: 64 account locks per transaction, and the on-chain router's client takes up to 4 hops.
+- **Split/merge.** `search_flow` seeds from DFS, discovers alternative paths at different amounts and with incumbent pools excluded, then refines integer allocation shares. Smaller candidates can seed a split even without a full-size single-route incumbent. Equal directed edges merge and are requoted once on their aggregate input. Each source distributes remaining credits in dependency order. `max_hops` bounds every path; `max_operations` bounds the whole plan. Distinct shared writable states without verified transitions are refused. Supplied repeated CPMM operations use private sequential state; other repeated venue transitions remain unsupported.
+- **Layered alternative.** `search_layered` retains complete path histories per frontier, not only the largest amount at a mint/depth. It is a benchmark alternative; capped cyclic searches differ from DFS, so it is not promoted. See [current comparison](exactin-performance.md). Linear router v2 remains supported; flow v1 allows up to 16 operations subject to transaction budgets.
 - Arbitrage is the cycle case: when pool u→v changes, search forward from v and close at u; the amount comes from a golden-section search on integers.
 - The quoter is exact-in only, so no amount-aware search runs backwards from the output mint.
 - Search runs on its own thread pool (`search-{i}`, see [HTTP API](#search-threads)), apart from the pipeline and route threads, and reads the topology and quotes without locks.
@@ -215,13 +216,13 @@ A search reads through a `route::SearchSession`, taken from `QuoteReader::sessio
 
 `serve` runs `watch` and answers on two addresses, like the Metis and OKX (Pallas) binaries: the quote API on `server.api_addr` (default `127.0.0.1:8080`) and the probes on `server.ops_addr` (default `127.0.0.1:9100`), so probes and metrics stay off the API port. Both are bound before the universe is resolved: a taken port fails at once, and requests during the long startup get an answer (`503`) instead of a hung connection.
 
-It prices routes (`/quote`) and builds the instructions and the unsigned v1 transaction that run a route through our router program (`/swap-instructions`, `/swap`). It never signs or sends: the user's wallet signs. A swap's route comes either from a search inside the same request (`quoteRequest`, the Pallas shape) or from a `/quote` answer the client sends back (`quoteResponse`, the Metis shape), which is trusted for its amounts and threshold, since the router enforces the threshold on chain, and checked only for being buildable.
+It prices operation plans (`/quote`) and builds router instructions and unsigned v1 transactions (`/swap-instructions`, `/swap`). It never signs or sends. A swap either searches from `quoteRequest` or validates a returned `quoteResponse`. Returned amounts must conserve credits across the entire graph; current pool state supplies the swap windows, while the router enforces the client's thresholds on chain.
 
 The router currently builds Raydium CPMM and AMM v4 hops. AMM v4 uses `SwapBaseInV2` and SPL Token accounts; its Token-2022 pools are refused. CPMM retains its Token-2022 transfer-fee handling. Both HTTP swap endpoints use the same route planner and v1 transaction budgets.
 
 ```text
 HTTP (axum, `app` runtime)            search threads (`search-{i}`)
-  parse + validate ─▶ admit ──────────▶ open SearchSession ─▶ search_widening ─▶ requote ─▶ reply
+  parse + validate ─▶ admit ──────────▶ open SearchSession ─▶ search_flow ─▶ requote_flow ─▶ reply
        │  400          │ 503 OVERLOADED      (state pinned from here, not from arrival)
        └───────────────┴── wait ≤ timeout_ms ─▶ 504 TIMEOUT
 ```
@@ -241,13 +242,20 @@ HTTP (axum, `app` runtime)            search threads (`search-{i}`)
 | `fromTokenAddress`      | yes      | Input mint, base58.                                                                                                      |
 | `toTokenAddress`        | yes      | Output mint. The same as the input only with `enableCyclicArbitrage`.                                                    |
 | `amount`                | yes      | Exact input in base units, as a string of digits: no sign, no decimals, below 2^64.                                      |
+| `userWalletAddress`     | no       | Wallet address when the request is embedded in a transaction request; a quote-only request may omit it.                  |
+| `slippagePercent`       | no       | Decimal percentage, defaulting to `swap.default_slippage_bps` converted to percent; at most two decimals and below 100.  |
 | `enableCyclicArbitrage` | no       | `true` searches a cycle back to the input mint (at least 2 hops). It may come back at a loss: that is the caller's call. |
 | `maxHops`               | no       | Pools a route may pass, `quote.default_max_hops` when absent, at most `quote.max_hops`.                                  |
-| `dexes`                 | no       | Only pools of these DEXes (config names such as `raydium_cpmm`). Empty: every DEX.                                       |
-| `excludeDexes`          | no       | Never pools of these DEXes.                                                                                              |
-| `slippageBps`           | no       | Slippage for `otherAmountThreshold`, in basis points, at most 10000; `swap.default_slippage_bps` when absent.            |
+| `dexIds`                | no       | Comma-separated DEX program IDs. Empty: every loaded DEX.                                                                |
+| `excludedDexIds`        | no       | Comma-separated DEX program IDs that are never used; exclusion wins over `dexIds`.                                       |
+| `allowedPools`          | no       | Pool allowlist. Missing or `null` means no filter; `[]` admits no pool. Unknown or unloaded pools are ignored.           |
+| `directRoute`           | no       | Restricts the search to one pool and sets the route hop limit to one.                                                    |
+| `singleRouteOnly`       | no       | Forbids parallel route branches while allowing a multi-hop route.                                                        |
+| `singlePoolPerHop`      | no       | Allows at most one pool for each directed mint pair in a hop.                                                            |
+| `uniqueDexIds`          | no       | Comma-separated program IDs eligible for the cycle-wide unique-DEX rule.                                                 |
+| `enableUniqueDex`       | no       | Defaults to `true`; when false, uniqueness is disabled after IDs are still validated.                                    |
 
-Unknown fields are refused, so a client sending `slippagePercent` does not believe it was applied. The answer:
+Unknown fields are refused, so legacy names such as `dexes`, `excludeDexes` and `slippageBps` are rejected. The answer:
 
 ```json
 {
@@ -256,12 +264,17 @@ Unknown fields are refused, so a client sending `slippagePercent` does not belie
   "fromTokenAmount": "1000000000",
   "toTokenAmount": "33540506",
   "otherAmountThreshold": "33372803",
-  "slippageBps": 50,
+  "slippagePercent": "0.5",
   "contextSlot": 450370213,
   "crossStream": false,
   "search": { "pruned": false, "exhausted": false, "quotes": 7 },
-  "legs": [
+  "slots": ["So111…", "EPjF…"],
+  "operations": [
     {
+      "sourceSlot": 0,
+      "destinationSlot": 1,
+      "inputShare": { "numerator": "1", "denominator": "1" },
+      "dependencies": [],
       "poolAddress": "…",
       "dex": "raydium_cpmm",
       "fromTokenAddress": "So111…",
@@ -275,9 +288,9 @@ Unknown fields are refused, so a client sending `slippagePercent` does not belie
 
 - **Amounts** are the winning path priced again (`requote`) in a new session: the newest decoded state and Clock. The search compared paths on pins taken at different moments; the answer is not one of those. That session then `verify`s the path, since a pool pinned early can change or become unusable before the last is quoted. This catches what changed while the answer was prepared; it is not one chain snapshot and promises nothing about execution.
 - **Freshness** is checked when a search thread takes the request, so a feed that stalled while the request waited is caught too. It is the whole-feed signal: a stalled Clock means the streams stopped, however ready their pools still look. Traffic policy (the pool share, draining) stays with `/ready` and is not applied per quote.
-- **`otherAmountThreshold`** is `toTokenAmount` less `slippageBps`, rounded down (`tx::min_out`, u128): the least the router will accept on chain.
+- **`otherAmountThreshold`** is `toTokenAmount` less the requested `slippagePercent`, rounded down (`tx::min_out`, u128): the least the router will accept on chain.
 - **`contextSlot`** is the slot of the Clock that requote used. It says when the price held, not that it will hold when a transaction lands.
-- **`search`** is the search's quality, apart from freshness: `pruned` means pools were dropped per pair so a better path may exist, `exhausted` that the quote budget ran out first. A fresh price can come from an approximate search, and an exhaustive one can be stale by the time it is read.
+- **`search`** reports exploration quality separately from freshness. `pruned` covers per-pair and heuristic split candidate/allocation limits; no global optimum is promised. `exhausted` marks incomplete exploration from the quote budget or cancellation/deadline. Optional `timedOut: true` distinguishes deadline/cancellation termination. A valid incumbent is retained when exploration stops.
 - **`crossStream`** means some account a swap writes rides the shared stream, so the state priced may hold part of a transaction.
 - Pools and mints are addresses; the graph's `PoolId`/`EdgeId` never leave the process.
 
@@ -299,7 +312,7 @@ Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 
 ```json
 {
-  "userPublicKey": "…",
+  "userWalletAddress": "…",
   "quoteRequest": {
     "fromTokenAddress": "So111…",
     "toTokenAddress": "EPjF…",
@@ -310,15 +323,15 @@ Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 
 | Field                 | Required    | Meaning                                                                                                                                                                                       |
 | --------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `userPublicKey`       | yes         | The wallet that signs, pays the fee and owns the token accounts.                                                                                                                              |
+| `userWalletAddress`   | yes         | The wallet that signs, pays the fee and owns the token accounts.                                                                                                                              |
 | `quoteRequest`        | one of them | A `/quote` body: the route is searched in this request, over the venues the router supports only.                                                                                             |
-| `quoteResponse`       | one of them | A `/quote` answer sent back unchanged: no search, no requote.                                                                                                                                 |
+| `quoteResponse`       | one of them | A `/quote` answer sent back: validate its operation graph and amounts, then reprice to obtain current swap windows; preserve the client's minimum output.                                     |
 | `wrapAndUnwrapSol`    | no          | Default `true`: a SOL input is wrapped into the user's WSOL account first, a SOL output is paid into it, and the account is closed after, which unwraps WSOL the user already held there too. |
 | `priorityFeeLamports` | no          | The v1 transaction's priority fee, total lamports (not per compute unit). Default 0.                                                                                                          |
 
-A `quoteResponse`'s `search` and `crossStream` are echoed back as sent, or left out when it has none: nothing is searched or priced again to know them. A `quoteRequest` is searched over the pools its `dexes` and `excludeDexes` admit **and** the router can swap through; naming only venues the router lacks finds `NO_ROUTE`, never a route through another venue.
+A `quoteResponse`'s `search` and `crossStream` describe its original search and are echoed back as sent, or omitted when absent. Repricing verifies current windows and pool revisions without replacing the client's amounts or threshold. A `quoteRequest` searches pools admitted by its DEX/pool filters and supported by the router. Full transaction resource admission runs before a candidate replaces the incumbent.
 
-A `quoteResponse` is refused with `QUOTE_EXPIRED` when its `contextSlot` is more than `swap.max_quote_age_slots` behind the market's Clock, and with `QUOTE_MISMATCH` when a leg's pool is not watched or not of the named venue, a leg does not spend what the last one paid, the legs do not add up to the route, or `otherAmountThreshold` is zero or above `toTokenAmount`. The swap accounts always come from the market's own pool state, never from the client.
+A `quoteResponse` is refused with `QUOTE_EXPIRED` when its slot exceeds the configured age. `QUOTE_MISMATCH` covers invalid pool/venue identities, dependencies, slot mint identities, allocation ratios, amount conservation, excessive path depth and branched cycles. Slots 0/1 represent source/final credits. Each operation spends its fraction of the remaining source credit; the final branch consumes the remainder. Dependencies list earlier producers of that source. Existing user balances never contribute intermediate credits. Swap accounts always come from market state.
 
 `/swap-instructions` answers the route and its instructions, for the client to put in its own transaction:
 
@@ -369,7 +382,7 @@ The other codes are `/quote`'s.
 
 ### Search threads
 
-Searches are CPU work, so they run on their own threads (`[threads] search`), never on the async runtime. At most one search runs per thread and `quote.max_queued` wait; past that a request is refused at once, so a burst cannot grow an unbounded queue in front of a semaphore. A search opens its `SearchSession` when a thread takes it, not when the request arrived, so a queued request pins no state while it waits. A search cannot be interrupted: when a caller times out, a search already running finishes and keeps its thread and its place until it returns. `quote.max_quotes` is a work budget, not a deadline: filtering, pinning, the write-set checks and ranking are not counted, so no timeout here assumes a search ends within some number of milliseconds. A search whose caller left before it started is dropped unrun.
+Searches run on dedicated threads (`[threads] search`). At most one runs per thread and `quote.max_queued` wait. A session opens when work starts, so queued requests pin no state. Deadline starts before queue admission; dropping the HTTP request sets cooperative cancellation. DFS checks before quoting and allocation refinement checks between candidates. An individual SDK quote cannot be preempted; the worker retains admission until it returns. `quote.max_quotes` bounds quote calls independently of the deadline. Queued work whose caller left is dropped unrun.
 
 ### `/health` and `/ready`
 

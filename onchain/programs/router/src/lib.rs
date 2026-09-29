@@ -1,6 +1,7 @@
 mod admin;
 mod config;
 mod error;
+mod flow;
 mod hop;
 mod route;
 mod token_account;
@@ -21,6 +22,7 @@ pub fn process_instruction(
 ) -> ProgramResult {
     match RouterInstruction::decode(data).map_err(error::decode)? {
         RouterInstruction::Route(route) => route::handle(program_id, accounts, &route),
+        RouterInstruction::Flow(flow) => flow::handle(program_id, accounts, &flow),
         RouterInstruction::Initialize { admin } => admin::initialize(program_id, accounts, admin),
         RouterInstruction::SetPaused { paused } => admin::set_paused(program_id, accounts, paused),
         RouterInstruction::SetAdmin { new_admin } => {

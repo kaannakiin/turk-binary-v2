@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
@@ -24,6 +25,14 @@ use crate::wire::{
 
 const MAX_BODY: usize = 16 * 1024;
 
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 pub(crate) struct Api<F> {
     pub pool: Arc<SearchPool>,
     pub quotes: QuoteSlot<F>,
@@ -39,7 +48,7 @@ impl<F> Clone for Api<F> {
         Self {
             pool: Arc::clone(&self.pool),
             quotes: self.quotes.clone(),
-            settings: self.settings,
+            settings: self.settings.clone(),
             swap: self.swap,
             blockhashes: self.blockhashes.clone(),
             max_clock_stall: self.max_clock_stall,
@@ -67,14 +76,16 @@ pub(crate) fn router<F: PoolFeed>(api: Api<F>) -> Router {
 impl<F: PoolFeed> Api<F> {
     fn service(&self) -> Result<QuoteService<F>, ApiError> {
         self.quotes
-            .service(self.settings, self.swap, self.max_clock_stall)
+            .service(self.settings.clone(), self.swap, self.max_clock_stall)
             .ok_or(ApiError::NOT_READY)
     }
 
     async fn on_search_thread<T: Send + 'static>(
         &self,
+        cancellation: Arc<AtomicBool>,
         work: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
     ) -> Result<T, ApiError> {
+        let _cancel_on_drop = CancelOnDrop(cancellation);
         let pending = self.pool.submit(work).map_err(|refused| match refused {
             Refused::Full => ApiError::OVERLOADED,
             Refused::Closed => ApiError::SHUTTING_DOWN,
@@ -91,13 +102,13 @@ async fn quote<F: PoolFeed>(
     body: Result<Json<QuoteBody>, JsonRejection>,
 ) -> Result<Json<QuoteResponse>, ApiError> {
     let Json(body) = body.map_err(|rejection| ApiError::invalid(rejection.body_text()))?;
-    let quoting = body.into_request(api.swap.default_slippage_bps)?;
+    let quoting = body.into_request(api.swap.default_slippage_bps, &api.settings.unique_dex_ids)?;
     let service = api.service()?;
     let response = api
-        .on_search_thread(move || {
+        .on_search_thread(service.cancellation(), move || {
             let routed = service.route(&quoting.request)?;
             let min_out = threshold(routed.amount_out, quoting.slippage_bps)?;
-            Ok(QuoteResponse::new(routed, min_out, quoting.slippage_bps))
+            Ok(QuoteResponse::new(&routed, min_out, quoting.slippage_bps))
         })
         .await?;
     Ok(Json(response))
@@ -152,16 +163,19 @@ async fn plan<F: PoolFeed>(
     body: Result<Json<SwapBody>, JsonRejection>,
 ) -> Result<Plan, ApiError> {
     let Json(body) = body.map_err(|rejection| ApiError::invalid(rejection.body_text()))?;
-    let swapping = body.into_swap(api.swap.default_slippage_bps)?;
+    let swapping = body.into_swap(api.swap.default_slippage_bps, &api.settings.unique_dex_ids)?;
     let service = api.service()?;
-    api.on_search_thread(move || swap_plan(&service, swapping))
-        .await
+    api.on_search_thread(service.cancellation(), move || {
+        swap_plan(&service, swapping)
+    })
+    .await
 }
 
 fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Result<Plan, ApiError> {
     let (priced, min_out, slippage_bps) = match swapping.source {
         SwapSource::Search(quoting) => {
-            let priced = service.route_to_swap(&quoting.request)?;
+            let priced =
+                service.route_to_swap(&quoting.request, swapping.user, swapping.wrap_sol)?;
             let min_out = threshold(priced.routed.amount_out, quoting.slippage_bps)?;
             (priced, min_out, quoting.slippage_bps)
         }
@@ -170,14 +184,19 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
             (priced, quoted.min_out, slippage_bps)
         }
     };
+    let terminal_operations = priced
+        .routed
+        .legs
+        .iter()
+        .filter(|leg| leg.allocation.destination == 1)
+        .count();
     let hop_min_outs = priced
         .windows
         .iter()
         .zip(&priced.routed.legs)
-        .enumerate()
-        .map(|(index, (_, leg))| {
+        .map(|(_, leg)| {
             let net = threshold(leg.amount_out, slippage_bps)?;
-            let net = if index + 1 == priced.windows.len() {
+            let net = if terminal_operations == 1 && leg.allocation.destination == 1 {
                 net.max(min_out)
             } else {
                 net
@@ -185,26 +204,87 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
             Ok::<u64, ApiError>(net)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let instructions = tx::build(&SwapRequest {
-        user: swapping.user,
-        hops: &priced.windows,
-        amount_in: priced.routed.amount_in,
-        min_out,
-        hop_min_outs: &hop_min_outs,
-        wrap_sol: swapping.wrap_sol,
-    })?;
+    let linear = priced.windows.len() <= tx::MAX_HOPS
+        && priced
+            .routed
+            .legs
+            .iter()
+            .all(|leg| leg.allocation.numerator == leg.allocation.denominator)
+        && priced
+            .routed
+            .legs
+            .windows(2)
+            .all(|pair| pair[0].allocation.destination == pair[1].allocation.source);
+    let instructions = if linear {
+        tx::build(&SwapRequest {
+            user: swapping.user,
+            hops: &priced.windows,
+            amount_in: priced.routed.amount_in,
+            min_out,
+            hop_min_outs: &hop_min_outs,
+            wrap_sol: swapping.wrap_sol,
+        })?
+    } else {
+        let slots = flow_slots(&priced)?;
+        let allocations: Vec<_> = priced
+            .routed
+            .legs
+            .iter()
+            .map(|leg| tx::FlowAllocation {
+                source: leg.allocation.source,
+                destination: leg.allocation.destination,
+                numerator: leg.allocation.numerator,
+                denominator: leg.allocation.denominator,
+            })
+            .collect();
+        tx::build_flow(&tx::FlowSwapRequest {
+            user: swapping.user,
+            slots: &slots,
+            windows: &priced.windows,
+            allocations: &allocations,
+            step_min_outs: &hop_min_outs,
+            amount_in: priced.routed.amount_in,
+            min_out,
+            wrap_sol: swapping.wrap_sol,
+        })?
+    };
     Ok(Plan {
         user: swapping.user,
-        quote: QuoteResponse::new(priced.routed, min_out, slippage_bps),
+        quote: QuoteResponse::new(&priced.routed, min_out, slippage_bps),
         instructions,
         priority_fee_lamports: swapping.priority_fee_lamports,
     })
 }
 
+fn flow_slots(priced: &crate::service::Priced) -> Result<Vec<domain::TokenSide>, ApiError> {
+    let mut slots = vec![None; priced.routed.slots.len()];
+    for (leg, window) in priced.routed.legs.iter().zip(&priced.windows) {
+        for (index, side) in [
+            (leg.allocation.source, window.source),
+            (leg.allocation.destination, window.destination),
+        ] {
+            let index = usize::from(index);
+            let slot = slots
+                .get_mut(index)
+                .ok_or_else(|| ApiError::invalid("invalid flow slot"))?;
+            if priced.routed.slots[index] != side.mint || slot.is_some_and(|old| old != side) {
+                return Err(ApiError::invalid(
+                    "flow slot token identity is inconsistent",
+                ));
+            }
+            *slot = Some(side);
+        }
+    }
+    slots
+        .into_iter()
+        .map(|slot| slot.ok_or_else(|| ApiError::invalid("unused flow slot")))
+        .collect()
+}
+
 fn threshold(amount_out: u64, slippage_bps: u16) -> Result<u64, ApiError> {
     tx::min_out(amount_out, slippage_bps)
         .filter(|&min_out| min_out > 0)
-        .ok_or_else(|| ApiError::invalid("slippageBps leaves no output to require"))
+        .ok_or_else(|| ApiError::invalid("slippagePercent leaves no output to require"))
 }
 
 impl From<TxError> for ApiError {
@@ -223,6 +303,12 @@ impl From<TxError> for ApiError {
             | TxError::InvalidHopThresholds
             | TxError::InvalidOptionalTail
             | TxError::Discontinuous { .. }
+            | TxError::EmptyFlow
+            | TxError::TooManyFlowSteps { .. }
+            | TxError::TooManyFlowSlots { .. }
+            | TxError::InvalidFlowShape
+            | TxError::FlowSlotMismatch
+            | TxError::InvalidFlowAllocation
             | TxError::Compile(_) => "CANNOT_BUILD",
         };
         Self::new(StatusCode::UNPROCESSABLE_ENTITY, code, message)
@@ -244,7 +330,11 @@ impl From<ServiceError> for ApiError {
             ServiceError::NoRoute(search) => Self::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "NO_ROUTE",
-                no_route(search.pruned, search.exhausted),
+                if search.timed_out {
+                    "search deadline or cancellation ended exploration before a route was found"
+                } else {
+                    no_route(search.pruned, search.exhausted)
+                },
             )
             .with_search(search.into()),
             ServiceError::RouteChanged(changed) => {

@@ -17,7 +17,7 @@ use crate::api::{self, Api};
 use crate::{QuoteSettings, QuoteSlot, SearchPool};
 
 #[path = "../../../route/tests/support/universe.rs"]
-mod universe;
+pub(super) mod universe;
 
 const CPMM: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -115,20 +115,20 @@ async fn dlmm_quote_builds_instructions_and_unsigned_v1() {
         "toTokenAddress": WSOL,
         "amount": "57069",
         "maxHops": 1,
-        "dexes": ["meteora_dlmm"],
+        "dexIds": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{quote}");
     assert_eq!(quote["toTokenAmount"], "445336");
     let swap = json!({
-        "userPublicKey": ORACLE_PAYER,
+        "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": false,
         "quoteResponse": quote,
     });
     for path in ["/swap-instructions", "/swap"] {
         let (status, _, built) = call(fixture.router(), post_to(path, &swap)).await;
         assert_eq!(status, StatusCode::OK, "{path}: {built}");
-        assert_eq!(built["quote"]["legs"][0]["dex"], "meteora_dlmm");
+        assert_eq!(built["quote"]["operations"][0]["dex"], "meteora_dlmm");
         if path == "/swap" {
             let transaction = base64::engine::general_purpose::STANDARD
                 .decode(built["transaction"].as_str().expect("transaction"))
@@ -137,7 +137,7 @@ async fn dlmm_quote_builds_instructions_and_unsigned_v1() {
         }
     }
     let repriced = json!({
-        "userPublicKey": ORACLE_PAYER,
+        "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": false,
         "quoteRequest": request,
     });
@@ -172,8 +172,8 @@ async fn router_dlmm_fee_plans() {
                 "toTokenAddress": to,
                 "amount": amount,
                 "maxHops": 1,
-                "slippageBps": 0,
-                "dexes": ["meteora_dlmm"],
+                "slippagePercent": "0",
+                "dexIds": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
             });
             let (status, _, quote) = call(fixture.router(), post(&request)).await;
             if status == StatusCode::OK {
@@ -216,8 +216,8 @@ async fn router_dlmm_extension_plans() {
                 "toTokenAddress": to,
                 "amount": amount,
                 "maxHops": 1,
-                "slippageBps": 0,
-                "dexes": ["meteora_dlmm"],
+                "slippagePercent": "0",
+                "dexIds": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
             });
             let (status, _, quote) = call(fixture.router(), post(&request)).await;
             if status == StatusCode::OK {
@@ -274,8 +274,8 @@ async fn router_dlmm_two_array_plans() {
         "toTokenAddress": WSOL,
         "amount": "268083063",
         "maxHops": 1,
-        "slippageBps": 0,
-        "dexes": ["meteora_dlmm"],
+        "slippagePercent": "0",
+        "dexIds": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{quote}");
@@ -299,12 +299,12 @@ async fn dlmm_quote_refuses_an_unmeasured_swap_window() {
         "toTokenAddress": WSOL,
         "amount": "1000000000",
         "maxHops": 1,
-        "dexes": ["meteora_dlmm"],
+        "dexIds": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{quote}");
     let body = json!({
-        "userPublicKey": ORACLE_PAYER,
+        "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": false,
         "quoteResponse": quote,
     });
@@ -344,21 +344,22 @@ async fn simple_amm_v4_requests_quote_and_build_v1_in_both_directions() {
             "fromTokenAddress": from,
             "toTokenAddress": to,
             "amount": amount,
-            "dexes": ["raydium_amm_v4"],
+            "dexIds": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+            "singleRouteOnly": true,
         });
         let (status, _, quote) = call(fixture.router(), post(&request)).await;
         assert_eq!(status, StatusCode::OK, "{quote}");
         assert_eq!(quote["toTokenAmount"], expected.out, "{from} → {to}");
-        assert_eq!(quote["legs"][0]["poolAddress"], expected.pool);
+        assert_eq!(quote["operations"][0]["poolAddress"], expected.pool);
         let body = json!({
-            "userPublicKey": ORACLE_PAYER,
+            "userWalletAddress": ORACLE_PAYER,
             "wrapAndUnwrapSol": false,
             "quoteRequest": request,
         });
         for path in ["/swap-instructions", "/swap"] {
             let (status, _, response) = call(fixture.router(), post_to(path, &body)).await;
             assert_eq!(status, StatusCode::OK, "{path}: {response}");
-            assert_eq!(response["quote"]["legs"][0]["dex"], "raydium_amm_v4");
+            assert_eq!(response["quote"]["operations"][0]["dex"], "raydium_amm_v4");
         }
     }
 }
@@ -410,7 +411,7 @@ impl Fixture {
         api::router(Api {
             pool: Arc::clone(&self.pool),
             quotes,
-            settings: self.settings,
+            settings: self.settings.clone(),
             swap: crate::SwapSettings::default(),
             blockhashes: self.blockhashes.clone(),
             max_clock_stall: MAX_CLOCK_STALL,
@@ -456,7 +457,56 @@ fn sol_to_usdc() -> Value {
         "fromTokenAddress": "So11111111111111111111111111111111111111112",
         "toTokenAddress": USDC,
         "amount": "1000000",
+        "singleRouteOnly": true,
     })
+}
+
+// Gate: protects split HTTP roundtrip and credit tampering; HTTP fixture is the
+// narrowest public seam; expectations are graph conservation/format, not quote
+// math; mutating a declared debit must invalidate an otherwise buildable plan.
+#[tokio::test]
+async fn split_quote_roundtrips_and_rejects_unfunded_debits() {
+    let fixture = Fixture::new(1, 4);
+    let mut request = sol_to_usdc();
+    request
+        .as_object_mut()
+        .expect("request")
+        .remove("singleRouteOnly");
+    request["amount"] = json!("1000000000");
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{quote}");
+    let operations = quote["operations"].as_array().expect("operations");
+    assert!(operations.len() > 1, "fixture has parallel liquidity");
+    assert!(
+        operations
+            .iter()
+            .all(|op| op["sourceSlot"] == 0 && op["destinationSlot"] == 1)
+    );
+    let total_input: u64 = operations
+        .iter()
+        .map(|op| {
+            op["fromTokenAmount"]
+                .as_str()
+                .expect("amount")
+                .parse::<u64>()
+                .expect("u64")
+        })
+        .sum();
+    assert_eq!(total_input, 1_000_000_000);
+    let body = json!({"userWalletAddress": USER, "quoteResponse": quote});
+    let (status, _, built) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+    assert_eq!(status, StatusCode::OK, "{built}");
+    assert_eq!(
+        data(&built["swapInstruction"])[0],
+        4,
+        "flow instruction tag"
+    );
+    let mut tampered = body;
+    tampered["quoteResponse"]["operations"][0]["fromTokenAmount"] = json!("1000000001");
+    let (status, _, answer) =
+        call(fixture.router(), post_to("/swap-instructions", &tampered)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+    assert_eq!(answer["error"]["code"], "QUOTE_MISMATCH");
 }
 
 #[tokio::test]
@@ -479,7 +529,7 @@ async fn a_route_pays_what_the_best_pool_paid_in_the_deployed_program() {
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["toTokenAmount"], best.out.as_str());
-    assert_eq!(body["legs"][0]["poolAddress"], best.pool.as_str());
+    assert_eq!(body["operations"][0]["poolAddress"], best.pool.as_str());
 }
 
 #[tokio::test]
@@ -527,8 +577,8 @@ async fn malformed_or_contradictory_requests_answer_invalid_request() {
             "bad address",
             with("fromTokenAddress", json!("not-an-address")),
         ),
-        ("unknown dex", with("dexes", json!(["uniswap"]))),
-        ("unknown field", with("slippagePercent", json!("0.5"))),
+        ("unknown dex", with("dexIds", json!("uniswap"))),
+        ("unknown field", with("slippageBps", json!(0))),
         ("zero hops", with("maxHops", json!(0))),
         ("hops past the limit", with("maxHops", json!(9))),
         (
@@ -552,7 +602,7 @@ async fn malformed_or_contradictory_requests_answer_invalid_request() {
 async fn a_request_no_pool_admits_answers_no_route_with_the_search_outcome() {
     let fixture = Fixture::new(1, 4);
     let mut request = sol_to_usdc();
-    request["dexes"] = json!(["orca_whirlpool"]);
+    request["dexIds"] = json!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
 
     let (status, _, body) = call(fixture.router(), post(&request)).await;
 
@@ -630,7 +680,7 @@ fn best_sol_to_usdc_pool() -> Case {
 fn swap_one_sol() -> Value {
     let mut request = sol_to_usdc();
     request["amount"] = json!(ONE_SOL);
-    json!({ "userPublicKey": USER, "quoteRequest": request })
+    json!({ "userWalletAddress": USER, "quoteRequest": request })
 }
 
 fn data(instruction: &Value) -> Vec<u8> {
@@ -698,7 +748,7 @@ async fn a_quote_sent_back_builds_the_same_swap_without_searching_again() {
     request["amount"] = json!(ONE_SOL);
     let (_, _, quote) = call(fixture.router(), post(&request)).await;
 
-    let body = json!({ "userPublicKey": USER, "quoteResponse": quote });
+    let body = json!({ "userWalletAddress": USER, "quoteResponse": quote });
     let (status, _, quoted) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
 
     assert_eq!(status, StatusCode::OK, "{quoted}");
@@ -715,17 +765,17 @@ async fn a_quote_the_market_cannot_build_is_refused() {
     let with = |edit: fn(&mut Value)| {
         let mut quote = quote.clone();
         edit(&mut quote);
-        json!({ "userPublicKey": USER, "quoteResponse": quote })
+        json!({ "userWalletAddress": USER, "quoteResponse": quote })
     };
     let cases: [(&str, Value, &str); 5] = [
         (
             "unwatched pool",
-            with(|q| q["legs"][0]["poolAddress"] = json!(USER)),
+            with(|q| q["operations"][0]["poolAddress"] = json!(USER)),
             "QUOTE_MISMATCH",
         ),
         (
             "wrong venue",
-            with(|q| q["legs"][0]["dex"] = json!("orca_whirlpool")),
+            with(|q| q["operations"][0]["dex"] = json!("orca_whirlpool")),
             "QUOTE_MISMATCH",
         ),
         (
@@ -738,7 +788,7 @@ async fn a_quote_the_market_cannot_build_is_refused() {
         ),
         (
             "legs spend another mint",
-            with(|q| q["legs"][0]["fromTokenAddress"] = q["toTokenAddress"].clone()),
+            with(|q| q["operations"][0]["fromTokenAddress"] = q["toTokenAddress"].clone()),
             "QUOTE_MISMATCH",
         ),
         (
@@ -762,8 +812,9 @@ async fn a_quote_the_market_cannot_build_is_refused() {
 #[tokio::test]
 async fn a_swap_body_names_exactly_one_source_of_its_route() {
     let fixture = Fixture::new(1, 4);
-    let both = json!({ "userPublicKey": USER, "quoteRequest": sol_to_usdc(), "quoteResponse": {} });
-    let neither = json!({ "userPublicKey": USER });
+    let both =
+        json!({ "userWalletAddress": USER, "quoteRequest": sol_to_usdc(), "quoteResponse": {} });
+    let neither = json!({ "userWalletAddress": USER });
     for (name, body) in [("both", both), ("neither", neither)] {
         let (status, _, answer) =
             call(fixture.router(), post_to("/swap-instructions", &body)).await;
@@ -918,9 +969,14 @@ async fn router_replay_plans() {
             "fromTokenAmount": case.amount_in,
             "toTokenAmount": expected,
             "otherAmountThreshold": expected,
-            "slippageBps": 0,
+            "slippagePercent": "0",
             "contextSlot": slot,
-            "legs": [{
+            "slots": [case.input_mint, output],
+            "operations": [{
+                "sourceSlot": 0,
+                "destinationSlot": 1,
+                "inputShare": {"numerator": "1", "denominator": "1"},
+                "dependencies": [],
                 "poolAddress": case.pool,
                 "dex": dex,
                 "fromTokenAddress": case.input_mint,
@@ -930,7 +986,7 @@ async fn router_replay_plans() {
             }],
         });
         let body = json!({
-            "userPublicKey": ORACLE_PAYER,
+            "userWalletAddress": ORACLE_PAYER,
             "wrapAndUnwrapSol": false,
             "quoteResponse": quote,
         });
@@ -980,6 +1036,7 @@ async fn scenario_quote(fixture: &Fixture, from: &str, to: &str, amount: &str, h
         "toTokenAddress": to,
         "amount": amount,
         "maxHops": hops,
+        "singleRouteOnly": true,
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{from} → {to}: {quote}");
@@ -994,7 +1051,7 @@ async fn scenario_plan(
     epoch: Option<u64>,
 ) -> Value {
     let body = json!({
-        "userPublicKey": ORACLE_PAYER,
+        "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": wrap,
         "quoteResponse": quote,
     });
@@ -1002,12 +1059,16 @@ async fn scenario_plan(
     assert_eq!(status, StatusCode::OK, "{name}: {built}");
     let (status, _, swap) = call(fixture.router(), post_to("/swap", &body)).await;
     assert_eq!(status, StatusCode::OK, "{name}: {swap}");
-    let legs = quote["legs"].as_array().expect("legs");
+    let legs = quote["operations"].as_array().expect("legs");
     json!({
         "name": name,
+        "pool": legs[0]["poolAddress"],
         "inputMint": quote["fromTokenAddress"],
         "outputMint": quote["toTokenAddress"],
         "amountIn": quote["fromTokenAmount"],
+        "expectedOut": quote["toTokenAmount"],
+        "slots": quote["slots"],
+        "operations": quote["operations"],
         "epoch": epoch,
         "legs": legs.iter().map(|leg| json!({
             "pool": leg["poolAddress"],
@@ -1022,10 +1083,10 @@ async fn scenario_plan(
 }
 
 fn assert_hop_minimums(plan: &Value, quote: &Value, name: &str) {
-    let legs = quote["legs"].as_array().expect("route legs");
+    let legs = quote["operations"].as_array().expect("route legs");
     let wire = data(&plan["swapInstruction"]);
     assert_eq!(wire[1], 2, "{name}");
-    let slippage = quote["slippageBps"].as_u64().expect("slippage bps");
+    let slippage = percent_bps(quote["slippagePercent"].as_str().expect("slippage percent"));
     let route_min: u64 = quote["otherAmountThreshold"]
         .as_str()
         .expect("route minimum")
@@ -1048,6 +1109,154 @@ fn assert_hop_minimums(plan: &Value, quote: &Value, name: &str) {
         let actual = u64::from_le_bytes(wire[start..start + 8].try_into().expect("hop minimum"));
         assert_eq!(actual, expected, "{name} hop {index}");
     }
+}
+
+fn percent_bps(text: &str) -> u16 {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    let fraction = match fraction.len() {
+        0 => 0,
+        1 => fraction.parse::<u16>().expect("slippage fraction") * 10,
+        2 => fraction.parse::<u16>().expect("slippage fraction"),
+        _ => panic!("too many slippage decimals"),
+    };
+    whole.parse::<u16>().expect("slippage whole") * 100 + fraction
+}
+
+/// Gate: emits production HTTP plans for an independent program replay, never
+/// treats these quoted amounts as financial truth. The oracle compares them to
+/// sequential deployed-program swaps on the captured accounts.
+#[tokio::test]
+#[ignore = "writes split/merge plans for independent LiteSVM replay"]
+async fn router_flow_plans() {
+    let output = std::env::var("ROUTER_FLOW_PLANS").expect("output path");
+    let fixture = Fixture::over(SCENARIO_POOLS, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let sol = "So11111111111111111111111111111111111111112";
+    let direct = scenario_quote(&fixture, sol, USDC, "50000000", 1).await;
+    let via = scenario_quote(&fixture, sol, IMG, "50000000", 1).await;
+    let joined = scenario_quote(
+        &fixture,
+        IMG,
+        USDC,
+        via["toTokenAmount"].as_str().expect("amount"),
+        1,
+    )
+    .await;
+    let merged = direct["toTokenAmount"]
+        .as_str()
+        .expect("amount")
+        .parse::<u64>()
+        .expect("u64")
+        .checked_add(
+            joined["toTokenAmount"]
+                .as_str()
+                .expect("amount")
+                .parse::<u64>()
+                .expect("u64"),
+        )
+        .expect("merged amount");
+    let suffix = scenario_quote(&fixture, USDC, DAILY, &merged.to_string(), 1).await;
+    let mut operations = vec![
+        direct["operations"][0].clone(),
+        via["operations"][0].clone(),
+        joined["operations"][0].clone(),
+        suffix["operations"][0].clone(),
+    ];
+    for (operation, (source, destination, dependencies)) in operations.iter_mut().zip([
+        (0, 3, vec![]),
+        (0, 2, vec![]),
+        (2, 3, vec![1]),
+        (3, 1, vec![0, 2]),
+    ]) {
+        operation["sourceSlot"] = json!(source);
+        operation["destinationSlot"] = json!(destination);
+        operation["dependencies"] = json!(dependencies);
+    }
+    operations[0]["inputShare"]["denominator"] = json!("2");
+    let mut quote = direct.clone();
+    quote["fromTokenAmount"] = json!("100000000");
+    quote["toTokenAddress"] = json!(DAILY);
+    quote["toTokenAmount"] = suffix["toTokenAmount"].clone();
+    quote["otherAmountThreshold"] = suffix["otherAmountThreshold"].clone();
+    quote["slots"] = json!([sol, DAILY, IMG, USDC]);
+    quote["operations"] = json!(operations);
+    let plan = scenario_plan(&fixture, "split_merge_transfer_fee", &quote, false, None).await;
+    let repeated_plan = sequential_cpmm_plan(&fixture, &direct).await;
+    let mut prefunded_plan = plan.clone();
+    prefunded_plan["name"] = json!("split_merge_prefunded_intermediate");
+    prefunded_plan["prefundedIntermediate"] = json!({"slot": 3, "amount": 1_000_000_u64});
+    let file = std::fs::File::create(output).expect("plans file");
+    serde_json::to_writer(
+        file,
+        &json!({"corpus": SCENARIO_POOLS, "plans": [plan, repeated_plan, prefunded_plan]}),
+    )
+    .expect("write plans");
+}
+
+async fn sequential_cpmm_plan(fixture: &Fixture, direct: &Value) -> Value {
+    let captured = universe::load_from(SCENARIO_POOLS);
+    let mut session = captured.reader.session().expect("captured quote session");
+    let pool: domain::Pubkey = direct["operations"][0]["poolAddress"]
+        .as_str()
+        .expect("pool address")
+        .parse()
+        .expect("pool address");
+    let from: domain::Pubkey = WSOL.parse().expect("SOL mint");
+    let to: domain::Pubkey = USDC.parse().expect("USDC mint");
+    let from_id = session.topology().mint_id(&from).expect("SOL in corpus");
+    let to_id = session.topology().mint_id(&to).expect("USDC in corpus");
+    let pool_id = session.topology().pool_id(&pool).expect("pool in corpus");
+    let edge = session
+        .topology()
+        .edge(pool_id, from_id)
+        .expect("SOL swap edge");
+    let operation = |numerator, denominator| route::Operation {
+        allocation: route::Allocation {
+            source: 0,
+            destination: 1,
+            numerator,
+            denominator,
+        },
+        leg: route::Leg {
+            edge,
+            pool,
+            amount_in: 0,
+            amount_out: 0,
+            arrays_used: 0,
+            cross_stream: false,
+        },
+    };
+    let flow = route::Flow {
+        slots: vec![from_id, to_id],
+        operations: vec![operation(1, 2), operation(1, 1)],
+        amount_in: 100_000_000,
+        amount_out: 0,
+    };
+    let repriced = session
+        .requote_flow(&flow, fixture.settings.max_arrays)
+        .expect("sequential CPMM quote");
+    let mut repeated = direct.clone();
+    repeated["fromTokenAmount"] = json!("100000000");
+    repeated["toTokenAmount"] = json!(repriced.amount_out.to_string());
+    repeated["otherAmountThreshold"] = json!((repriced.amount_out * 9 / 10).to_string());
+    repeated["slippagePercent"] = json!("10");
+    let mut repeated_ops = vec![direct["operations"][0].clone(); 2];
+    for (declared, priced) in repeated_ops.iter_mut().zip(&repriced.operations) {
+        declared["sourceSlot"] = json!(0);
+        declared["destinationSlot"] = json!(1);
+        declared["inputShare"] = json!({
+            "numerator": priced.allocation.numerator.to_string(),
+            "denominator": priced.allocation.denominator.to_string(),
+        });
+        declared["dependencies"] = json!([]);
+        declared["fromTokenAmount"] = json!(priced.leg.amount_in.to_string());
+        declared["toTokenAmount"] = json!(priced.leg.amount_out.to_string());
+    }
+    repeated["operations"] = json!(repeated_ops);
+    scenario_plan(fixture, "sequential_cpmm", &repeated, false, None).await
 }
 
 /// Three-token paths use only the two selected pools, so a simple search must
@@ -1086,21 +1295,24 @@ async fn amm_v4_matrix_plan(name: &str, pools: [&str; 2], dexes: [&str; 2]) -> V
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{name}: {quote}");
-    let legs = quote["legs"].as_array().expect("route legs");
+    let legs = quote["operations"].as_array().expect("route legs");
     assert_eq!(legs.len(), 2, "{name}");
     for (leg, (pool, dex)) in legs.iter().zip(pools.into_iter().zip(dexes)) {
         assert_eq!(leg["poolAddress"], pool, "{name}");
         assert_eq!(leg["dex"], dex, "{name}");
     }
     let body = json!({
-        "userPublicKey": ORACLE_PAYER,
+        "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": false,
         "quoteRequest": request,
     });
     for path in ["/swap-instructions", "/swap"] {
         let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
         assert_eq!(status, StatusCode::OK, "{name} {path}: {built}");
-        assert_eq!(built["quote"]["legs"], quote["legs"], "{name} {path}");
+        assert_eq!(
+            built["quote"]["operations"], quote["operations"],
+            "{name} {path}"
+        );
     }
     let plan = scenario_plan(&fixture, name, &quote, false, None).await;
     assert_hop_minimums(&plan, &quote, name);
@@ -1126,11 +1338,11 @@ async fn amm_v4_profitable_cycle_plan() -> Value {
         "amount": "1000000",
         "maxHops": 2,
         "enableCyclicArbitrage": true,
-        "slippageBps": 0,
+        "slippagePercent": "0",
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{quote}");
-    let legs = quote["legs"].as_array().expect("cycle legs");
+    let legs = quote["operations"].as_array().expect("cycle legs");
     assert_eq!(legs.len(), 2);
     assert_eq!(legs[0]["poolAddress"], V4_PROFIT_SOL_USDC);
     assert_eq!(legs[1]["poolAddress"], CPMM_SOL_USDC);
@@ -1141,14 +1353,14 @@ async fn amm_v4_profitable_cycle_plan() -> Value {
         .expect("u64");
     assert!(threshold > 1_000_000, "{quote}");
     let body = json!({
-        "userPublicKey": ORACLE_PAYER,
+        "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": false,
         "quoteRequest": request,
     });
     for path in ["/swap-instructions", "/swap"] {
         let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
         assert_eq!(status, StatusCode::OK, "{path}: {built}");
-        assert_eq!(built["quote"]["legs"], quote["legs"]);
+        assert_eq!(built["quote"]["operations"], quote["operations"]);
     }
     scenario_plan(&fixture, "amm_v4_to_cpmm_profit", &quote, false, None).await
 }
@@ -1170,11 +1382,11 @@ async fn amm_v4_synthetic_cycle_plan() -> Value {
         "amount": "1000000",
         "maxHops": 2,
         "enableCyclicArbitrage": true,
-        "slippageBps": 0,
+        "slippagePercent": "0",
     });
     let (status, _, mut quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{quote}");
-    let legs = quote["legs"].as_array().expect("cycle legs");
+    let legs = quote["operations"].as_array().expect("cycle legs");
     assert_eq!(legs.len(), 2);
     assert_eq!(legs[0]["poolAddress"], V4_CYCLE_FIRST);
     assert_eq!(legs[1]["poolAddress"], V4_CYCLE_SECOND);
@@ -1182,7 +1394,7 @@ async fn amm_v4_synthetic_cycle_plan() -> Value {
     // second pool's SOL vault until direct program execution pays 1 unit of profit.
     quote["toTokenAmount"] = json!("1000001");
     quote["otherAmountThreshold"] = json!("1000001");
-    quote["legs"][1]["toTokenAmount"] = json!("1000001");
+    quote["operations"][1]["toTokenAmount"] = json!("1000001");
     scenario_plan(
         &fixture,
         "amm_v4_to_amm_v4_profit_synthetic",
@@ -1281,21 +1493,24 @@ async fn clmm_cross_plan(
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{name}: {quote}");
-    let legs = quote["legs"].as_array().expect("route legs");
+    let legs = quote["operations"].as_array().expect("route legs");
     assert_eq!(legs.len(), 2, "{name}");
     for (leg, (pool, dex)) in legs.iter().zip(pools.into_iter().zip(dexes)) {
         assert_eq!(leg["poolAddress"], pool, "{name}");
         assert_eq!(leg["dex"], dex, "{name}");
     }
     let body = json!({
-        "userPublicKey": ORACLE_PAYER,
+        "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": false,
         "quoteRequest": request,
     });
     for path in ["/swap-instructions", "/swap"] {
         let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
         assert_eq!(status, StatusCode::OK, "{name} {path}: {built}");
-        assert_eq!(built["quote"]["legs"], quote["legs"], "{name} {path}");
+        assert_eq!(
+            built["quote"]["operations"], quote["operations"],
+            "{name} {path}"
+        );
     }
     let plan = scenario_plan(&fixture, name, &quote, false, None).await;
     assert_hop_minimums(&plan, &quote, name);
@@ -1410,7 +1625,7 @@ async fn orca_cross_plan(snapshot: &str, route: CrossRoute) -> Value {
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{name}: {quote}");
-    let legs = quote["legs"].as_array().expect("route legs");
+    let legs = quote["operations"].as_array().expect("route legs");
     assert_eq!(legs.len(), 2, "{name}");
     for (leg, (pool, dex)) in legs.iter().zip(pools.into_iter().zip(dexes)) {
         assert_eq!(leg["poolAddress"], pool, "{name}");
@@ -1436,17 +1651,17 @@ async fn orca_three_hop_cycle_rejected(snapshot: &str) {
         "amount": "1000000",
         "maxHops": 3,
         "enableCyclicArbitrage": true,
-        "slippageBps": 0,
+        "slippagePercent": "0",
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "cycle quote: {quote}");
-    let legs = quote["legs"].as_array().expect("cycle legs");
+    let legs = quote["operations"].as_array().expect("cycle legs");
     assert_eq!(legs.len(), 3, "cycle quote: {quote}");
     for (leg, pool) in legs.iter().zip(pools) {
         assert_eq!(leg["poolAddress"], pool, "cycle quote: {quote}");
     }
     let body = json!({
-        "userPublicKey": ORACLE_PAYER,
+        "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": false,
         "quoteResponse": quote,
     });
@@ -1494,7 +1709,7 @@ async fn router_orca_cycle_plans() {
         "amount": "1000000",
         "maxHops": 2,
         "enableCyclicArbitrage": true,
-        "slippageBps": 0,
+        "slippagePercent": "0",
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "cycle quote: {quote}");
@@ -1507,7 +1722,7 @@ async fn router_orca_cycle_plans() {
             > 1_000_000,
         "cycle not profitable: {quote}"
     );
-    let legs = quote["legs"].as_array().expect("cycle legs");
+    let legs = quote["operations"].as_array().expect("cycle legs");
     assert_eq!(legs.len(), 2, "cycle quote: {quote}");
     for (leg, pool) in legs.iter().zip(pools) {
         assert_eq!(leg["poolAddress"], pool, "cycle quote: {quote}");
@@ -1575,7 +1790,7 @@ async fn router_orca_fee_plans() {
                     "toTokenAddress": to,
                     "amount": amount,
                     "maxHops": 1,
-                    "slippageBps": 0,
+                    "slippagePercent": "0",
                 });
                 let (status, _, quote) = call(fixture.router(), post(&request)).await;
                 if status == StatusCode::OK {
@@ -1605,7 +1820,7 @@ async fn router_orca_fee_plans() {
                     "toTokenAddress": mint_b,
                     "amount": "1000000",
                     "maxHops": 1,
-                    "slippageBps": 0,
+                    "slippagePercent": "0",
                 });
                 let (status, _, quote) = call(fixture.router(), post(&request)).await;
                 assert_eq!(status, StatusCode::OK, "{case_name}: {quote}");
@@ -1650,7 +1865,7 @@ async fn router_orca_pair_plans() {
                 "toTokenAddress": to,
                 "amount": amount,
                 "maxHops": 1,
-                "slippageBps": 0,
+                "slippagePercent": "0",
             });
             let (status, _, quote) = call(fixture.router(), post(&request)).await;
             if status == StatusCode::OK {
@@ -1684,21 +1899,21 @@ async fn amm_v4_token22_plan() -> Value {
     });
     let (status, _, quote) = call(fixture.router(), post(&request)).await;
     assert_eq!(status, StatusCode::OK, "{quote}");
-    let legs = quote["legs"].as_array().expect("legs");
+    let legs = quote["operations"].as_array().expect("legs");
     assert_eq!(legs.len(), 2);
     assert_eq!(legs[0]["poolAddress"], V4_SOL_USDC);
     assert_eq!(legs[0]["dex"], "raydium_amm_v4");
     assert_eq!(legs[1]["poolAddress"], CPMM_SOL_SOLADAO);
     assert_eq!(legs[1]["dex"], "raydium_cpmm");
     let body = json!({
-        "userPublicKey": ORACLE_PAYER,
+        "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": false,
         "quoteRequest": request,
     });
     for path in ["/swap-instructions", "/swap"] {
         let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
         assert_eq!(status, StatusCode::OK, "{path}: {built}");
-        assert_eq!(built["quote"]["legs"], quote["legs"]);
+        assert_eq!(built["quote"]["operations"], quote["operations"]);
     }
     scenario_plan(&fixture, "amm_v4_to_cpmm_token22_fee", &quote, false, None).await
 }
@@ -1789,7 +2004,7 @@ async fn router_scenario_plans() {
         }
         let quote = scenario_quote(&fixture, from, to, amount, hops).await;
         assert_eq!(
-            quote["legs"].as_array().expect("legs").len(),
+            quote["operations"].as_array().expect("legs").len(),
             usize::from(hops),
             "{name}"
         );
@@ -1805,7 +2020,15 @@ async fn router_scenario_plans() {
     both["toTokenAddress"] = second["toTokenAddress"].clone();
     both["toTokenAmount"] = second["toTokenAmount"].clone();
     both["otherAmountThreshold"] = second["otherAmountThreshold"].clone();
-    both["legs"] = json!([first["legs"][0], second["legs"][0]]);
+    both["operations"] = json!([first["operations"][0], second["operations"][0]]);
+    both["slots"] = json!([
+        first["fromTokenAddress"],
+        second["toTokenAddress"],
+        first["toTokenAddress"]
+    ]);
+    both["operations"][0]["destinationSlot"] = json!(2);
+    both["operations"][1]["sourceSlot"] = json!(2);
+    both["operations"][1]["dependencies"] = json!([0]);
     let both = both.as_object().expect("a quote").clone();
     let both = Value::Object(
         both.into_iter()
@@ -1824,7 +2047,7 @@ async fn router_scenario_plans() {
 async fn a_swap_limited_to_venues_the_router_lacks_finds_no_route() {
     let fixture = Fixture::new(1, 4);
     let mut body = swap_one_sol();
-    body["quoteRequest"]["dexes"] = json!(["orca_whirlpool"]);
+    body["quoteRequest"]["dexIds"] = json!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
 
     let (status, _, answer) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
 
@@ -1837,8 +2060,18 @@ fn cycle_quote(threshold: u64) -> Value {
     let mut pools: Vec<String> = cases().into_iter().map(|case| case.pool).collect();
     pools.sort();
     pools.dedup();
-    let leg = |pool: &str, from: &Value, to: &Value, amount_in: u64, amount_out: u64| {
+    let leg = |pool: &str,
+               from: &Value,
+               to: &Value,
+               amount_in: u64,
+               amount_out: u64,
+               source: u8,
+               destination: u8| {
         json!({
+            "sourceSlot": source,
+            "destinationSlot": destination,
+            "inputShare": {"numerator": "1", "denominator": "1"},
+            "dependencies": if source == 0 { vec![] } else { vec![0] },
             "poolAddress": pool,
             "dex": "raydium_cpmm",
             "fromTokenAddress": from,
@@ -1854,17 +2087,54 @@ fn cycle_quote(threshold: u64) -> Value {
         "fromTokenAmount": "1000000000",
         "toTokenAmount": "1000000002",
         "otherAmountThreshold": threshold.to_string(),
-        "slippageBps": 0,
+        "slippagePercent": "0",
         "contextSlot": 450_370_213,
-        "legs": [
-            leg(&pools[0], &sol, &usdc, 1_000_000_000, 33_000_000),
-            leg(&pools[1], &usdc, &sol, 33_000_000, 1_000_000_002),
+        "slots": [sol, sol, usdc],
+        "operations": [
+            leg(&pools[0], &sol, &usdc, 1_000_000_000, 33_000_000, 0, 2),
+            leg(&pools[1], &usdc, &sol, 33_000_000, 1_000_000_002, 2, 1),
         ],
     })
 }
 
 // src: onchain/crates/router-core/src/route_checks.rs (check_route_args: a cycle needs
 // min_out > in_amount, or the router refuses it before any swap).
+// Gate: caller-supplied plans must obey the same cycle/depth policy as search;
+// exercise public HTTP validation with structural mutations, no price oracle.
+#[tokio::test]
+async fn supplied_cycles_cannot_branch_or_exceed_depth_limit() {
+    let mut fixture = Fixture::new(1, 4);
+    let mut branched = cycle_quote(1_000_000_001);
+    let mut first = branched["operations"][0].clone();
+    first["fromTokenAmount"] = json!("500000000");
+    first["toTokenAmount"] = json!("16500000");
+    let mut second = first.clone();
+    first["inputShare"]["denominator"] = json!("2");
+    second["inputShare"]["denominator"] = json!("1");
+    let mut last = branched["operations"][1].clone();
+    last["dependencies"] = json!([0, 1]);
+    branched["operations"] = json!([first, second, last]);
+    let body = json!({"userWalletAddress": USER, "quoteResponse": branched});
+    let (status, _, answer) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+    assert!(
+        answer["error"]["message"]
+            .as_str()
+            .expect("message")
+            .contains("unsplit")
+    );
+    fixture.settings.max_hops = 1;
+    let body = json!({"userWalletAddress": USER, "quoteResponse": cycle_quote(1_000_000_001)});
+    let (status, _, answer) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+    assert!(
+        answer["error"]["message"]
+            .as_str()
+            .expect("message")
+            .contains("maxHops")
+    );
+}
+
 #[tokio::test]
 async fn a_cycle_is_built_only_when_its_threshold_exceeds_its_input() {
     let fixture = Fixture::new(1, 4);
@@ -1873,7 +2143,7 @@ async fn a_cycle_is_built_only_when_its_threshold_exceeds_its_input() {
         (1_000_000_000, StatusCode::UNPROCESSABLE_ENTITY),
         (1_000_000_001, StatusCode::OK),
     ] {
-        let body = json!({ "userPublicKey": USER, "quoteResponse": cycle_quote(threshold) });
+        let body = json!({ "userWalletAddress": USER, "quoteResponse": cycle_quote(threshold) });
 
         let (answer_status, _, answer) =
             call(fixture.router(), post_to("/swap-instructions", &body)).await;
@@ -1903,7 +2173,7 @@ async fn a_searched_cycle_that_pays_less_than_it_spends_is_not_built() {
         "the corpus has no profitable cycle: {quote}"
     );
 
-    let body = json!({ "userPublicKey": USER, "quoteRequest": request });
+    let body = json!({ "userWalletAddress": USER, "quoteRequest": request });
     let (status, _, answer) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
@@ -1922,7 +2192,7 @@ async fn a_quote_sent_back_keeps_what_its_search_said_about_it() {
     bare.as_object_mut().unwrap().remove("search");
     bare.as_object_mut().unwrap().remove("crossStream");
 
-    let body = |quote: &Value| json!({ "userPublicKey": USER, "quoteResponse": quote });
+    let body = |quote: &Value| json!({ "userWalletAddress": USER, "quoteResponse": quote });
     let (_, _, kept) = call(
         fixture.router(),
         post_to("/swap-instructions", &body(&quote)),

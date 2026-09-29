@@ -130,8 +130,7 @@ pub(crate) fn limits<'a>(
             other => Err(TxError::Unsupported(other)),
         })
         .try_fold(SETUP_UNITS, |total, units| Ok(total.saturating_add(units?)))?;
-    if hops.iter().any(|hop| hop.kind == DexKind::MeteoraDlmm) && compute_units > MAX_COMPUTE_UNITS
-    {
+    if compute_units > MAX_COMPUTE_UNITS {
         return Err(TxError::TooMuchCompute {
             units: compute_units,
             max: MAX_COMPUTE_UNITS,
@@ -197,6 +196,26 @@ mod tests {
         }
     }
 
+    fn clmm_window() -> SwapWindow {
+        let input = TokenSide {
+            mint: Pubkey::new_from_array([2; 32]),
+            token_program: TOKEN_PROGRAM,
+        };
+        let output = TokenSide {
+            mint: Pubkey::new_from_array([3; 32]),
+            token_program: TOKEN_PROGRAM,
+        };
+        SwapWindow {
+            kind: DexKind::RaydiumClmm,
+            program_id: CLMM_PROGRAM,
+            accounts: Vec::new(),
+            source: input,
+            destination: output,
+            tail: 4,
+            optional_tail: 0,
+        }
+    }
+
     #[test]
     fn dlmm_compute_budget_refuses_unmeasured_and_over_limit_routes() {
         let payer = Pubkey::new_from_array([9; 32]);
@@ -209,6 +228,23 @@ mod tests {
             limits(&[dlmm_window(2), dlmm_window(2)], &instructions, &payer),
             Err(TxError::TooMuchCompute {
                 units: 1_730_000,
+                max: 1_400_000,
+            })
+        );
+    }
+
+    #[test]
+    fn compute_budget_refuses_over_limit_non_dlmm_flow() {
+        let payer = Pubkey::new_from_array([9; 32]);
+        let instructions: [Instruction; 0] = [];
+        assert_eq!(
+            limits(
+                &[clmm_window(), clmm_window(), clmm_window()],
+                &instructions,
+                &payer,
+            ),
+            Err(TxError::TooMuchCompute {
+                units: 3_900_000,
                 max: 1_400_000,
             })
         );

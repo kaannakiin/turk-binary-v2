@@ -7,6 +7,7 @@ use tower::ServiceExt;
 mod api;
 mod executor;
 mod ops;
+mod performance;
 mod ready;
 mod serve;
 

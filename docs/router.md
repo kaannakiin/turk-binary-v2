@@ -2,6 +2,39 @@
 
 `onchain/` is the on-chain half of `/swap-instructions`: a pinocchio program that runs a route the bot already quoted, hop by hop, in one instruction. It computes no prices. It checks that every hop moved the money it claims to have moved and that the route paid at least `min_out`.
 
+## Flow wire format
+
+The versioned flow instruction uses discriminator `4` and wire version `1`. It carries up to 16 ordered swap steps over up to 18 logical token slots. Slot `0` is the user's exact-in source and slot `1` is the final output; the remaining slots are intermediate virtual balances tied to the user's token accounts. Each step names a source and destination slot, a venue `Hop`, and a `u64` allocation fraction of the source's currently available balance. Arithmetic uses checked `u128` multiplication and floors the result; a step whose numerator equals its denominator consumes the remaining source balance.
+
+`just router-flow-replay` regenerates the four-operation SOL→USDC and
+SOL→IMG→USDC split, then merges both USDC credits into a USDC→DAILY swap.
+IMG and DAILY are Token-2022 mints; DAILY charges an output transfer fee in the
+captured epoch. The HTTP builder supplied the plan; the oracle separately sent
+each venue instruction on one evolving LiteSVM bank, using actual balance
+differences for later steps. Direct venue execution, router instruction and
+unsigned v1 transaction each paid `10143850221706` units for `100000000`
+lamports input. The captured result is
+`crates/tx/src/tests/fixtures/router_flow_replay.json` (corpus SHA-256
+`042e8b5e2410cec6201fc44a87a10f5adba07cf935f9dd9726b20d1850bbcdef`,
+router binary SHA-256
+`38c020a864b3d9b5fa77edd77317b717999c5c949f0a501043bb2f9cab2425d3`).
+The same replay also executes two successive swaps through one CPMM pool,
+spending two half allocations of `100000000` lamports. The second quote uses
+the private state after the first operation. Direct program execution, router
+instruction and v1 transaction each paid `8548616` units. These captures
+verify the two listed flows; repeated CLMM, Orca, AMM v4 and DLMM transitions
+remain gated pending independent state verification.
+It also repeats the four-operation plan with `1000000` units already in the
+user's USDC intermediate account. The final payout remains identical, proving
+the existing balance is not credited as this plan's output. In all three cases,
+raising the aggregate minimum output by one above the direct venue payout
+fails atomically: the recorded pool accounts and user token accounts are
+unchanged. The fee payer's transaction fee is outside that balance comparison.
+
+Flow accounts begin with the existing `[user, source, destination, config]` prefix, followed by one account reference per slot and then the venue windows in step order. Duplicate account references are compiled once. The program measures the actual source and destination balance deltas after every CPI, so pre-existing destination balances cannot satisfy a step. Every flow operation must consume its full ExactIn allocation; all nonfinal credits must be zero at completion. Partial venue consumption or stranded input/intermediate credit fails atomically. It rejects self-slot operations, cycles in the logical dependency graph, an unproduced final slot, unconsumed intermediate producers, a source's last outgoing allocation that leaves a remainder, and routes that spend more than the root exact-in amount. `min_out` applies to the final slot; a cyclic route must also increase the root mint balance.
+
+The legacy linear route remains discriminator `0` and keeps its four-hop limit. Flow has its own step and slot limits, account and compute budgets, and atomic failure behavior. Quote and transaction builders must emit the same ordered steps, slot references, and venue windows; the router does not re-quote or infer missing operations on chain.
+
 It is its own Cargo workspace, like `oracle/`: `cargo build-sbf` compiles it with platform-tools' rustc, and pinocchio's stack stays out of the bot's dependency graph.
 
 | Crate                | Holds                                                                    |
@@ -79,7 +112,7 @@ Kinds follow `domain::DexKind`'s declaration order; a number is accepted only on
 | 1    | Raydium CLMM   | `14 + arrays + extension`: the CLMM program, `swap_v2`'s 13 accounts, optional bitmap extension, then tick arrays in bitmap walk order |
 | 2    | Raydium CPMM   | 14: the CPMM program, then `swap_base_input`'s 13 accounts; no hook or tail accounts                                                   |
 | 3    | Orca Whirlpool | `16 + tail`: Whirlpool program, `swap_v2`'s 15 accounts; `tail` is 0–2 optional supplemental tick arrays; no hook accounts             |
-| 4    | Meteora DLMM  | `17 + tail`: DLMM program, `swap2`'s 16 fixed accounts, then `tail` consumed bin arrays in quote order; no hook accounts               |
+| 4    | Meteora DLMM   | `17 + tail`: DLMM program, `swap2`'s 16 fixed accounts, then `tail` consumed bin arrays in quote order; no hook accounts               |
 
 The window length is not sent: it follows from the kind, so a length that disagrees with the accounts cannot be expressed.
 

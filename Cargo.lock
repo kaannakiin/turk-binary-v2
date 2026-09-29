@@ -5324,6 +5324,7 @@ dependencies = [
  "route",
  "serde",
  "serde_json",
+ "stats_alloc",
  "thiserror 2.0.21",
  "tokio",
  "tower",
