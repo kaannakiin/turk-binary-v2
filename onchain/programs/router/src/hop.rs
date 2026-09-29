@@ -13,6 +13,7 @@ pub fn build(
     window: &[AccountView],
     amount_in: u64,
     user: &[u8; 32],
+    source_ata: &[u8; 32],
 ) -> Result<BuiltHop, ProgramError> {
     let borrows = window
         .iter()
@@ -36,6 +37,7 @@ pub fn build(
             amount_in,
             min_out: hop.min_out,
             user,
+            source_ata,
         },
     )
     .map_err(custom)

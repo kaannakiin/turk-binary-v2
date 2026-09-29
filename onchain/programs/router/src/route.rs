@@ -45,7 +45,7 @@ pub fn handle(program_id: &Address, accounts: &[AccountView], route: &Route) -> 
             .ok_or(custom(RouterError::WindowOutOfBounds))?;
         windows = rest;
 
-        let built = hop::build(step, window, amount_in, user_key)?;
+        let built = hop::build(step, window, amount_in, user_key, previous_out.as_array())?;
         let in_ata = window
             .get(built.in_ata_index)
             .ok_or(custom(RouterError::BadWindow))?;

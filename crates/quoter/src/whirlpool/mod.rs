@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use dex::{Role, Side};
+use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
+use domain::{DexKind, Pubkey, SwapWindow, TokenSide, WindowAccount};
 use orca_whirlpools_client::{
     ORACLE_DISCRIMINATOR, Oracle, TickArray, WHIRLPOOL_DISCRIMINATOR, Whirlpool,
 };
@@ -12,7 +14,7 @@ use orca_whirlpools_core::{
 };
 
 use crate::account::AccountRef;
-use crate::error::{DecodeError, QuoteError};
+use crate::error::{DecodeError, QuoteError, WindowError};
 use crate::state::{QuoteInput, QuoteOut};
 use crate::token::any_token_account;
 use crate::token22::{Mint, check_transfer, decode_mint};
@@ -22,11 +24,15 @@ const SWAP_TICK_ARRAYS: usize = 3;
 // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052 programs/whirlpool/src/math/tick_math.rs (MIN_TICK_INDEX, MAX_TICK_INDEX)
 const MIN_TICK_INDEX: i32 = -443_636;
 const MAX_TICK_INDEX: i32 = 443_636;
+// src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
+// programs/whirlpool/src/instructions/v2/swap.rs (memo_program address).
+const MEMO_PROGRAM: Pubkey = Pubkey::from_str_const("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
 /// Side A is token A, side B token B. A tick array known to be absent is
 /// `None`: the program's sparse swap treats it as holding no liquidity.
 #[derive(Clone, Default)]
 pub(crate) struct Whirlpools {
+    key: Option<Pubkey>,
     pool: Option<(Box<Whirlpool>, WhirlpoolFacade)>,
     oracle: Option<OracleFacade>,
     arrays: BTreeMap<i32, Option<Arc<TickArrayFacade>>>,
@@ -65,11 +71,69 @@ fn is_valid_start_tick(tick_index: i32, tick_spacing: u16) -> bool {
     tick_index % ticks_in_array == 0
 }
 
+fn guard_starts(starts: &[i32], tick_spacing: u16) -> [Option<i32>; 2] {
+    let step = TICK_ARRAY_SIZE_I32 * i32::from(tick_spacing);
+    let first = starts.first().copied();
+    let last = starts.last().copied();
+    [
+        first.and_then(|start| start.checked_sub(step)),
+        last.and_then(|start| start.checked_add(step)),
+    ]
+    .map(|start| {
+        start.filter(|&index| is_valid_start_tick(index, tick_spacing) && !starts.contains(&index))
+    })
+}
+
+fn base_swap_accounts(
+    pool: &Whirlpool,
+    pool_key: Pubkey,
+    side_a: TokenSide,
+    side_b: TokenSide,
+    a_to_b: bool,
+) -> Vec<WindowAccount> {
+    let fixed = |key, writable| WindowAccount::Fixed { key, writable };
+    let key = |value: solana_pubkey::Pubkey| Pubkey::new_from_array(value.to_bytes());
+    let mut accounts = Vec::with_capacity(17);
+    accounts.extend([
+        fixed(side_a.token_program, false),
+        fixed(side_b.token_program, false),
+        fixed(MEMO_PROGRAM, false),
+        WindowAccount::User,
+        fixed(pool_key, true),
+        fixed(side_a.mint, false),
+        fixed(side_b.mint, false),
+        if a_to_b {
+            WindowAccount::UserSource
+        } else {
+            WindowAccount::UserDestination
+        },
+        fixed(key(pool.token_vault_a), true),
+        if a_to_b {
+            WindowAccount::UserDestination
+        } else {
+            WindowAccount::UserSource
+        },
+        fixed(key(pool.token_vault_b), true),
+    ]);
+    accounts
+}
+
 // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052 programs/whirlpool/src/state/tick_array.rs (TICK_ARRAY_SIZE)
 const TICK_ARRAY_SIZE_I32: i32 = 88;
 
 // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052 programs/whirlpool/src/util/sparse_swap.rs (get_start_tick_indexes)
-fn start_tick_indexes(tick_current_index: i32, tick_spacing: u16, a_to_b: bool) -> Vec<i32> {
+struct TickStarts {
+    values: [i32; 3],
+    len: usize,
+}
+
+impl TickStarts {
+    fn as_slice(&self) -> &[i32] {
+        &self.values[..self.len]
+    }
+}
+
+fn start_tick_indexes(tick_current_index: i32, tick_spacing: u16, a_to_b: bool) -> TickStarts {
     let ticks_in_array = TICK_ARRAY_SIZE_I32 * i32::from(tick_spacing);
     let base = tick_current_index.div_euclid(ticks_in_array) * ticks_in_array;
     let offset = if a_to_b {
@@ -79,11 +143,18 @@ fn start_tick_indexes(tick_current_index: i32, tick_spacing: u16, a_to_b: bool) 
     } else {
         [0, 1, 2]
     };
-    offset
-        .iter()
-        .map(|o| base + o * ticks_in_array)
-        .filter(|start| is_valid_start_tick(*start, tick_spacing))
-        .collect()
+    let mut starts = TickStarts {
+        values: [0; 3],
+        len: 0,
+    };
+    for offset in offset {
+        let start = base + offset * ticks_in_array;
+        if is_valid_start_tick(start, tick_spacing) {
+            starts.values[starts.len] = start;
+            starts.len += 1;
+        }
+    }
+    starts
 }
 
 /// A fee tier seeded from something other than its tick spacing carries an
@@ -107,6 +178,7 @@ impl Whirlpools {
         let exists = account.exists();
         match account.role {
             Role::Pool => {
+                self.key = exists.then_some(account.key);
                 self.pool = if exists {
                     if account.data.get(..8) != Some(WHIRLPOOL_DISCRIMINATOR.as_slice()) {
                         return Err(layout());
@@ -179,11 +251,10 @@ impl Whirlpools {
     fn sequence(
         &self,
         pool: &Whirlpool,
-        a_to_b: bool,
+        starts: &[i32],
         max: u8,
     ) -> Result<TickArraySequence<SWAP_TICK_ARRAYS>, QuoteError> {
         let mut slots = [None; SWAP_TICK_ARRAYS];
-        let starts = start_tick_indexes(pool.tick_current_index, pool.tick_spacing, a_to_b);
         for (slot, start) in slots.iter_mut().zip(starts.iter().take(usize::from(max))) {
             *slot = Some(match self.arrays.get(start) {
                 Some(Some(array)) => **array,
@@ -192,7 +263,7 @@ impl Whirlpools {
                     ticks: [TickFacade::default(); TICK_ARRAY_SIZE],
                 },
                 None => {
-                    if slot_is_first(&starts, *start) {
+                    if slot_is_first(starts, *start) {
                         return Err(QuoteError::Incomplete(Role::TickArray { start: *start }));
                     }
                     break;
@@ -245,7 +316,8 @@ impl Whirlpools {
         };
         let in_after_fee =
             try_apply_transfer_fee(input.amount_in, fee_in).map_err(|_| QuoteError::Math)?;
-        let sequence = self.sequence(pool, a_to_b, input.max_arrays)?;
+        let current_starts = start_tick_indexes(pool.tick_current_index, pool.tick_spacing, a_to_b);
+        let sequence = self.sequence(pool, current_starts.as_slice(), input.max_arrays)?;
         let result = compute_swap(
             in_after_fee,
             0,
@@ -275,10 +347,13 @@ impl Whirlpools {
             .ok()
             .filter(|n| *n > 0)
             .ok_or(QuoteError::Liquidity)?;
-        let arrays_used = start_tick_indexes(result.post_tick_index, pool.tick_spacing, a_to_b)
+        let post_starts = start_tick_indexes(result.post_tick_index, pool.tick_spacing, a_to_b);
+        let arrays_used = post_starts
+            .as_slice()
             .first()
             .and_then(|end| {
-                start_tick_indexes(pool.tick_current_index, pool.tick_spacing, a_to_b)
+                current_starts
+                    .as_slice()
                     .iter()
                     .position(|start| start == end)
             })
@@ -288,6 +363,110 @@ impl Whirlpools {
             fee_in: result.trade_fee,
             fee_out: 0,
             arrays_used: u8::try_from(arrays_used).unwrap_or(u8::MAX),
+        })
+    }
+
+    // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
+    // programs/whirlpool/src/instructions/v2/swap.rs (SwapV2 account order).
+    // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
+    // programs/whirlpool/src/util/sparse_swap.rs (three named arrays and optional supplemental arrays).
+    pub(crate) fn swap_window(
+        &self,
+        a_to_b: bool,
+        arrays_used: u8,
+        max_arrays: u8,
+        guard: bool,
+    ) -> Result<SwapWindow, WindowError> {
+        let (pool, _) = self
+            .pool
+            .as_ref()
+            .ok_or(WindowError::Incomplete(Role::Pool))?;
+        let pool_key = self.key.ok_or(WindowError::Incomplete(Role::Pool))?;
+        let [mint_a, mint_b] = [Side::A, Side::B].map(|side| {
+            self.mints[side_index(side)]
+                .as_ref()
+                .ok_or(WindowError::Incomplete(Role::Mint(side)))
+        });
+        let (mint_a, mint_b) = (mint_a?, mint_b?);
+        if mint_a.has_active_hook() || mint_b.has_active_hook() {
+            return Err(WindowError::TransferHook);
+        }
+        if arrays_used == 0 || arrays_used > max_arrays || arrays_used > 3 {
+            return Err(WindowError::Arrays);
+        }
+        let starts = start_tick_indexes(pool.tick_current_index, pool.tick_spacing, a_to_b);
+        let starts = starts.as_slice();
+        if starts.len() < usize::from(arrays_used) {
+            return Err(WindowError::Arrays);
+        }
+        for &start in starts.iter().take(usize::from(arrays_used)) {
+            if !self.arrays.contains_key(&start) {
+                return Err(WindowError::Incomplete(Role::TickArray { start }));
+            }
+        }
+        let key = |value: solana_pubkey::Pubkey| Pubkey::new_from_array(value.to_bytes());
+        let fixed = |key, writable| WindowAccount::Fixed { key, writable };
+        let token_program = |mint: &Mint| {
+            if mint.token_2022 {
+                TOKEN_2022_PROGRAM
+            } else {
+                TOKEN_PROGRAM
+            }
+        };
+        let side_a = TokenSide {
+            mint: key(pool.token_mint_a),
+            token_program: token_program(mint_a),
+        };
+        let side_b = TokenSide {
+            mint: key(pool.token_mint_b),
+            token_program: token_program(mint_b),
+        };
+        let program = dex::spec(DexKind::OrcaWhirlpool).program_id;
+        let mut accounts = base_swap_accounts(pool, pool_key, side_a, side_b, a_to_b);
+        let array_key = |start: i32| {
+            let decimal = start.to_string();
+            Pubkey::find_program_address(
+                &[b"tick_array", &pool_key.to_bytes(), decimal.as_bytes()],
+                &program,
+            )
+            .0
+        };
+        let first = *starts.first().ok_or(WindowError::Arrays)?;
+        for start in starts
+            .iter()
+            .copied()
+            .chain(core::iter::repeat(first))
+            .take(3)
+        {
+            accounts.push(fixed(array_key(start), true));
+        }
+        // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
+        // programs/whirlpool/src/instructions/v2/swap.rs (oracle seeds and mutability).
+        let oracle = Pubkey::find_program_address(&[b"oracle", &pool_key.to_bytes()], &program).0;
+        accounts.push(fixed(oracle, true));
+        let mut optional_tail = 0u8;
+        if guard {
+            for start in guard_starts(starts, pool.tick_spacing)
+                .into_iter()
+                .flatten()
+            {
+                accounts.push(fixed(array_key(start), true));
+                optional_tail += 1;
+            }
+        }
+        let (source, destination) = if a_to_b {
+            (side_a, side_b)
+        } else {
+            (side_b, side_a)
+        };
+        Ok(SwapWindow {
+            kind: DexKind::OrcaWhirlpool,
+            program_id: program,
+            accounts,
+            source,
+            destination,
+            tail: optional_tail,
+            optional_tail,
         })
     }
 }

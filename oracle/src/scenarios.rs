@@ -1026,6 +1026,7 @@ pub fn matrix_main(args: &[PathBuf]) {
             let pool: Pubkey = leg.pool.parse().expect("pool");
             match &venues[&pool].layout {
                 BootLayout::RaydiumCpmm { layout } => Some(layout.observation_key),
+                BootLayout::RaydiumClmm { layout } => Some(layout.observation_key),
                 _ => None,
             }
         })
@@ -1129,7 +1130,9 @@ pub fn matrix_main(args: &[PathBuf]) {
         }
     }
     let mut thresholds = Vec::new();
-    for plan in plans.plans.iter().filter(|plan| plan.name.contains("clmm")) {
+    for plan in plans.plans.iter().filter(|plan| {
+        plan.name.contains("clmm") || plan.name.contains("orca") || plan.name.contains("dlmm")
+    }) {
         let payout = *world.venue_out(plan).expect("direct route").last().unwrap();
         for (name, threshold) in [
             ("at_payout", payout),
@@ -1163,7 +1166,9 @@ pub fn matrix_main(args: &[PathBuf]) {
         }
     }
     let mut hop_thresholds = Vec::new();
-    for plan in plans.plans.iter().filter(|plan| plan.name.contains("clmm")) {
+    for plan in plans.plans.iter().filter(|plan| {
+        plan.legs.len() == 2 && (plan.name.contains("clmm") || plan.name.contains("orca"))
+    }) {
         let payouts = world.venue_out(plan).expect("direct route");
         let base = plan.swap_instruction.instruction();
         let RouterInstruction::Route(decoded) =
@@ -1245,6 +1250,106 @@ pub fn matrix_main(args: &[PathBuf]) {
                 "{} {name}: {}",
                 plan.name,
                 result.error.as_deref().unwrap_or("ok")
+            );
+            bad_windows.push(result);
+        }
+    }
+    if let Some(plan) = plans.plans.iter().find(|plan| plan.name == "orca_to_clmm") {
+        let route = plan.swap_instruction.instruction();
+        // Four router accounts precede the Orca window. swap_v2's three named
+        // arrays are window slots 12..15 and its oracle is slot 15.
+        let arrays_start = 4 + 12;
+        let mut variants = Vec::new();
+        for (name, index) in [
+            ("orca_wrong_program", 4),
+            ("orca_wrong_pool", 4 + 5),
+            ("orca_wrong_mint", 4 + 6),
+            ("orca_wrong_vault", 4 + 9),
+            ("orca_wrong_array", arrays_start),
+            ("orca_wrong_oracle", 4 + 15),
+        ] {
+            let mut ix = route.clone();
+            ix.accounts[index].pubkey = SYSTEM;
+            variants.push((name, ix));
+        }
+        let mut missing = route.clone();
+        missing.accounts.remove(arrays_start);
+        variants.push(("orca_missing_array", missing));
+        let mut reversed = route.clone();
+        reversed.accounts.swap(arrays_start, arrays_start + 1);
+        variants.push(("orca_reversed_arrays", reversed));
+        let mut readonly = route;
+        readonly.accounts[arrays_start].is_writable = false;
+        variants.push(("orca_readonly_array", readonly));
+        for (name, ix) in variants {
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    for leg in &plan.legs {
+                        let mint: Pubkey = leg.output_mint.parse().expect("output mint");
+                        if mint != plan.input() {
+                            w.open(&mint, 0)?;
+                        }
+                    }
+                    Ok(())
+                },
+                &Via::Legacy(vec![svm::compute_limit(), ix]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            bad_windows.push(result);
+        }
+    }
+    if let Some(plan) = plans
+        .plans
+        .iter()
+        .find(|plan| plan.name == "dlmm_fee_input" || plan.name == "dlmm_two_arrays")
+    {
+        let route = plan.swap_instruction.instruction();
+        let RouterInstruction::Route(decoded) =
+            RouterInstruction::decode(&route.data).expect("a route")
+        else {
+            panic!("the plan must contain a route");
+        };
+        let arrays_start = 4 + 17;
+        let mut variants = Vec::new();
+        for (name, index) in [
+            ("dlmm_wrong_program", 4),
+            ("dlmm_wrong_pool", 5),
+            ("dlmm_wrong_vault", 7),
+            ("dlmm_wrong_mint", 11),
+            ("dlmm_wrong_oracle", 13),
+            ("dlmm_wrong_array", arrays_start),
+        ] {
+            let mut ix = route.clone();
+            ix.accounts[index].pubkey = SYSTEM;
+            variants.push((name, ix));
+        }
+        let mut missing = route.clone();
+        missing.accounts.remove(arrays_start);
+        variants.push(("dlmm_missing_array", missing));
+        let mut readonly = route.clone();
+        readonly.accounts[arrays_start].is_writable = false;
+        variants.push(("dlmm_readonly_array", readonly));
+        if decoded.hops()[0].tail >= 2 {
+            let mut reversed = route;
+            reversed.accounts.swap(arrays_start, arrays_start + 1);
+            variants.push(("dlmm_reversed_arrays", reversed));
+        }
+        for (name, ix) in variants {
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    w.open(&plan.output(), 0).map(drop)
+                },
+                &Via::Legacy(vec![svm::compute_limit(), ix]),
             );
             bad_windows.push(result);
         }

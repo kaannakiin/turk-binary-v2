@@ -1,0 +1,363 @@
+{
+  "provenance": {
+    "corpus_sha256": "f949a8c2d05333af8e807e31b886f6a82f3a0c1e64445edf3a6508528b4e48f1",
+    "router_sha256": "4cd0a387b97f3598b5536e61801dfda1225dec8d7e6aee0be1c43d00991d319b",
+    "litesvm": "0.17.0"
+  },
+  "observations": [
+    {
+      "key": "3MsJXVvievxAbsMsaT6TS4i6oMitD9jazucuq3X234tC",
+      "owner": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+      "lamports": 33129828,
+      "data": "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"
+    }
+  ],
+  "synthetic": [],
+  "transfer_fees": [],
+  "swaps": [
+    {
+      "name": "three_token_route",
+      "plan": "orca_clmm_token_positive_cycle",
+      "epoch": 1044,
+      "amount_in": 1000000,
+      "min_out": 1000357,
+      "venue_out": [
+        118357,
+        1000357
+      ],
+      "compute_units": 116986,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000357
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488797
+        }
+      },
+      "lamports": {
+        "before": 999995509680,
+        "after": 999994016240
+      },
+      "venue_accounts_unchanged": false
+    }
+  ],
+  "cycles": [
+    {
+      "name": "at_payout",
+      "plan": "orca_clmm_token_positive_cycle",
+      "epoch": 1044,
+      "amount_in": 1000000,
+      "min_out": 1000357,
+      "venue_out": [
+        118357,
+        1000357
+      ],
+      "compute_units": 91730,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000357
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488797
+        }
+      },
+      "lamports": {
+        "before": 999985035600,
+        "after": 999985030600
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "one_above_payout",
+      "plan": "orca_clmm_token_positive_cycle",
+      "epoch": 1044,
+      "amount_in": 1000000,
+      "min_out": 1000358,
+      "venue_out": [
+        118357,
+        1000357
+      ],
+      "error": "InstructionError(0, Custom(6013)) Program log: Instruction: SwapV2 | Program data: QMbN6CYIceJ05wCcEx+FajBi2hyyXuwbtRiRc1/fR1bb/Xwn9WYvgOpKbGPinFIKvvVQexMuxfmVR3auvr57kkIe6mkURtIsPaLXOxB16kQVVCj/4Sa0rRfHENAhBxESBz5RQGeDj8FnMC5JGJTXSS6mvk+RTqT0X6FC5kWGfJFkonbV3XbwdqVDDwAAAAAAAAAAAAAAAABVzgEAAAAAAAAAAAAAAAAAAEx6tMd9OA1YAAAAAAAAAAD3zdlKDgEAAAAAAAAAAAAAnaz//wAAAAAAAAAADAAAAAAAAAA= | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 105 of 113668 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 112 of 110970 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK consumed 43029 of 151689 compute units | Program CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 91740 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488440
+        }
+      },
+      "lamports": {
+        "before": 999979046840,
+        "after": 999979041840
+      },
+      "venue_accounts_unchanged": true
+    }
+  ],
+  "thresholds": [
+    {
+      "name": "at_payout",
+      "plan": "orca_clmm_token_positive_cycle",
+      "epoch": 1044,
+      "amount_in": 1000000,
+      "min_out": 1000357,
+      "venue_out": [
+        118357,
+        1000357
+      ],
+      "compute_units": 91880,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000357
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488797
+        }
+      },
+      "lamports": {
+        "before": 999970061200,
+        "after": 999970056200
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "one_above_payout",
+      "plan": "orca_clmm_token_positive_cycle",
+      "epoch": 1044,
+      "amount_in": 1000000,
+      "min_out": 1000358,
+      "venue_out": [
+        118357,
+        1000357
+      ],
+      "error": "InstructionError(1, Custom(6013)) Program log: Instruction: SwapV2 | Program data: QMbN6CYIceJ05wCcEx+FajBi2hyyXuwbtRiRc1/fR1bb/Xwn9WYvgOpKbGPinFIKvvVQexMuxfmVR3auvr57kkIe6mkURtIsPaLXOxB16kQVVCj/4Sa0rRfHENAhBxESBz5RQGeDj8FnMC5JGJTXSS6mvk+RTqT0X6FC5kWGfJFkonbV3XbwdqVDDwAAAAAAAAAAAAAAAABVzgEAAAAAAAAAAAAAAAAAAEx6tMd9OA1YAAAAAAAAAAD3zdlKDgEAAAAAAAAAAAAAnaz//wAAAAAAAAAADAAAAAAAAAA= | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 105 of 1313518 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 112 of 1310820 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK consumed 43029 of 1351539 compute units | Program CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 91740 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488440
+        }
+      },
+      "lamports": {
+        "before": 999964072440,
+        "after": 999964067440
+      },
+      "venue_accounts_unchanged": true
+    }
+  ],
+  "hop_thresholds": [
+    {
+      "name": "first_hop_one_above_payout",
+      "plan": "orca_clmm_token_positive_cycle",
+      "epoch": 1044,
+      "amount_in": 1000000,
+      "min_out": 1000357,
+      "venue_out": [
+        118357,
+        1000357
+      ],
+      "error": "InstructionError(1, Custom(6036)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc invoke [2] | Program log: Instruction: SwapV2 | Program log: AnchorError occurred. Error Code: AmountOutBelowMinimum. Error Number: 6036. Error Message: Amount out below minimum threshold. | Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc consumed 26038 of 1390606 compute units | Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc failed: custom program error: 0x1794 | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 35282 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1794",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488440
+        }
+      },
+      "lamports": {
+        "before": 999955086800,
+        "after": 999955081800
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "second_hop_one_above_payout",
+      "plan": "orca_clmm_token_positive_cycle",
+      "epoch": 1044,
+      "amount_in": 1000000,
+      "min_out": 1000357,
+      "venue_out": [
+        118357,
+        1000357
+      ],
+      "error": "InstructionError(1, Custom(6018)) Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 105 of 1313518 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 112 of 1310820 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program log: AnchorError thrown in programs/amm/src/instructions/swap_v2.rs:364. Error Code: TooLittleOutputReceived. Error Number: 6018. Error Message: Too little output received. | Program log: Left: 1000357 | Program log: Right: 1000358 | Program CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK consumed 46034 of 1351539 compute units | Program CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK failed: custom program error: 0x1782 | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 94345 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1782",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488440
+        }
+      },
+      "lamports": {
+        "before": 999949098040,
+        "after": 999949093040
+      },
+      "venue_accounts_unchanged": true
+    }
+  ],
+  "budgets": [
+    {
+      "name": "compute_limit_one",
+      "plan": "orca_clmm_token_positive_cycle",
+      "epoch": 1044,
+      "amount_in": 1000000,
+      "min_out": 1000357,
+      "venue_out": [
+        118357,
+        1000357
+      ],
+      "error": "InstructionError(0, ProgramFailedToComplete) (1 CU): Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [1] | Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 1 of 1 compute units | Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL failed: exceeded CUs meter at BPF instruction",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488440
+        }
+      },
+      "lamports": {
+        "before": 999944602720,
+        "after": 999944597720
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "loaded_data_one",
+      "plan": "orca_clmm_token_positive_cycle",
+      "epoch": 1044,
+      "amount_in": 1000000,
+      "min_out": 1000357,
+      "venue_out": [
+        118357,
+        1000357
+      ],
+      "error": "MaxLoadedAccountsDataSizeExceeded (0 CU): ",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488440
+        }
+      },
+      "lamports": {
+        "before": 999940107400,
+        "after": 999940107400
+      },
+      "venue_accounts_unchanged": true
+    }
+  ]
+}

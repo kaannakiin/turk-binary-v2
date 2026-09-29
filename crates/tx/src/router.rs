@@ -22,6 +22,8 @@ pub(crate) fn hop_kind(kind: DexKind) -> Result<HopKind, TxError> {
         DexKind::RaydiumAmmV4 => Ok(HopKind::RaydiumAmmV4),
         DexKind::RaydiumClmm => Ok(HopKind::RaydiumClmm),
         DexKind::RaydiumCpmm => Ok(HopKind::RaydiumCpmm),
+        DexKind::OrcaWhirlpool => Ok(HopKind::OrcaWhirlpool),
+        DexKind::MeteoraDlmm => Ok(HopKind::MeteoraDlmm),
         other => Err(TxError::Unsupported(other)),
     }
 }

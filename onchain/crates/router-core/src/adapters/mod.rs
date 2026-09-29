@@ -1,3 +1,5 @@
+mod meteora;
+mod orca;
 mod raydium;
 
 use router_wire::{Hop, HopKind};
@@ -9,6 +11,7 @@ pub struct HopInput<'a> {
     pub amount_in: u64,
     pub min_out: u64,
     pub user: &'a [u8; 32],
+    pub source_ata: &'a [u8; 32],
 }
 
 fn kind(hop: Hop) -> Result<HopKind, RouterError> {
@@ -20,6 +23,8 @@ pub fn window_len(hop: Hop) -> Result<usize, RouterError> {
         HopKind::RaydiumAmmV4 => raydium::amm_v4::window_len(hop),
         HopKind::RaydiumClmm => raydium::clmm::window_len(hop),
         HopKind::RaydiumCpmm => raydium::cpmm::window_len(hop),
+        HopKind::OrcaWhirlpool => orca::whirlpool::window_len(hop),
+        HopKind::MeteoraDlmm => meteora::dlmm::window_len(hop),
     }
 }
 
@@ -31,6 +36,8 @@ pub fn build(hop: Hop, input: &HopInput) -> Result<BuiltHop, RouterError> {
         HopKind::RaydiumAmmV4 => raydium::amm_v4::build(input),
         HopKind::RaydiumClmm => raydium::clmm::build(hop, input),
         HopKind::RaydiumCpmm => raydium::cpmm::build(input),
+        HopKind::OrcaWhirlpool => orca::whirlpool::build(hop, input),
+        HopKind::MeteoraDlmm => meteora::dlmm::build(hop, input),
     }
 }
 

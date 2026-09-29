@@ -1,0 +1,1299 @@
+{
+  "provenance": {
+    "corpus_sha256": "73671986f79eae457f6b62ead07624b11c5cc1e0bf7d072bf30907bc1a6e1acb",
+    "router_sha256": "4cd0a387b97f3598b5536e61801dfda1225dec8d7e6aee0be1c43d00991d319b",
+    "litesvm": "0.17.0"
+  },
+  "cases": [
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000",
+      "expected_out": "119",
+      "paid": "119",
+      "compute_units": 58441,
+      "v1_paid": "119",
+      "v1_compute_units": 58291
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000",
+      "expected_out": "119233",
+      "paid": "119233",
+      "compute_units": 58468,
+      "v1_paid": "119233",
+      "v1_compute_units": 58318
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "2552573",
+      "expected_out": "304333",
+      "paid": "304333",
+      "compute_units": 58467,
+      "v1_paid": "304333",
+      "v1_compute_units": 58317
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "25525732",
+      "expected_out": "3040738",
+      "paid": "3040738",
+      "compute_units": 58509,
+      "v1_paid": "3040738",
+      "v1_compute_units": 58359
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "255257320",
+      "expected_out": "30149927",
+      "paid": "30149927",
+      "compute_units": 58539,
+      "v1_paid": "30149927",
+      "v1_compute_units": 58389
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000000",
+      "expected_out": "114959717",
+      "paid": "114959717",
+      "compute_units": 72524,
+      "v1_paid": "114959717",
+      "v1_compute_units": 72374
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "2552573206",
+      "expected_out": "269159988",
+      "paid": "269159988",
+      "compute_units": 128992,
+      "v1_paid": "269159988",
+      "v1_compute_units": 128842
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000",
+      "expected_out": "8356",
+      "paid": "8356",
+      "compute_units": 52476,
+      "v1_paid": "8356",
+      "v1_compute_units": 52326
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "51347",
+      "expected_out": "429236",
+      "paid": "429236",
+      "compute_units": 52487,
+      "v1_paid": "429236",
+      "v1_compute_units": 52337
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "513474",
+      "expected_out": "4291851",
+      "paid": "4291851",
+      "compute_units": 52481,
+      "v1_paid": "4291851",
+      "v1_compute_units": 52331
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000",
+      "expected_out": "8357199",
+      "paid": "8357199",
+      "compute_units": 52481,
+      "v1_paid": "8357199",
+      "v1_compute_units": 52331
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "5134742",
+      "expected_out": "42856873",
+      "paid": "42856873",
+      "compute_units": 52507,
+      "v1_paid": "42856873",
+      "v1_compute_units": 52357
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "51347425",
+      "expected_out": "421083413",
+      "paid": "421083413",
+      "compute_units": 66620,
+      "v1_paid": "421083413",
+      "v1_compute_units": 66470
+    },
+    {
+      "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "171158084",
+      "expected_out": "1298353037",
+      "paid": "1298353037",
+      "compute_units": 161449,
+      "v1_paid": "1298353037",
+      "v1_compute_units": 161299
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000",
+      "expected_out": "118",
+      "paid": "118",
+      "compute_units": 59692,
+      "v1_paid": "118",
+      "v1_compute_units": 59542
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "420519",
+      "expected_out": "49893",
+      "paid": "49893",
+      "compute_units": 59742,
+      "v1_paid": "49893",
+      "v1_compute_units": 59592
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000",
+      "expected_out": "118645",
+      "paid": "118645",
+      "compute_units": 59746,
+      "v1_paid": "118645",
+      "v1_compute_units": 59596
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "4205191",
+      "expected_out": "498885",
+      "paid": "498885",
+      "compute_units": 59754,
+      "v1_paid": "498885",
+      "v1_compute_units": 59604
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "42051917",
+      "expected_out": "4984098",
+      "paid": "4984098",
+      "compute_units": 59685,
+      "v1_paid": "4984098",
+      "v1_compute_units": 59535
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "420519176",
+      "expected_out": "49115229",
+      "paid": "49115229",
+      "compute_units": 75383,
+      "v1_paid": "49115229",
+      "v1_compute_units": 75233
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000000",
+      "expected_out": "113423741",
+      "paid": "113423741",
+      "compute_units": 91077,
+      "v1_paid": "113423741",
+      "v1_compute_units": 90927
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1401730588",
+      "expected_out": "155084472",
+      "paid": "155084472",
+      "compute_units": 99060,
+      "v1_paid": "155084472",
+      "v1_compute_units": 98910
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000",
+      "expected_out": "8260",
+      "paid": "8260",
+      "compute_units": 53037,
+      "v1_paid": "8260",
+      "v1_compute_units": 52887
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "64933",
+      "expected_out": "536369",
+      "paid": "536369",
+      "compute_units": 53026,
+      "v1_paid": "536369",
+      "v1_compute_units": 52876
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "649333",
+      "expected_out": "5363115",
+      "paid": "5363115",
+      "compute_units": 53053,
+      "v1_paid": "5363115",
+      "v1_compute_units": 52903
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000",
+      "expected_out": "8258822",
+      "paid": "8258822",
+      "compute_units": 53038,
+      "v1_paid": "8258822",
+      "v1_compute_units": 52888
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "6493336",
+      "expected_out": "53565435",
+      "paid": "53565435",
+      "compute_units": 53027,
+      "v1_paid": "53565435",
+      "v1_compute_units": 52877
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "64933363",
+      "expected_out": "527152564",
+      "paid": "527152564",
+      "compute_units": 67624,
+      "v1_paid": "527152564",
+      "v1_compute_units": 67474
+    },
+    {
+      "pool": "3gijXbxxVZNU9ZpMeL8xbGgfgVAoMNAgcEDwaZriKV6B",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "216444543",
+      "expected_out": "1642203330",
+      "paid": "1642203330",
+      "compute_units": 99865,
+      "v1_paid": "1642203330",
+      "v1_compute_units": 99715
+    },
+    {
+      "pool": "5hCDEXRCn5YsyP1ydgbnaXT3QN6AAkfshfRkXRQypzr6",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000",
+      "expected_out": "119",
+      "paid": "119",
+      "compute_units": 66979,
+      "v1_paid": "119",
+      "v1_compute_units": 66829
+    },
+    {
+      "pool": "5hCDEXRCn5YsyP1ydgbnaXT3QN6AAkfshfRkXRQypzr6",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "51727",
+      "expected_out": "6161",
+      "paid": "6161",
+      "compute_units": 82064,
+      "v1_paid": "6161",
+      "v1_compute_units": 81914
+    },
+    {
+      "pool": "5hCDEXRCn5YsyP1ydgbnaXT3QN6AAkfshfRkXRQypzr6",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "517276",
+      "expected_out": "61506",
+      "paid": "61506",
+      "compute_units": 233086,
+      "v1_paid": "61506",
+      "v1_compute_units": 232936
+    },
+    {
+      "pool": "5hCDEXRCn5YsyP1ydgbnaXT3QN6AAkfshfRkXRQypzr6",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000",
+      "expected_out": "118652",
+      "paid": "118652",
+      "compute_units": 391583,
+      "v1_paid": "118652",
+      "v1_compute_units": 391433
+    },
+    {
+      "pool": "5hCDEXRCn5YsyP1ydgbnaXT3QN6AAkfshfRkXRQypzr6",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000",
+      "expected_out": "8363",
+      "paid": "8363",
+      "compute_units": 61384,
+      "v1_paid": "8363",
+      "v1_compute_units": 61234
+    },
+    {
+      "pool": "5hCDEXRCn5YsyP1ydgbnaXT3QN6AAkfshfRkXRQypzr6",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "6102",
+      "expected_out": "51033",
+      "paid": "51033",
+      "compute_units": 76356,
+      "v1_paid": "51033",
+      "v1_compute_units": 76206
+    },
+    {
+      "pool": "5hCDEXRCn5YsyP1ydgbnaXT3QN6AAkfshfRkXRQypzr6",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "61023",
+      "expected_out": "509470",
+      "paid": "509470",
+      "compute_units": 226610,
+      "v1_paid": "509470",
+      "v1_compute_units": 226460
+    },
+    {
+      "pool": "5hCDEXRCn5YsyP1ydgbnaXT3QN6AAkfshfRkXRQypzr6",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "610232",
+      "expected_out": "5025956",
+      "paid": "5025956",
+      "compute_units": 455302,
+      "v1_paid": "5025956",
+      "v1_compute_units": 455152
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000",
+      "expected_out": "118",
+      "paid": "118",
+      "compute_units": 60103,
+      "v1_paid": "118",
+      "v1_compute_units": 59953
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "797437",
+      "expected_out": "94670",
+      "paid": "94670",
+      "compute_units": 60044,
+      "v1_paid": "94670",
+      "v1_compute_units": 59894
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000",
+      "expected_out": "118716",
+      "paid": "118716",
+      "compute_units": 60026,
+      "v1_paid": "118716",
+      "v1_compute_units": 59876
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "7974378",
+      "expected_out": "946135",
+      "paid": "946135",
+      "compute_units": 59994,
+      "v1_paid": "946135",
+      "v1_compute_units": 59844
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "79743783",
+      "expected_out": "9404720",
+      "paid": "9404720",
+      "compute_units": 60101,
+      "v1_paid": "9404720",
+      "v1_compute_units": 59951
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "797437830",
+      "expected_out": "88734655",
+      "paid": "88734655",
+      "compute_units": 66640,
+      "v1_paid": "88734655",
+      "v1_compute_units": 66490
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000000",
+      "expected_out": "109521066",
+      "paid": "109521066",
+      "compute_units": 66617,
+      "v1_paid": "109521066",
+      "v1_compute_units": 66467
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "2658126103",
+      "expected_out": "257627255",
+      "paid": "257627255",
+      "compute_units": 80062,
+      "v1_paid": "257627255",
+      "v1_compute_units": 79912
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000",
+      "expected_out": "8089",
+      "paid": "8089",
+      "compute_units": 53750,
+      "v1_paid": "8089",
+      "v1_compute_units": 53600
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "57232",
+      "expected_out": "462938",
+      "paid": "462938",
+      "compute_units": 53746,
+      "v1_paid": "462938",
+      "v1_compute_units": 53596
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "572320",
+      "expected_out": "4627762",
+      "paid": "4627762",
+      "compute_units": 52725,
+      "v1_paid": "4627762",
+      "v1_compute_units": 52575
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000",
+      "expected_out": "8083583",
+      "paid": "8083583",
+      "compute_units": 53746,
+      "v1_paid": "8083583",
+      "v1_compute_units": 53596
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "5723209",
+      "expected_out": "46113184",
+      "paid": "46113184",
+      "compute_units": 53743,
+      "v1_paid": "46113184",
+      "v1_compute_units": 53593
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "57232096",
+      "expected_out": "444666832",
+      "paid": "444666832",
+      "compute_units": 66538,
+      "v1_paid": "444666832",
+      "v1_compute_units": 66388
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "190773655",
+      "expected_out": "1355400741",
+      "paid": "1355400741",
+      "compute_units": 79516,
+      "v1_paid": "1355400741",
+      "v1_compute_units": 79366
+    },
+    {
+      "pool": "7xuPLn8Bun4ZGHeD95xYLnPKReKtSe7zfVRzRJWJZVZW",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000000",
+      "expected_out": "4945827783",
+      "paid": "4945827783",
+      "compute_units": 146411,
+      "v1_paid": "4945827783",
+      "v1_compute_units": 146261
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000",
+      "expected_out": "119",
+      "paid": "119",
+      "compute_units": 52854,
+      "v1_paid": "119",
+      "v1_compute_units": 52704
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "315104",
+      "expected_out": "37585",
+      "paid": "37585",
+      "compute_units": 52752,
+      "v1_paid": "37585",
+      "v1_compute_units": 52602
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000",
+      "expected_out": "119253",
+      "paid": "119253",
+      "compute_units": 52717,
+      "v1_paid": "119253",
+      "v1_compute_units": 52567
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "3151044",
+      "expected_out": "375502",
+      "paid": "375502",
+      "compute_units": 52896,
+      "v1_paid": "375502",
+      "v1_compute_units": 52746
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "31510441",
+      "expected_out": "3719569",
+      "paid": "3719569",
+      "compute_units": 52703,
+      "v1_paid": "3719569",
+      "v1_compute_units": 52553
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "315104418",
+      "expected_out": "33986462",
+      "paid": "33986462",
+      "compute_units": 52793,
+      "v1_paid": "33986462",
+      "v1_compute_units": 52643
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000000",
+      "expected_out": "89258861",
+      "paid": "89258861",
+      "compute_units": 52807,
+      "v1_paid": "89258861",
+      "v1_compute_units": 52657
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1050348060",
+      "expected_out": "92579302",
+      "paid": "92579302",
+      "compute_units": 52738,
+      "v1_paid": "92579302",
+      "v1_compute_units": 52588
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000000000",
+      "expected_out": "353468532",
+      "paid": "353468532",
+      "compute_units": 52963,
+      "v1_paid": "353468532",
+      "v1_compute_units": 52813
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000",
+      "expected_out": "8373",
+      "paid": "8373",
+      "compute_units": 44131,
+      "v1_paid": "8373",
+      "v1_compute_units": 43981
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "37277",
+      "expected_out": "312382",
+      "paid": "312382",
+      "compute_units": 44147,
+      "v1_paid": "312382",
+      "v1_compute_units": 43997
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "372778",
+      "expected_out": "3120953",
+      "paid": "3120953",
+      "compute_units": 44152,
+      "v1_paid": "3120953",
+      "v1_compute_units": 44002
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000",
+      "expected_out": "8357397",
+      "paid": "8357397",
+      "compute_units": 44147,
+      "v1_paid": "8357397",
+      "v1_compute_units": 43997
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "3727780",
+      "expected_out": "30917344",
+      "paid": "30917344",
+      "compute_units": 44143,
+      "v1_paid": "30917344",
+      "v1_compute_units": 43993
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "37277806",
+      "expected_out": "282701007",
+      "paid": "282701007",
+      "compute_units": 44164,
+      "v1_paid": "282701007",
+      "v1_compute_units": 44014
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "124259356",
+      "expected_out": "771151359",
+      "paid": "771151359",
+      "compute_units": 44141,
+      "v1_paid": "771151359",
+      "v1_compute_units": 43991
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000000",
+      "expected_out": "2193717572",
+      "paid": "2193717572",
+      "compute_units": 44907,
+      "v1_paid": "2193717572",
+      "v1_compute_units": 44757
+    },
+    {
+      "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000000000",
+      "expected_out": "2970456662",
+      "paid": "2970456662",
+      "compute_units": 44865,
+      "v1_paid": "2970456662",
+      "v1_compute_units": 44715
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000",
+      "expected_out": "115",
+      "paid": "115",
+      "compute_units": 60246,
+      "v1_paid": "115",
+      "v1_compute_units": 60096
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "123827",
+      "expected_out": "11873",
+      "paid": "11873",
+      "compute_units": 135906,
+      "v1_paid": "11873",
+      "v1_compute_units": 135756
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000",
+      "expected_out": "51763",
+      "paid": "51763",
+      "compute_units": 145334,
+      "v1_paid": "51763",
+      "v1_compute_units": 145184
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1238276",
+      "expected_out": "57072",
+      "paid": "57072",
+      "compute_units": 145287,
+      "v1_paid": "57072",
+      "v1_compute_units": 145137
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "162",
+      "expected_out": "1331",
+      "paid": "1331",
+      "compute_units": 58567,
+      "v1_paid": "1331",
+      "v1_compute_units": 58417
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000",
+      "expected_out": "8155",
+      "paid": "8155",
+      "compute_units": 66074,
+      "v1_paid": "8155",
+      "v1_compute_units": 65924
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1622",
+      "expected_out": "13135",
+      "paid": "13135",
+      "compute_units": 66059,
+      "v1_paid": "13135",
+      "v1_compute_units": 65909
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "16228",
+      "expected_out": "109127",
+      "paid": "109127",
+      "compute_units": 143125,
+      "v1_paid": "109127",
+      "v1_compute_units": 142975
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "162287",
+      "expected_out": "938864",
+      "paid": "938864",
+      "compute_units": 153715,
+      "v1_paid": "938864",
+      "v1_compute_units": 153565
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "540958",
+      "expected_out": "3084642",
+      "paid": "3084642",
+      "compute_units": 153759,
+      "v1_paid": "3084642",
+      "v1_compute_units": 153609
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000",
+      "expected_out": "5675599",
+      "paid": "5675599",
+      "compute_units": 151656,
+      "v1_paid": "5675599",
+      "v1_compute_units": 151506
+    },
+    {
+      "pool": "CCycTBsvf1hPtZMwoy9jzhpt33baaKAZ7FLk5frEUisp",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000000",
+      "expected_out": "992823240",
+      "paid": "992823240",
+      "compute_units": 154159,
+      "v1_paid": "992823240",
+      "v1_compute_units": 154009
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000",
+      "expected_out": "118",
+      "paid": "118",
+      "compute_units": 63205,
+      "v1_paid": "118",
+      "v1_compute_units": 63055
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "202227",
+      "expected_out": "23967",
+      "paid": "23967",
+      "compute_units": 63210,
+      "v1_paid": "23967",
+      "v1_compute_units": 63060
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000",
+      "expected_out": "118466",
+      "paid": "118466",
+      "compute_units": 63171,
+      "v1_paid": "118466",
+      "v1_compute_units": 63021
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "2022272",
+      "expected_out": "239402",
+      "paid": "239402",
+      "compute_units": 70723,
+      "v1_paid": "239402",
+      "v1_compute_units": 70573
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "20222727",
+      "expected_out": "2355353",
+      "paid": "2355353",
+      "compute_units": 78292,
+      "v1_paid": "2355353",
+      "v1_compute_units": 78142
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "202227273",
+      "expected_out": "20084379",
+      "paid": "20084379",
+      "compute_units": 146376,
+      "v1_paid": "20084379",
+      "v1_compute_units": 146226
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "674090910",
+      "expected_out": "54278533",
+      "paid": "54278533",
+      "compute_units": 148460,
+      "v1_paid": "54278533",
+      "v1_compute_units": 148310
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000000",
+      "expected_out": "71540655",
+      "paid": "71540655",
+      "compute_units": 148465,
+      "v1_paid": "71540655",
+      "v1_compute_units": 148315
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000000000",
+      "expected_out": "210892279",
+      "paid": "210892279",
+      "compute_units": 148682,
+      "v1_paid": "210892279",
+      "v1_compute_units": 148532
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000",
+      "expected_out": "8268",
+      "paid": "8268",
+      "compute_units": 54852,
+      "v1_paid": "8268",
+      "v1_compute_units": 54702
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "22959",
+      "expected_out": "189814",
+      "paid": "189814",
+      "compute_units": 54837,
+      "v1_paid": "189814",
+      "v1_compute_units": 54687
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "229596",
+      "expected_out": "1896393",
+      "paid": "1896393",
+      "compute_units": 54825,
+      "v1_paid": "1896393",
+      "v1_compute_units": 54675
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000",
+      "expected_out": "8230024",
+      "paid": "8230024",
+      "compute_units": 54824,
+      "v1_paid": "8230024",
+      "v1_compute_units": 54674
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "2295965",
+      "expected_out": "18751262",
+      "paid": "18751262",
+      "compute_units": 61313,
+      "v1_paid": "18751262",
+      "v1_compute_units": 61163
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "22959653",
+      "expected_out": "160568139",
+      "paid": "160568139",
+      "compute_units": 137472,
+      "v1_paid": "160568139",
+      "v1_compute_units": 137322
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "76532178",
+      "expected_out": "436161441",
+      "paid": "436161441",
+      "compute_units": 139518,
+      "v1_paid": "436161441",
+      "v1_compute_units": 139368
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000000",
+      "expected_out": "1429423248",
+      "paid": "1429423248",
+      "compute_units": 140993,
+      "v1_paid": "1429423248",
+      "v1_compute_units": 140843
+    },
+    {
+      "pool": "CrD1GoH1E2K1Qj94CQCG75PYkJRGrvcG9GucU3DpXjj3",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000000000",
+      "expected_out": "1764434175",
+      "paid": "1764434175",
+      "compute_units": 140096,
+      "v1_paid": "1764434175",
+      "v1_compute_units": 139946
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000",
+      "expected_out": "119",
+      "paid": "119",
+      "compute_units": 54144,
+      "v1_paid": "119",
+      "v1_compute_units": 53994
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000",
+      "expected_out": "119180",
+      "paid": "119180",
+      "compute_units": 54243,
+      "v1_paid": "119180",
+      "v1_compute_units": 54093
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "52171520",
+      "expected_out": "6217684",
+      "paid": "6217684",
+      "compute_units": 54272,
+      "v1_paid": "6217684",
+      "v1_compute_units": 54122
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "521715200",
+      "expected_out": "62162375",
+      "paid": "62162375",
+      "compute_units": 54272,
+      "v1_paid": "62162375",
+      "v1_compute_units": 54122
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000000",
+      "expected_out": "119121784",
+      "paid": "119121784",
+      "compute_units": 54277,
+      "v1_paid": "119121784",
+      "v1_compute_units": 54127
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "5217152003",
+      "expected_out": "620179763",
+      "paid": "620179763",
+      "compute_units": 61545,
+      "v1_paid": "620179763",
+      "v1_compute_units": 61395
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000",
+      "expected_out": "8380",
+      "paid": "8380",
+      "compute_units": 48125,
+      "v1_paid": "8380",
+      "v1_compute_units": 47975
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000",
+      "expected_out": "8387220",
+      "paid": "8387220",
+      "compute_units": 48217,
+      "v1_paid": "8387220",
+      "v1_compute_units": 48067
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "8111796",
+      "expected_out": "68033404",
+      "paid": "68033404",
+      "compute_units": 48230,
+      "v1_paid": "68033404",
+      "v1_compute_units": 48080
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "81117968",
+      "expected_out": "680127353",
+      "paid": "680127353",
+      "compute_units": 55207,
+      "v1_paid": "680127353",
+      "v1_compute_units": 55057
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "811179683",
+      "expected_out": "6780609206",
+      "paid": "6780609206",
+      "compute_units": 83436,
+      "v1_paid": "6780609206",
+      "v1_compute_units": 83286
+    },
+    {
+      "pool": "FpCMFDFGYotvufJ7HrFHsWEiiQCGbkLCtwHiDnh7o28Q",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000000",
+      "expected_out": "8352413773",
+      "paid": "8352413773",
+      "compute_units": 97482,
+      "v1_paid": "8352413773",
+      "v1_compute_units": 97332
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000",
+      "expected_out": "119",
+      "paid": "119",
+      "compute_units": 57418,
+      "v1_paid": "119",
+      "v1_compute_units": 57268
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000",
+      "expected_out": "119121",
+      "paid": "119121",
+      "compute_units": 57542,
+      "v1_paid": "119121",
+      "v1_compute_units": 57392
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "2609767",
+      "expected_out": "310877",
+      "paid": "310877",
+      "compute_units": 57544,
+      "v1_paid": "310877",
+      "v1_compute_units": 57394
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "26097674",
+      "expected_out": "3105732",
+      "paid": "3105732",
+      "compute_units": 65411,
+      "v1_paid": "3105732",
+      "v1_compute_units": 65261
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "260976741",
+      "expected_out": "31007927",
+      "paid": "31007927",
+      "compute_units": 65437,
+      "v1_paid": "31007927",
+      "v1_compute_units": 65287
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "1000000000",
+      "expected_out": "118372659",
+      "paid": "118372659",
+      "compute_units": 73667,
+      "v1_paid": "118372659",
+      "v1_compute_units": 73517
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "2609767412",
+      "expected_out": "304965230",
+      "paid": "304965230",
+      "compute_units": 89822,
+      "v1_paid": "304965230",
+      "v1_compute_units": 89672
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "8699224708",
+      "expected_out": "947325122",
+      "paid": "947325122",
+      "compute_units": 146561,
+      "v1_paid": "947325122",
+      "v1_compute_units": 146411
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000",
+      "expected_out": "8336",
+      "paid": "8336",
+      "compute_units": 51724,
+      "v1_paid": "8336",
+      "v1_compute_units": 51574
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "714939",
+      "expected_out": "5965619",
+      "paid": "5965619",
+      "compute_units": 51848,
+      "v1_paid": "5965619",
+      "v1_compute_units": 51698
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000",
+      "expected_out": "8344164",
+      "paid": "8344164",
+      "compute_units": 51848,
+      "v1_paid": "8344164",
+      "v1_compute_units": 51698
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "7149398",
+      "expected_out": "59643797",
+      "paid": "59643797",
+      "compute_units": 51834,
+      "v1_paid": "59643797",
+      "v1_compute_units": 51684
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "71493987",
+      "expected_out": "595190829",
+      "paid": "595190829",
+      "compute_units": 51873,
+      "v1_paid": "595190829",
+      "v1_compute_units": 51723
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "714939879",
+      "expected_out": "5704032756",
+      "paid": "5704032756",
+      "compute_units": 107289,
+      "v1_paid": "5704032756",
+      "v1_compute_units": 107139
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "1000000000",
+      "expected_out": "7755522306",
+      "paid": "7755522306",
+      "compute_units": 122996,
+      "v1_paid": "7755522306",
+      "v1_compute_units": 122846
+    },
+    {
+      "pool": "H3f4q1Y7mo7qwL5rKFpbesmJ8nKjkFPR6xWtYXGKCKqK",
+      "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "amount_in": "2383132932",
+      "expected_out": "16895467585",
+      "paid": "16895467585",
+      "compute_units": 194864,
+      "v1_paid": "16895467585",
+      "v1_compute_units": 194714
+    }
+  ]
+}

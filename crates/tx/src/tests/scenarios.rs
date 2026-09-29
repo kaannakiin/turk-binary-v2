@@ -25,6 +25,18 @@ struct Matrix {
 }
 
 #[derive(serde::Deserialize)]
+struct RouterReplay {
+    cases: Vec<RouterReplayCase>,
+}
+
+#[derive(serde::Deserialize)]
+struct RouterReplayCase {
+    expected_out: String,
+    paid: String,
+    v1_paid: String,
+}
+
+#[derive(serde::Deserialize)]
 struct TransferFee {
     gross_out: u64,
     net_out: u64,
@@ -83,6 +95,7 @@ struct ConfigState {
 }
 
 const SOL: &str = "So11111111111111111111111111111111111111112";
+const AI66: &str = "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump";
 const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const USDT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 const NEAR: &str = "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG";
@@ -101,6 +114,379 @@ const WIWI: &str = "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs";
 // the previous leg's payout, built by arb-swap-ix; lamports and fees are the runtime's.
 fn scenarios() -> Scenarios {
     serde_json::from_str(include_str!("fixtures/router_scenarios.json")).unwrap()
+}
+
+#[test]
+fn orca_paid_corpus_matches_direct_program_in_legacy_and_v1() {
+    let replay: RouterReplay =
+        serde_json::from_str(include_str!("fixtures/router_orca_replay.json")).unwrap();
+    assert_eq!(replay.cases.len(), 129);
+    for case in replay.cases {
+        assert_eq!(case.paid, case.expected_out);
+        assert_eq!(case.v1_paid, case.expected_out);
+    }
+}
+
+// src: oracle router over crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz;
+// the expected payout came from a direct LiteSVM swap on Meteora's deployed bytecode.
+#[test]
+fn dlmm_paid_corpus_matches_direct_program_in_legacy_and_v1() {
+    let replay: RouterReplay =
+        serde_json::from_str(include_str!("fixtures/router_dlmm_replay.json")).unwrap();
+    assert_eq!(replay.cases.len(), 89);
+    for case in replay.cases {
+        assert_eq!(case.paid, case.expected_out);
+        assert_eq!(case.v1_paid, case.expected_out);
+    }
+}
+
+// src: crates/tx/src/tests/fixtures/dlmm_fee_pools.json, slot 451672871;
+// oracle router-matrix direct Meteora swap2 vs router on the same LiteSVM accounts.
+#[test]
+fn dlmm_token_2022_transfer_fee_matches_direct_program_and_reverts() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_dlmm_fee.json")).unwrap();
+    for (swap, (name, output, payout)) in matrix.swaps.iter().zip([
+        ("dlmm_fee_input", SOL, 17),
+        (
+            "dlmm_fee_output",
+            "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg",
+            430_307_518_383,
+        ),
+    ]) {
+        assert_eq!(swap.plan, name);
+        assert_eq!(swap.error, None, "{name}");
+        assert_eq!(swap.venue_out, [payout], "{name}");
+        assert_eq!(swap.tokens[output].after, Some(payout), "{name}");
+        assert_eq!(swap.min_out, payout, "{name}");
+    }
+    assert_eq!(matrix.swaps.len(), 2);
+    assert_eq!(matrix.thresholds.len(), 4);
+    for [accepted, refused] in matrix.thresholds.as_chunks::<2>().0 {
+        assert_eq!(accepted.name, "at_payout");
+        assert_eq!(accepted.error, None);
+        assert_eq!(refused.name, "one_above_payout");
+        assert!(refused.error.is_some());
+        assert!(refused.venue_accounts_unchanged);
+        assert!(
+            refused
+                .tokens
+                .values()
+                .all(|change| change.before == change.after)
+        );
+    }
+    assert_eq!(matrix.bad_windows.len(), 8);
+    for bad in &matrix.bad_windows {
+        assert!(bad.name.starts_with("dlmm_"));
+        assert!(bad.error.is_some(), "{}", bad.name);
+        assert!(bad.venue_accounts_unchanged, "{}", bad.name);
+    }
+    assert_eq!(matrix.budgets.len(), 2);
+    for budget in &matrix.budgets {
+        assert!(budget.error.is_some(), "{}", budget.name);
+        assert!(budget.venue_accounts_unchanged, "{}", budget.name);
+    }
+}
+
+// src: crates/tx/src/tests/fixtures/dlmm_extension_pools.json, slot 451674051;
+// oracle router-matrix direct Meteora swap2 vs router with the bitmap extension.
+#[test]
+fn dlmm_bitmap_extension_matches_direct_program_in_both_directions() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_dlmm_extension.json")).unwrap();
+    for (swap, (name, output, payout)) in matrix.swaps.iter().zip([
+        ("dlmm_extension_input", SOL, 13_501),
+        (
+            "dlmm_extension_output",
+            "Hm7RYcS3ZxmGq5jCa8CEiTBMUYXcvdorRgacSt8ZLU3d",
+            74_050_056,
+        ),
+    ]) {
+        assert_eq!(swap.plan, name);
+        assert_eq!(swap.error, None, "{name}");
+        assert_eq!(swap.venue_out, [payout], "{name}");
+        assert_eq!(swap.tokens[output].after, Some(payout), "{name}");
+    }
+    assert_eq!(matrix.swaps.len(), 2);
+    assert_eq!(matrix.thresholds.len(), 4);
+    for [accepted, refused] in matrix.thresholds.as_chunks::<2>().0 {
+        assert_eq!(accepted.name, "at_payout");
+        assert_eq!(accepted.error, None);
+        assert_eq!(refused.name, "one_above_payout");
+        assert!(refused.error.is_some());
+        assert!(refused.venue_accounts_unchanged);
+    }
+}
+
+// src: crates/tx/src/tests/fixtures/dlmm_cross_dex.json, slot 451671159;
+// oracle router-matrix direct DLMM then CLMM vs the API's unsigned v1 route.
+#[test]
+fn dlmm_to_clmm_v1_matches_direct_venues_and_hop_thresholds() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_dlmm_cross.json")).unwrap();
+    assert_eq!(matrix.swaps.len(), 1);
+    let swap = &matrix.swaps[0];
+    assert_eq!(swap.plan, "dlmm_to_clmm");
+    assert_eq!(swap.error, None);
+    assert_eq!(swap.amount_in, 100_000);
+    assert_eq!(swap.venue_out, [1_315_139, 92_896]);
+    assert_eq!(swap.tokens[SOL].after, Some(92_896));
+    assert_eq!(matrix.thresholds.len(), 2);
+    assert_eq!(matrix.thresholds[0].error, None);
+    assert!(matrix.thresholds[1].error.is_some());
+    assert!(matrix.thresholds[1].venue_accounts_unchanged);
+    assert_eq!(matrix.hop_thresholds.len(), 2);
+    for refused in &matrix.hop_thresholds {
+        assert!(refused.error.is_some(), "{}", refused.name);
+        assert!(refused.venue_accounts_unchanged, "{}", refused.name);
+        assert!(
+            refused
+                .tokens
+                .values()
+                .all(|change| change.before == change.after)
+        );
+    }
+}
+
+// src: crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz;
+// oracle router-matrix direct swap2 vs router with two consumed bin arrays.
+#[test]
+fn dlmm_two_array_tail_rejects_wrong_missing_and_reversed_accounts() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_dlmm_two_array.json")).unwrap();
+    assert_eq!(matrix.swaps.len(), 1);
+    let swap = &matrix.swaps[0];
+    assert_eq!(swap.plan, "dlmm_two_arrays");
+    assert_eq!(swap.error, None);
+    assert_eq!(swap.venue_out, [2_128_215_177]);
+    assert_eq!(swap.tokens[SOL].after, Some(2_128_215_177));
+    assert_eq!(matrix.bad_windows.len(), 9);
+    assert!(
+        matrix
+            .bad_windows
+            .iter()
+            .any(|bad| bad.name == "dlmm_reversed_arrays")
+    );
+    for bad in &matrix.bad_windows {
+        assert!(bad.error.is_some(), "{}", bad.name);
+        assert!(bad.venue_accounts_unchanged, "{}", bad.name);
+        assert!(
+            bad.tokens
+                .values()
+                .all(|change| change.before == change.after)
+        );
+    }
+}
+
+#[test]
+fn orca_cross_dex_v1_matches_direct_venues_and_reverts_on_thresholds() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_orca_cross.json")).unwrap();
+    let orders = [
+        ("orca_to_amm_v4", AI66, USDC),
+        ("amm_v4_to_orca", USDC, AI66),
+        ("orca_to_cpmm", AI66, USDC),
+        ("cpmm_to_orca", USDC, AI66),
+        ("orca_to_clmm", AI66, USDC),
+        ("clmm_to_orca", USDC, AI66),
+    ];
+    assert_eq!(matrix.swaps.len(), orders.len());
+    for (swap, (name, input, output)) in matrix.swaps.iter().zip(orders) {
+        assert_eq!(swap.plan, name);
+        assert_eq!(swap.error, None, "{name}");
+        assert_eq!(swap.venue_out.len(), 2, "{name}");
+        assert_eq!(swap.tokens[input].before, Some(swap.amount_in), "{name}");
+        assert_eq!(
+            swap.tokens[output].after,
+            swap.venue_out.last().copied(),
+            "{name}"
+        );
+        assert!(swap.min_out <= swap.venue_out[1], "{name}");
+    }
+    assert_eq!(matrix.thresholds.len(), orders.len() * 2);
+    assert_eq!(matrix.hop_thresholds.len(), orders.len() * 2);
+    for [accepted, refused] in matrix.thresholds.as_chunks::<2>().0 {
+        assert_eq!(accepted.name, "at_payout");
+        assert_eq!(accepted.error, None);
+        assert_eq!(accepted.min_out, accepted.venue_out[1]);
+        assert_eq!(refused.name, "one_above_payout");
+        assert_eq!(refused.min_out, accepted.venue_out[1] + 1);
+        assert!(refused.error.is_some());
+        assert!(refused.venue_accounts_unchanged);
+        assert!(
+            refused
+                .tokens
+                .values()
+                .all(|change| change.before == change.after)
+        );
+    }
+    for hop in &matrix.hop_thresholds {
+        assert!(hop.error.is_some(), "{}", hop.name);
+        assert!(hop.venue_accounts_unchanged, "{}", hop.name);
+        assert!(
+            hop.tokens
+                .values()
+                .all(|change| change.before == change.after)
+        );
+    }
+    assert_eq!(matrix.bad_windows.len(), 9);
+    for bad in &matrix.bad_windows {
+        assert!(bad.name.starts_with("orca_"));
+        assert!(
+            bad.error
+                .as_deref()
+                .is_some_and(|error| error.contains("Custom(6007)"))
+        );
+        assert!(bad.venue_accounts_unchanged, "{}", bad.name);
+        assert!(
+            bad.tokens
+                .values()
+                .all(|change| change.before == change.after)
+        );
+    }
+    assert_eq!(matrix.budgets.len(), 2);
+    for budget in &matrix.budgets {
+        assert!(budget.error.is_some(), "{}", budget.name);
+        assert!(budget.venue_accounts_unchanged, "{}", budget.name);
+    }
+}
+
+#[test]
+fn orca_clmm_cycle_pays_direct_program_amount_and_reverts_atomically() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_orca_cycle.json")).unwrap();
+    assert_eq!(matrix.swaps.len(), 1);
+    let swap = &matrix.swaps[0];
+    assert_eq!(swap.plan, "orca_clmm_token_positive_cycle");
+    assert_eq!(swap.error, None);
+    assert_eq!(swap.amount_in, 1_000_000);
+    assert_eq!(swap.venue_out, [118_357, 1_000_357]);
+    assert_eq!(swap.tokens[SOL].after, Some(1_000_357));
+
+    assert_eq!(matrix.cycles.len(), 2);
+    let [accepted, refused] = &matrix.cycles.as_chunks::<2>().0[0];
+    assert_eq!(accepted.name, "at_payout");
+    assert_eq!(accepted.error, None);
+    assert_eq!(accepted.min_out, 1_000_357);
+    assert_eq!(accepted.tokens[SOL].after, Some(1_000_357));
+    assert_eq!(refused.name, "one_above_payout");
+    assert_eq!(refused.min_out, 1_000_358);
+    assert!(refused.error.is_some());
+    assert!(refused.venue_accounts_unchanged);
+    assert_eq!(refused.tokens[SOL].before, refused.tokens[SOL].after);
+    // The token balance rises, but this captured spread is smaller than the transaction fee.
+    assert!(accepted.fee.expect("transaction fee") > 357);
+
+    assert_eq!(matrix.hop_thresholds.len(), 2);
+    for hop in &matrix.hop_thresholds {
+        assert!(hop.error.is_some(), "{}", hop.name);
+        assert!(hop.venue_accounts_unchanged, "{}", hop.name);
+    }
+    assert_eq!(matrix.budgets.len(), 2);
+    for budget in &matrix.budgets {
+        assert!(budget.error.is_some(), "{}", budget.name);
+        assert!(budget.venue_accounts_unchanged, "{}", budget.name);
+    }
+}
+
+#[test]
+fn orca_token_2022_transfer_fee_v1_matches_direct_program() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_orca_fee.json")).unwrap();
+    let expected = [
+        (
+            "orca_input_fee_a_to_b",
+            "Dfh5DzRgSvvCFDoYc2ciTkMrbDfRKybA4SoFbPmApump",
+        ),
+        (
+            "orca_input_fee_b_to_a",
+            "BTaXKYrnXBMvAbLHCuvcoTCqoExxJUPqFUgQUmuEWCVL",
+        ),
+        (
+            "orca_output_fee_a_to_b",
+            "DALPYxe8iyga5PJM6VS4F1PaixR4QEQqW7tfQe2EnLgQ",
+        ),
+        (
+            "orca_fee_before_epoch_change",
+            "DALPYxe8iyga5PJM6VS4F1PaixR4QEQqW7tfQe2EnLgQ",
+        ),
+        (
+            "orca_fee_at_epoch_change",
+            "DALPYxe8iyga5PJM6VS4F1PaixR4QEQqW7tfQe2EnLgQ",
+        ),
+        (
+            "orca_five_pct_fee_a_to_b",
+            "5LeoN8kSEUkdF7K3dS3BswvnQJRtuRcV4PeUAJvtpU47",
+        ),
+        ("orca_five_pct_fee_b_to_a", SOL),
+    ];
+    assert_eq!(matrix.swaps.len(), expected.len());
+    for (swap, (name, output)) in matrix.swaps.iter().zip(expected) {
+        assert_eq!(swap.plan, name);
+        assert_eq!(swap.error, None, "{name}");
+        assert_eq!(swap.venue_out.len(), 1, "{name}");
+        assert_eq!(swap.tokens[output].after, Some(swap.venue_out[0]), "{name}");
+        assert!(swap.min_out <= swap.venue_out[0], "{name}");
+    }
+    let before = &matrix.swaps[3];
+    let at = &matrix.swaps[4];
+    assert_eq!((before.epoch, at.epoch), (847, 848));
+    assert_eq!(before.amount_in, at.amount_in);
+    assert_eq!(
+        before.venue_out[0] - at.venue_out[0],
+        before.venue_out[0].div_ceil(20)
+    );
+    assert_eq!(matrix.thresholds.len(), expected.len() * 2);
+    for [accepted, refused] in matrix.thresholds.as_chunks::<2>().0 {
+        assert_eq!(accepted.name, "at_payout");
+        assert_eq!(accepted.error, None);
+        assert_eq!(accepted.min_out, accepted.venue_out[0]);
+        assert_eq!(refused.name, "one_above_payout");
+        assert_eq!(refused.min_out, accepted.venue_out[0] + 1);
+        assert!(refused.error.is_some());
+        assert!(refused.venue_accounts_unchanged);
+        assert!(
+            refused
+                .tokens
+                .values()
+                .all(|change| change.before == change.after)
+        );
+    }
+}
+
+#[test]
+fn orca_two_token_2022_mints_pay_direct_program_amounts() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_orca_pair.json")).unwrap();
+    let a = "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo";
+    let b = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH";
+    assert_eq!(matrix.swaps.len(), 2);
+    for (swap, (name, input, output)) in matrix.swaps.iter().zip([
+        ("orca_token22_pair_a_to_b", a, b),
+        ("orca_token22_pair_b_to_a", b, a),
+    ]) {
+        assert_eq!(swap.plan, name);
+        assert_eq!(swap.error, None, "{name}");
+        assert_eq!(swap.venue_out.len(), 1);
+        assert_eq!(swap.tokens[input].before, Some(swap.amount_in));
+        assert_eq!(swap.tokens[output].after, Some(swap.venue_out[0]));
+    }
+    assert_eq!(matrix.thresholds.len(), 4);
+    for [accepted, refused] in matrix.thresholds.as_chunks::<2>().0 {
+        assert_eq!(accepted.name, "at_payout");
+        assert_eq!(accepted.error, None);
+        assert_eq!(accepted.min_out, accepted.venue_out[0]);
+        assert_eq!(refused.name, "one_above_payout");
+        assert_eq!(refused.min_out, accepted.venue_out[0] + 1);
+        assert!(refused.error.is_some());
+        assert!(refused.venue_accounts_unchanged);
+        assert!(
+            refused
+                .tokens
+                .values()
+                .all(|change| change.before == change.after)
+        );
+    }
 }
 
 // src: oracle router-matrix over oracle/snapshots/amm-v4-routes.json.gz.

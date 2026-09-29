@@ -24,6 +24,14 @@ const AMM_V4_HOP_UNITS: u32 = 50_000;
 // a four-array swap reached 1,355,658 CU. `SETUP_UNITS` covers token-account setup.
 const CLMM_HOP_UNITS: u32 = 500_000;
 const CLMM_MANY_ARRAY_UNITS: u32 = 1_250_000;
+// src: crates/quoter/src/tests/fixtures/sim/whirlpool-onchain-sim.json.gz
+// (paid mainnet simulations use at most 896,495 CU; allow CPI and router overhead).
+const WHIRLPOOL_HOP_UNITS: u32 = 1_000_000;
+// src: crates/tx/src/tests/fixtures/router_dlmm_replay.json from `oracle router` over the 152-case
+// meteora_dlmm corpus: 89 paid v1 swaps, max 277,084 CU for one array and
+// 713,797 CU for two or three. Each tier rounds 110% up to the next 10k.
+const DLMM_ONE_ARRAY_UNITS: u32 = 310_000;
+const DLMM_THREE_ARRAY_UNITS: u32 = 790_000;
 // Creating an account, wrapping and unwrapping SOL are not in the replay. A limit set too low
 // fails the transaction; one set high only lowers its scheduling priority, since the cost model
 // charges what is requested.
@@ -40,6 +48,13 @@ const CPMM_CODE: u32 = 793_869;
 const AMM_V4_CODE: u32 = 1_406_429;
 // src: mainnet getAccountInfo at slot 451595266: CAMMCzo5… programdata space.
 const CLMM_CODE: u32 = 1_700_205;
+// src: oracle/programs/programs.tsv (mainnet ELF captured at upgrade slot 440170207);
+// ELF 10,485,715 bytes plus upgradeable-loader ProgramData header.
+const WHIRLPOOL_CODE: u32 = 10_485_760;
+// src: mainnet getAccountInfo at slot 451667468: DLMM ProgramData space.
+const DLMM_CODE: u32 = 2_229_821;
+// src: oracle/programs/MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr.so.
+const MEMO_CODE: u32 = 74_800;
 const TOKEN_CODE: u32 = 108_645;
 const TOKEN_2022_CODE: u32 = 1_382_061;
 const ATA_CODE: u32 = 105_032;
@@ -61,6 +76,13 @@ const AMM_V4_PROGRAM: Pubkey =
     Pubkey::from_str_const("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
 // src: raydium-io/raydium-clmm@51fdba2 programs/amm/src/lib.rs (mainnet declare_id).
 const CLMM_PROGRAM: Pubkey = Pubkey::from_str_const("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK");
+// src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052 programs/whirlpool/src/lib.rs.
+const WHIRLPOOL_PROGRAM: Pubkey =
+    Pubkey::from_str_const("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
+// src: MeteoraAg/dlmm-sdk@576919e3e4368e542c402f000b4264724f7f23ec idls/dlmm.json; mainnet getAccountInfo slot 451667466.
+const DLMM_PROGRAM: Pubkey = Pubkey::from_str_const("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
+// src: solana-program/memo@main program/src/lib.rs.
+const MEMO_PROGRAM: Pubkey = Pubkey::from_str_const("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 // src: SIMD-0186 (the loaded accounts data size limit is at most 64 MiB)
 const MAX_LOADED_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -69,6 +91,9 @@ fn code(program: &Pubkey) -> Option<u32> {
         (AMM_V4_PROGRAM, AMM_V4_CODE),
         (CLMM_PROGRAM, CLMM_CODE),
         (CPMM_PROGRAM, CPMM_CODE),
+        (WHIRLPOOL_PROGRAM, WHIRLPOOL_CODE),
+        (DLMM_PROGRAM, DLMM_CODE),
+        (MEMO_PROGRAM, MEMO_CODE),
         (TOKEN_PROGRAM, TOKEN_CODE),
         (TOKEN_2022_PROGRAM, TOKEN_2022_CODE),
         (ASSOCIATED_TOKEN_PROGRAM, ATA_CODE),
@@ -96,9 +121,22 @@ pub(crate) fn limits<'a>(
                 },
             ),
             DexKind::RaydiumCpmm => Ok(CPMM_HOP_UNITS),
+            DexKind::OrcaWhirlpool => Ok(WHIRLPOOL_HOP_UNITS),
+            DexKind::MeteoraDlmm => match hop.tail {
+                1 => Ok(DLMM_ONE_ARRAY_UNITS),
+                2 | 3 => Ok(DLMM_THREE_ARRAY_UNITS),
+                arrays => Err(TxError::UnmeasuredDlmmArrays { arrays }),
+            },
             other => Err(TxError::Unsupported(other)),
         })
         .try_fold(SETUP_UNITS, |total, units| Ok(total.saturating_add(units?)))?;
+    if hops.iter().any(|hop| hop.kind == DexKind::MeteoraDlmm) && compute_units > MAX_COMPUTE_UNITS
+    {
+        return Err(TxError::TooMuchCompute {
+            units: compute_units,
+            max: MAX_COMPUTE_UNITS,
+        });
+    }
     let compute_units = compute_units.min(MAX_COMPUTE_UNITS);
 
     let mut invoked = BTreeSet::new();
@@ -134,4 +172,45 @@ pub(crate) fn limits<'a>(
         compute_units,
         loaded_accounts_data_bytes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use domain::{SwapWindow, TokenSide};
+
+    use super::*;
+
+    fn dlmm_window(arrays: u8) -> SwapWindow {
+        let mint = Pubkey::new_from_array([1; 32]);
+        let side = TokenSide {
+            mint,
+            token_program: TOKEN_PROGRAM,
+        };
+        SwapWindow {
+            kind: DexKind::MeteoraDlmm,
+            program_id: DLMM_PROGRAM,
+            accounts: Vec::new(),
+            source: side,
+            destination: side,
+            tail: arrays,
+            optional_tail: 0,
+        }
+    }
+
+    #[test]
+    fn dlmm_compute_budget_refuses_unmeasured_and_over_limit_routes() {
+        let payer = Pubkey::new_from_array([9; 32]);
+        let instructions: [Instruction; 0] = [];
+        assert_eq!(
+            limits(&[dlmm_window(4)], &instructions, &payer),
+            Err(TxError::UnmeasuredDlmmArrays { arrays: 4 })
+        );
+        assert_eq!(
+            limits(&[dlmm_window(2), dlmm_window(2)], &instructions, &payer),
+            Err(TxError::TooMuchCompute {
+                units: 1_730_000,
+                max: 1_400_000,
+            })
+        );
+    }
 }

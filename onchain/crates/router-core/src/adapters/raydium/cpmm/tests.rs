@@ -106,6 +106,7 @@ impl Window {
             amount_in: MAINNET_AMOUNT_IN,
             min_out: 0,
             user: &key(MAINNET_ACCOUNTS[0].0),
+            source_ata: &self.keys[5],
         })
     }
 }

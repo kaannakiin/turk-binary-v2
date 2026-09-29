@@ -172,10 +172,14 @@ impl Machine {
                 .logs
                 .iter()
                 .rev()
-                .find(|l| l.contains("Error") || l.contains("failed"))
+                .take(12)
                 .cloned()
-                .unwrap_or_default();
-            format!("{:?} {last}", failed.err)
+                .collect::<Vec<_>>();
+            format!(
+                "{:?} {}",
+                failed.err,
+                last.into_iter().rev().collect::<Vec<_>>().join(" | ")
+            )
         })
     }
 

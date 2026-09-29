@@ -39,6 +39,28 @@ const CLMM_CROSS: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../tx/src/tests/fixtures/clmm_cross_dex.json"
 );
+const DLMM: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz"
+);
+const DLMM_FEE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tx/src/tests/fixtures/dlmm_fee_pools.json"
+);
+const DLMM_EXTENSION: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tx/src/tests/fixtures/dlmm_extension_pools.json"
+);
+// src: crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz (LiteSVM payout).
+const DLMM_SOL_USDC: &str = "1jw5fDodwGEGBVqNXsx2eqiLgNmgMDEeXWSbrTreLCM";
+// src: crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz (direct LiteSVM payout).
+const DLMM_TWO_ARRAYS: &str = "3msVd34R5KxonDzyNSV5nT19UtUeJ2RF1NaQhvVPNLxL";
+// src: crates/tx/src/tests/fixtures/dlmm_fee_pools.json, slot 451672871.
+const DLMM_SOL_SLR: &str = "SoHd2ZPRjpJdnf4mVwpm5hNjext2tyKGA3Q4Q1EMYMq";
+const SLR: &str = "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg";
+// src: crates/tx/src/tests/fixtures/dlmm_extension_pools.json, slot 451674051.
+const DLMM_EXTENSION_POOL: &str = "4dYpX6DKFZwXqHRqVxk78pResDuJFdCz8ZEeFHN3VAnn";
+const HM7: &str = "Hm7RYcS3ZxmGq5jCa8CEiTBMUYXcvdorRgacSt8ZLU3d";
 const USDT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 const WSOL: &str = "So11111111111111111111111111111111111111112";
 // src: oracle/snapshots/amm-v4-routes.json.gz, slot 451598550.
@@ -77,6 +99,220 @@ fn cases_from(corpus: &str) -> Vec<Case> {
         serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
             .expect("the corpus parses");
     corpus.cases
+}
+
+#[tokio::test]
+async fn dlmm_quote_builds_instructions_and_unsigned_v1() {
+    use base64::Engine as _;
+
+    let fixture = Fixture::over_selected(DLMM, &[DLMM_SOL_USDC], 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": USDC,
+        "toTokenAddress": WSOL,
+        "amount": "57069",
+        "maxHops": 1,
+        "dexes": ["meteora_dlmm"],
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{quote}");
+    assert_eq!(quote["toTokenAmount"], "445336");
+    let swap = json!({
+        "userPublicKey": ORACLE_PAYER,
+        "wrapAndUnwrapSol": false,
+        "quoteResponse": quote,
+    });
+    for path in ["/swap-instructions", "/swap"] {
+        let (status, _, built) = call(fixture.router(), post_to(path, &swap)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {built}");
+        assert_eq!(built["quote"]["legs"][0]["dex"], "meteora_dlmm");
+        if path == "/swap" {
+            let transaction = base64::engine::general_purpose::STANDARD
+                .decode(built["transaction"].as_str().expect("transaction"))
+                .expect("base64");
+            assert_eq!(transaction[0], 0x81);
+        }
+    }
+    let repriced = json!({
+        "userPublicKey": ORACLE_PAYER,
+        "wrapAndUnwrapSol": false,
+        "quoteRequest": request,
+    });
+    for path in ["/swap-instructions", "/swap"] {
+        let (status, _, built) = call(fixture.router(), post_to(path, &repriced)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {built}");
+        assert_eq!(built["quote"]["toTokenAmount"], "445336");
+    }
+}
+
+#[tokio::test]
+#[ignore = "writes live Token-2022 DLMM plans for LiteSVM replay"]
+async fn router_dlmm_fee_plans() {
+    let out = std::env::var("ROUTER_DLMM_FEE_PLANS").expect("names fee plans");
+    let captured = universe::load_selected_from(DLMM_FEE, &[DLMM_SOL_SLR]);
+    assert!(captured.skipped.is_empty(), "{:?}", captured.skipped);
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let mut plans = Vec::new();
+    for (name, from, to) in [
+        ("dlmm_fee_input", SLR, WSOL),
+        ("dlmm_fee_output", WSOL, SLR),
+    ] {
+        let mut selected = None;
+        let mut last = Value::Null;
+        for amount in ["1000000", "10000000", "100000000"] {
+            let request = json!({
+                "fromTokenAddress": from,
+                "toTokenAddress": to,
+                "amount": amount,
+                "maxHops": 1,
+                "slippageBps": 0,
+                "dexes": ["meteora_dlmm"],
+            });
+            let (status, _, quote) = call(fixture.router(), post(&request)).await;
+            if status == StatusCode::OK {
+                selected = Some(quote);
+                break;
+            }
+            last = quote;
+        }
+        let quote = selected.unwrap_or_else(|| panic!("{name}: {last}"));
+        let plan = scenario_plan(&fixture, name, &quote, false, Some(1045)).await;
+        assert_hop_minimums(&plan, &quote, name);
+        plans.push(plan);
+    }
+    let file = std::fs::File::create(&out).expect("creating DLMM fee plans");
+    serde_json::to_writer(file, &json!({ "corpus": DLMM_FEE, "plans": plans }))
+        .expect("writing DLMM fee plans");
+}
+
+#[tokio::test]
+#[ignore = "writes live DLMM bitmap-extension plans for LiteSVM replay"]
+async fn router_dlmm_extension_plans() {
+    let out = std::env::var("ROUTER_DLMM_EXTENSION_PLANS").expect("names extension plans");
+    let captured = universe::load_selected_from(DLMM_EXTENSION, &[DLMM_EXTENSION_POOL]);
+    assert!(captured.skipped.is_empty(), "{:?}", captured.skipped);
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let mut plans = Vec::new();
+    for (name, from, to) in [
+        ("dlmm_extension_input", HM7, WSOL),
+        ("dlmm_extension_output", WSOL, HM7),
+    ] {
+        let mut selected = None;
+        let mut last = Value::Null;
+        for amount in ["1000000", "10000000", "100000000"] {
+            let request = json!({
+                "fromTokenAddress": from,
+                "toTokenAddress": to,
+                "amount": amount,
+                "maxHops": 1,
+                "slippageBps": 0,
+                "dexes": ["meteora_dlmm"],
+            });
+            let (status, _, quote) = call(fixture.router(), post(&request)).await;
+            if status == StatusCode::OK {
+                selected = Some(quote);
+                break;
+            }
+            last = quote;
+        }
+        let quote = selected.unwrap_or_else(|| panic!("{name}: {last}"));
+        let plan = scenario_plan(&fixture, name, &quote, false, None).await;
+        assert_hop_minimums(&plan, &quote, name);
+        plans.push(plan);
+    }
+    let file = std::fs::File::create(&out).expect("creating DLMM extension plans");
+    serde_json::to_writer(file, &json!({ "corpus": DLMM_EXTENSION, "plans": plans }))
+        .expect("writing DLMM extension plans");
+}
+
+#[tokio::test]
+#[ignore = "writes same-slot DLMM/CLMM plans for LiteSVM replay"]
+async fn router_dlmm_cross_plans() {
+    let snapshot = std::env::var("ROUTER_DLMM_CROSS_SNAPSHOT").expect("names snapshot");
+    let out = std::env::var("ROUTER_DLMM_CROSS_PLANS").expect("names plans");
+    let dlmm = "8tHM8D4F5xurUs1kFUFmsrwmAhq2bKMi7BN56dRM1iFw";
+    let clmm = "7JVhQPa1Bk7erB1QV1Kd68HrWqWyf9XBb2mWYRueqroT";
+    let plan = orca_cross_plan(
+        &snapshot,
+        (
+            "dlmm_to_clmm",
+            [dlmm, clmm],
+            ["meteora_dlmm", "raydium_clmm"],
+            USDC,
+            WSOL,
+            "100000",
+        ),
+    )
+    .await;
+    let file = std::fs::File::create(&out).expect("creating DLMM cross plans");
+    serde_json::to_writer(file, &json!({ "corpus": snapshot, "plans": [plan] }))
+        .expect("writing DLMM cross plans");
+}
+
+#[tokio::test]
+#[ignore = "writes a two-bin-array DLMM plan for account-order replay"]
+async fn router_dlmm_two_array_plans() {
+    let out = std::env::var("ROUTER_DLMM_TWO_ARRAY_PLANS").expect("names plans");
+    let fixture = Fixture::over_selected(DLMM, &[DLMM_TWO_ARRAYS], 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": USDC,
+        "toTokenAddress": WSOL,
+        "amount": "268083063",
+        "maxHops": 1,
+        "slippageBps": 0,
+        "dexes": ["meteora_dlmm"],
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{quote}");
+    assert_eq!(quote["toTokenAmount"], "2128215177");
+    let plan = scenario_plan(&fixture, "dlmm_two_arrays", &quote, false, None).await;
+    assert_hop_minimums(&plan, &quote, "dlmm_two_arrays");
+    let file = std::fs::File::create(&out).expect("creating two-array plans");
+    serde_json::to_writer(file, &json!({ "corpus": DLMM, "plans": [plan] }))
+        .expect("writing two-array plans");
+}
+
+#[tokio::test]
+async fn dlmm_quote_refuses_an_unmeasured_swap_window() {
+    let fixture = Fixture::over_selected(DLMM, &[DLMM_TWO_ARRAYS], 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": USDC,
+        "toTokenAddress": WSOL,
+        "amount": "1000000000",
+        "maxHops": 1,
+        "dexes": ["meteora_dlmm"],
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{quote}");
+    let body = json!({
+        "userPublicKey": ORACLE_PAYER,
+        "wrapAndUnwrapSol": false,
+        "quoteResponse": quote,
+    });
+    for path in ["/swap-instructions", "/swap"] {
+        let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{path}: {built}");
+        assert_eq!(built["error"]["code"], "UNMEASURED_DLMM_WINDOW");
+    }
 }
 
 #[tokio::test]
@@ -584,6 +820,39 @@ struct PaidCase {
     out: Option<String>,
 }
 
+fn dlmm_mints(corpus: &str) -> std::collections::HashMap<String, (String, String)> {
+    use base64::Engine as _;
+
+    let file = std::fs::File::open(corpus).expect("DLMM corpus");
+    let snapshot: Value =
+        serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
+            .expect("DLMM snapshot");
+    snapshot["pools"]
+        .as_array()
+        .expect("DLMM pools")
+        .iter()
+        .map(|pool| {
+            let address = pool["pool"].as_str().expect("pool key");
+            let account = pool["accounts"]
+                .as_array()
+                .expect("accounts")
+                .iter()
+                .find(|account| account["key"] == address)
+                .expect("pool account");
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(account["data"].as_str().expect("pool data"))
+                .expect("base64 pool");
+            let mint = |offset| {
+                domain::Pubkey::new_from_array(
+                    data[offset..offset + 32].try_into().expect("mint bytes"),
+                )
+                .to_string()
+            };
+            (address.to_owned(), (mint(88), mint(120)))
+        })
+        .collect()
+}
+
 /// Every swap the corpus paid, as `/swap-instructions` builds it through the
 /// same pool and requiring exactly what the program paid; `just
 /// router-replay` runs them through the router in `LiteSVM`.
@@ -594,6 +863,10 @@ async fn router_replay_plans() {
     let corpus = std::env::var("ROUTER_CORPUS").unwrap_or_else(|_| CPMM.to_owned());
     let dex = if corpus.ends_with("/raydium_clmm.json.gz") {
         "raydium_clmm"
+    } else if corpus.ends_with("/meteora_dlmm.json.gz") {
+        "meteora_dlmm"
+    } else if corpus.ends_with("/orca_whirlpool.json.gz") {
+        "orca_whirlpool"
     } else if corpus.ends_with("/raydium_amm_v4.json.gz") {
         "raydium_amm_v4"
     } else {
@@ -614,10 +887,27 @@ async fn router_replay_plans() {
         .expect("SOL")
         .to_owned();
 
+    let dlmm_mints = if dex == "meteora_dlmm" {
+        dlmm_mints(&corpus)
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let mut plans = Vec::new();
     for case in paid.cases {
-        let Some(expected) = case.out else { continue };
-        let output = if case.input_mint == sol {
+        let Some(expected) = case.out.filter(|out| out != "0") else {
+            continue;
+        };
+        let output = if dex == "meteora_dlmm" {
+            let (x, y) = &dlmm_mints[&case.pool];
+            if case.input_mint == *x {
+                y.clone()
+            } else if case.input_mint == *y {
+                x.clone()
+            } else {
+                panic!("{} is not a mint of {}", case.input_mint, case.pool);
+            }
+        } else if case.input_mint == sol {
             USDC.to_owned()
         } else {
             sol.clone()
@@ -1040,6 +1330,344 @@ async fn router_clmm_cross_plans() {
     let file = std::fs::File::create(&out).expect("creating cross-DEX plans");
     serde_json::to_writer(file, &json!({ "corpus": CLMM_CROSS, "plans": plans }))
         .expect("writing cross-DEX plans");
+}
+
+const ORCA_SOL_AI66: &str = "Cmob4vNUCXnYjMD9Kxyh3MyfN7fX2unUwdvh4asXDs8X";
+const CLMM_AI66_USDC: &str = "6pkCg67xCj3oWa4f6Fzc1QghenrkNze45A4qMeSuGX2i";
+const AI66: &str = "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump";
+
+fn orca_cross_matrix() -> [CrossRoute; 6] {
+    [
+        (
+            "orca_to_amm_v4",
+            [ORCA_SOL_AI66, V4_SOL_USDC],
+            ["orca_whirlpool", "raydium_amm_v4"],
+            AI66,
+            USDC,
+            "1000000",
+        ),
+        (
+            "amm_v4_to_orca",
+            [V4_SOL_USDC, ORCA_SOL_AI66],
+            ["raydium_amm_v4", "orca_whirlpool"],
+            USDC,
+            AI66,
+            "1000000",
+        ),
+        (
+            "orca_to_cpmm",
+            [ORCA_SOL_AI66, CPMM_SOL_USDC],
+            ["orca_whirlpool", "raydium_cpmm"],
+            AI66,
+            USDC,
+            "1000000",
+        ),
+        (
+            "cpmm_to_orca",
+            [CPMM_SOL_USDC, ORCA_SOL_AI66],
+            ["raydium_cpmm", "orca_whirlpool"],
+            USDC,
+            AI66,
+            "1000000",
+        ),
+        (
+            "orca_to_clmm",
+            [ORCA_SOL_AI66, CLMM_SOL_USDC],
+            ["orca_whirlpool", "raydium_clmm"],
+            AI66,
+            USDC,
+            "1000000",
+        ),
+        (
+            "clmm_to_orca",
+            [CLMM_SOL_USDC, ORCA_SOL_AI66],
+            ["raydium_clmm", "orca_whirlpool"],
+            USDC,
+            AI66,
+            "1000000",
+        ),
+    ]
+}
+
+async fn orca_cross_plan(snapshot: &str, route: CrossRoute) -> Value {
+    let (name, pools, dexes, from, to, amount) = route;
+    let captured = universe::load_selected_from(snapshot, &pools);
+    assert!(
+        captured.skipped.is_empty(),
+        "{name}: {:?}",
+        captured.skipped
+    );
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": from,
+        "toTokenAddress": to,
+        "amount": amount,
+        "maxHops": 2,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{name}: {quote}");
+    let legs = quote["legs"].as_array().expect("route legs");
+    assert_eq!(legs.len(), 2, "{name}");
+    for (leg, (pool, dex)) in legs.iter().zip(pools.into_iter().zip(dexes)) {
+        assert_eq!(leg["poolAddress"], pool, "{name}");
+        assert_eq!(leg["dex"], dex, "{name}");
+    }
+    let plan = scenario_plan(&fixture, name, &quote, false, None).await;
+    assert_hop_minimums(&plan, &quote, name);
+    plan
+}
+
+async fn orca_three_hop_cycle_rejected(snapshot: &str) {
+    let pools = [ORCA_SOL_AI66, V4_SOL_USDC, CLMM_AI66_USDC];
+    let captured = universe::load_selected_from(snapshot, &pools);
+    assert!(captured.skipped.is_empty(), "{:?}", captured.skipped);
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": AI66,
+        "toTokenAddress": AI66,
+        "amount": "1000000",
+        "maxHops": 3,
+        "enableCyclicArbitrage": true,
+        "slippageBps": 0,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "cycle quote: {quote}");
+    let legs = quote["legs"].as_array().expect("cycle legs");
+    assert_eq!(legs.len(), 3, "cycle quote: {quote}");
+    for (leg, pool) in legs.iter().zip(pools) {
+        assert_eq!(leg["poolAddress"], pool, "cycle quote: {quote}");
+    }
+    let body = json!({
+        "userPublicKey": ORACLE_PAYER,
+        "wrapAndUnwrapSol": false,
+        "quoteResponse": quote,
+    });
+    let (status, _, built) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{built}");
+    assert_eq!(built["error"]["code"], "UNPROFITABLE_CYCLE");
+}
+
+#[tokio::test]
+#[ignore = "writes same-slot Orca/Raydium cross-DEX plans for LiteSVM replay"]
+async fn router_orca_cross_plans() {
+    let snapshot = std::env::var("ROUTER_ORCA_CROSS_SNAPSHOT").expect("names snapshot");
+    let out = std::env::var("ROUTER_ORCA_CROSS_PLANS").expect("names plans file");
+    let mut plans = Vec::new();
+    for route in orca_cross_matrix() {
+        plans.push(orca_cross_plan(&snapshot, route).await);
+    }
+    if std::env::var_os("ROUTER_ORCA_THREE_HOP_SNAPSHOT").is_some() {
+        orca_three_hop_cycle_rejected(&snapshot).await;
+    }
+    let file = std::fs::File::create(&out).expect("creating cross-DEX plans");
+    serde_json::to_writer(file, &json!({ "corpus": snapshot, "plans": plans }))
+        .expect("writing plans");
+}
+
+#[tokio::test]
+#[ignore = "writes a same-slot token-positive Orca/Raydium cycle plan for LiteSVM replay"]
+async fn router_orca_cycle_plans() {
+    let snapshot = std::env::var("ROUTER_ORCA_CYCLE_SNAPSHOT").expect("names snapshot");
+    let out = std::env::var("ROUTER_ORCA_CYCLE_PLANS").expect("names plans file");
+    let pools = [
+        "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ",
+        "8sLbNZoA1cfnvMJLPfp98ZLAnFSYCFApfJKMbiXNLwxj",
+    ];
+    let captured = universe::load_selected_from(&snapshot, &pools);
+    assert!(captured.skipped.is_empty(), "{:?}", captured.skipped);
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": WSOL,
+        "toTokenAddress": WSOL,
+        "amount": "1000000",
+        "maxHops": 2,
+        "enableCyclicArbitrage": true,
+        "slippageBps": 0,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "cycle quote: {quote}");
+    assert!(
+        quote["toTokenAmount"]
+            .as_str()
+            .expect("out amount")
+            .parse::<u64>()
+            .expect("numeric amount")
+            > 1_000_000,
+        "cycle not profitable: {quote}"
+    );
+    let legs = quote["legs"].as_array().expect("cycle legs");
+    assert_eq!(legs.len(), 2, "cycle quote: {quote}");
+    for (leg, pool) in legs.iter().zip(pools) {
+        assert_eq!(leg["poolAddress"], pool, "cycle quote: {quote}");
+    }
+    let plan = scenario_plan(
+        &fixture,
+        "orca_clmm_token_positive_cycle",
+        &quote,
+        false,
+        None,
+    )
+    .await;
+    assert_hop_minimums(&plan, &quote, "orca_clmm_token_positive_cycle");
+    let file = std::fs::File::create(&out).expect("creating cycle plans");
+    serde_json::to_writer(file, &json!({ "corpus": snapshot, "plans": [plan] }))
+        .expect("writing plans");
+}
+
+#[tokio::test]
+#[ignore = "writes real Orca Token-2022 transfer-fee plans for LiteSVM replay"]
+async fn router_orca_fee_plans() {
+    use route::PoolFeed as _;
+
+    let snapshot = std::env::var("ROUTER_ORCA_FEE_SNAPSHOT").expect("names fee snapshot");
+    let out = std::env::var("ROUTER_ORCA_FEE_PLANS").expect("names fee plans");
+    let cases = [
+        (
+            "orca_input_fee",
+            "12q1dt1Dm2KjNVZz3BbmTRbsNjSjPBYDr9YnGdg6KNfh",
+            "BTaXKYrnXBMvAbLHCuvcoTCqoExxJUPqFUgQUmuEWCVL",
+            "Dfh5DzRgSvvCFDoYc2ciTkMrbDfRKybA4SoFbPmApump",
+        ),
+        (
+            "orca_output_fee",
+            "123aq5La9xB2wuE7L7TXEZmgkNYUS5aMQWGWmVaBMKsp",
+            WSOL,
+            "DALPYxe8iyga5PJM6VS4F1PaixR4QEQqW7tfQe2EnLgQ",
+        ),
+        (
+            "orca_five_pct_fee",
+            "137gotEq1BAhBGHZteHrbmaLPRh2gWzD7eHdcDnurHJu",
+            WSOL,
+            "5LeoN8kSEUkdF7K3dS3BswvnQJRtuRcV4PeUAJvtpU47",
+        ),
+    ];
+    let mut plans = Vec::new();
+    for (name, pool, mint_a, mint_b) in cases {
+        let captured = universe::load_selected_from(&snapshot, &[pool]);
+        assert!(
+            captured.skipped.is_empty(),
+            "{name}: {:?}",
+            captured.skipped
+        );
+        let fixture = Fixture::from_universe(captured, 1, 4);
+        fixture.blockhashes.set(domain::chain::LatestBlockhash {
+            hash: [5; 32],
+            last_valid_block_height: 1,
+        });
+        for (direction, from, to) in [("a_to_b", mint_a, mint_b), ("b_to_a", mint_b, mint_a)] {
+            let mut selected = None;
+            let mut last = Value::Null;
+            for amount in ["1000000", "100000000", "1000000000", "7300000000"] {
+                let request = json!({
+                    "fromTokenAddress": from,
+                    "toTokenAddress": to,
+                    "amount": amount,
+                    "maxHops": 1,
+                    "slippageBps": 0,
+                });
+                let (status, _, quote) = call(fixture.router(), post(&request)).await;
+                if status == StatusCode::OK {
+                    selected = Some(quote);
+                    break;
+                }
+                last = quote;
+            }
+            let Some(quote) = selected else {
+                eprintln!("{name}/{direction}: {last}");
+                continue;
+            };
+            let case_name = format!("{name}_{direction}");
+            let plan = scenario_plan(&fixture, &case_name, &quote, false, Some(1045)).await;
+            assert_hop_minimums(&plan, &quote, &case_name);
+            plans.push(plan);
+        }
+        if name == "orca_output_fee" {
+            let clock = fixture.feed.clock().expect("snapshot Clock");
+            for (epoch, case_name) in [
+                (847, "orca_fee_before_epoch_change"),
+                (848, "orca_fee_at_epoch_change"),
+            ] {
+                fixture.feed.set(domain::ChainClock { epoch, ..clock });
+                let request = json!({
+                    "fromTokenAddress": mint_a,
+                    "toTokenAddress": mint_b,
+                    "amount": "1000000",
+                    "maxHops": 1,
+                    "slippageBps": 0,
+                });
+                let (status, _, quote) = call(fixture.router(), post(&request)).await;
+                assert_eq!(status, StatusCode::OK, "{case_name}: {quote}");
+                let plan = scenario_plan(&fixture, case_name, &quote, false, Some(epoch)).await;
+                assert_hop_minimums(&plan, &quote, case_name);
+                plans.push(plan);
+            }
+            fixture.feed.set(clock);
+        }
+    }
+    assert!(
+        plans.len() >= 5,
+        "fee snapshot produced too few paid routes"
+    );
+    let file = std::fs::File::create(&out).expect("creating Orca fee plans");
+    serde_json::to_writer(file, &json!({ "corpus": snapshot, "plans": plans }))
+        .expect("writing Orca fee plans");
+}
+
+#[tokio::test]
+#[ignore = "writes real Orca Token-2022/Token-2022 plans for LiteSVM replay"]
+async fn router_orca_pair_plans() {
+    let snapshot = std::env::var("ROUTER_ORCA_PAIR_SNAPSHOT").expect("names pair snapshot");
+    let out = std::env::var("ROUTER_ORCA_PAIR_PLANS").expect("names pair plans");
+    let pool = "GsKfZZEhrp6KHe3DLLbrD1pft22B6BDB3cxzAbPXZjq9";
+    let mint_a = "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo";
+    let mint_b = "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH";
+    let captured = universe::load_selected_from(&snapshot, &[pool]);
+    assert!(captured.skipped.is_empty(), "{:?}", captured.skipped);
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let mut plans = Vec::new();
+    for (direction, from, to) in [("a_to_b", mint_a, mint_b), ("b_to_a", mint_b, mint_a)] {
+        let mut selected = None;
+        let mut last = Value::Null;
+        for amount in ["1000000", "100000000", "1000000000", "10000000000"] {
+            let request = json!({
+                "fromTokenAddress": from,
+                "toTokenAddress": to,
+                "amount": amount,
+                "maxHops": 1,
+                "slippageBps": 0,
+            });
+            let (status, _, quote) = call(fixture.router(), post(&request)).await;
+            if status == StatusCode::OK {
+                selected = Some(quote);
+                break;
+            }
+            last = quote;
+        }
+        let quote = selected.unwrap_or_else(|| panic!("{direction}: {last}"));
+        let name = format!("orca_token22_pair_{direction}");
+        let plan = scenario_plan(&fixture, &name, &quote, false, Some(1045)).await;
+        assert_hop_minimums(&plan, &quote, &name);
+        plans.push(plan);
+    }
+    let file = std::fs::File::create(&out).expect("creating Orca pair plans");
+    serde_json::to_writer(file, &json!({ "corpus": snapshot, "plans": plans }))
+        .expect("writing Orca pair plans");
 }
 
 async fn amm_v4_token22_plan() -> Value {

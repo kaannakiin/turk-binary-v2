@@ -214,6 +214,8 @@ impl From<TxError> for ApiError {
             TxError::TooManyAccounts { .. } => "TOO_MANY_ACCOUNTS",
             TxError::TooLarge { .. } => "TRANSACTION_TOO_LARGE",
             TxError::TooMuchData { .. } => "TOO_MUCH_ACCOUNT_DATA",
+            TxError::TooMuchCompute { .. } => "TOO_MUCH_COMPUTE",
+            TxError::UnmeasuredDlmmArrays { .. } => "UNMEASURED_DLMM_WINDOW",
             TxError::UnprofitableCycle { .. } => "UNPROFITABLE_CYCLE",
             TxError::Unsupported(_) | TxError::UnknownProgram(_) => "UNSUPPORTED_VENUE",
             TxError::EmptyRoute

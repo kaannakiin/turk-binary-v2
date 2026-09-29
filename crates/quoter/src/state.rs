@@ -140,6 +140,12 @@ impl VenueState {
             Inner::RaydiumCpmm(state) => state.swap_window(a_to_b),
             #[cfg(feature = "raydium-clmm")]
             Inner::RaydiumClmm(state) => state.swap_window(a_to_b, arrays_used, max_arrays, guard),
+            #[cfg(feature = "whirlpool")]
+            Inner::OrcaWhirlpool(state) => {
+                state.swap_window(a_to_b, arrays_used, max_arrays, guard)
+            }
+            #[cfg(feature = "dlmm")]
+            Inner::MeteoraDlmm(state) => state.swap_window(a_to_b, arrays_used, max_arrays),
             other => Err(WindowError::Unsupported(other.kind())),
         }
     }
