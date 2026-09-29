@@ -92,24 +92,12 @@ candidate evaluation.
 - No global optimum claim is made for flow candidate pruning or allocation
   refinement.
 
-## HTTP, allocation, and RSS harness proposal
+## HTTP, allocation, and RSS measurement
 
-The next measurement layer should keep route timing separate from HTTP and
-serialization overhead:
-
-1. Start the local unsigned HTTP service with a fixture config and send a
-   deterministic JSON request corpus from a small Rust client. Keep the
-   snapshot, request body, worker count, and connection reuse fixed. Warm up,
-   then record p50/p95/p99 latency and requests per second at concurrency 1,
-   worker count, and 2× worker count.
-2. Add an allocation-only route harness around the same request cases using
-   `stats_alloc` or a counting global allocator. Record allocations and bytes
-   per quote, split plan, and transaction assembly separately. Do not mix
-   allocator setup or JSON parsing into the route-only numbers.
-3. Run the release HTTP process under macOS `/usr/bin/time -l` for peak RSS,
-   then repeat with a fixed-duration local load. Report process RSS and
-   per-request allocation metrics together; RSS alone is not an allocation
-   count.
-4. Store the command, commit, toolchain, snapshot hash, request corpus hash,
-   and machine details beside every result. Use local unsigned transactions
-   only; no `.env`, live keys, or transaction submission enters the harness.
+[The HTTP report](exactin-http-performance.md) contains a release-mode
+128-request matrix for all three endpoints, two route modes, and concurrency
+1/2/4. It records p50/p95/p99, throughput, allocator counts/bytes, and a
+separate sampled RSS replay with capture and toolchain metadata. Its allocator
+numbers cover the HTTP request path; they do not isolate SDK quote, route
+search, transaction assembly, and JSON serialization allocations. A separate
+component profile is required before claiming an allocation optimization.
