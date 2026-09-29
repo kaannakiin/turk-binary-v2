@@ -220,3 +220,9 @@ just ci                        # everything CI runs
 - `unsafe_code` is forbidden.
 - Comments only for "why", only where non-obvious. Never write a comment that restates the code. Exception: the `// src:` source record on on-chain constants is mandatory.
 - `just lint` must be clean after every change.
+
+## Codex orchestration
+
+For complex coding tasks, use the `astra-orchestrator` skill when its trigger conditions match. The root agent owns architecture, task boundaries, integration, and final verification. Delegate bounded exploration, implementation, testing, review, or technical research when the skill calls for it. Keep file ownership explicit and avoid delegating trivial work solely for parallelism.
+
+The project-specific source verification, test, and live trading safety rules above apply to every agent. User instructions take precedence over this orchestration policy.
