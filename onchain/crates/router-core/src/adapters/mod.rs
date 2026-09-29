@@ -1,0 +1,44 @@
+mod raydium;
+
+use router_wire::{Hop, HopKind};
+
+use crate::{BuiltHop, HopAccountView, HopMeta, RouterError};
+
+pub struct HopInput<'a> {
+    pub window: &'a [HopAccountView<'a>],
+    pub amount_in: u64,
+    pub user: &'a [u8; 32],
+}
+
+fn kind(hop: Hop) -> Result<HopKind, RouterError> {
+    HopKind::try_from(hop.kind).map_err(|_| RouterError::UnknownHopKind)
+}
+
+pub fn window_len(hop: Hop) -> Result<usize, RouterError> {
+    match kind(hop)? {
+        HopKind::RaydiumCpmm => raydium::cpmm::window_len(hop),
+    }
+}
+
+pub fn build(hop: Hop, input: &HopInput) -> Result<BuiltHop, RouterError> {
+    if input.window.len() != window_len(hop)? {
+        return Err(RouterError::BadWindow);
+    }
+    match kind(hop)? {
+        HopKind::RaydiumCpmm => raydium::cpmm::build(input),
+    }
+}
+
+// The runtime caps a CPI's privileges at what the outer transaction granted,
+// so copying the window's flags can never escalate one.
+fn metas_after_program(window: &[HopAccountView]) -> Vec<HopMeta> {
+    window
+        .iter()
+        .skip(1)
+        .map(|view| HopMeta {
+            key: *view.key,
+            is_signer: view.is_signer,
+            is_writable: view.is_writable,
+        })
+        .collect()
+}

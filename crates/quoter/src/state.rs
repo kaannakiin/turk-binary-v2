@@ -1,7 +1,7 @@
-use domain::{ChainClock, DexKind};
+use domain::{ChainClock, DexKind, SwapWindow};
 
 use crate::account::AccountRef;
-use crate::error::{DecodeError, QuoteError};
+use crate::error::{DecodeError, QuoteError, WindowError};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QuoteInput<'a> {
@@ -118,6 +118,39 @@ impl VenueState {
             Inner::MeteoraDlmm(state) => state.quote(input),
             #[cfg(feature = "damm-v1")]
             Inner::MeteoraDammV1(state) => state.quote(input),
+        }
+    }
+
+    /// The accounts of this pool's swap instruction; side A in when `a_to_b`.
+    pub fn swap_window(&self, a_to_b: bool) -> Result<SwapWindow, WindowError> {
+        match &self.inner {
+            #[cfg(feature = "raydium-cpmm")]
+            Inner::RaydiumCpmm(state) => state.swap_window(a_to_b),
+            other => Err(WindowError::Unsupported(other.kind())),
+        }
+    }
+}
+
+impl Inner {
+    fn kind(&self) -> DexKind {
+        match self {
+            Self::Unsupported(kind) => *kind,
+            #[cfg(feature = "pumpswap")]
+            Self::PumpAmm(_) => DexKind::PumpAmm,
+            #[cfg(feature = "raydium-amm-v4")]
+            Self::RaydiumAmmV4(_) => DexKind::RaydiumAmmV4,
+            #[cfg(feature = "raydium-cpmm")]
+            Self::RaydiumCpmm(_) => DexKind::RaydiumCpmm,
+            #[cfg(feature = "raydium-clmm")]
+            Self::RaydiumClmm(_) => DexKind::RaydiumClmm,
+            #[cfg(feature = "whirlpool")]
+            Self::OrcaWhirlpool(_) => DexKind::OrcaWhirlpool,
+            #[cfg(feature = "damm-v2")]
+            Self::MeteoraDammV2(_) => DexKind::MeteoraDammV2,
+            #[cfg(feature = "dlmm")]
+            Self::MeteoraDlmm(_) => DexKind::MeteoraDlmm,
+            #[cfg(feature = "damm-v1")]
+            Self::MeteoraDammV1(_) => DexKind::MeteoraDammV1,
         }
     }
 }

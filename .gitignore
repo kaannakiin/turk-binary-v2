@@ -8,5 +8,6 @@ junit.xml
 id.json
 /config.toml
 /oracle/target
+/onchain/target
 /oracle/programs/*.so
 /oracle/snapshots

@@ -17,6 +17,7 @@ use tokio::time::Instant;
 use tower::ServiceExt;
 
 use crate::api::{self, Api};
+use crate::blockhash::BlockhashSlot;
 use crate::error::ServerError;
 use crate::executor::SearchPool;
 use crate::health::Health;
@@ -74,8 +75,9 @@ impl OpsServer {
     }
 }
 
-/// `POST /route`. Bound and answering from the start: requests before the
-/// quote reader is attached get `NOT_READY` rather than a hung connection.
+/// `POST /quote`, `/swap-instructions` and `/swap`. Bound and answering from
+/// the start: requests before the quote reader is attached get `NOT_READY`
+/// rather than a hung connection.
 pub struct ApiServer {
     listener: TcpListener,
     router: Router,
@@ -90,13 +92,17 @@ impl ApiServer {
         health: Health,
         pool: SearchPool,
         quotes: QuoteSlot<F>,
+        blockhashes: BlockhashSlot,
     ) -> Result<Self, ServerError> {
         settings.quote.validate()?;
+        settings.swap.validate()?;
         let pool = Arc::new(pool);
         let api = Api {
             pool: Arc::clone(&pool),
             quotes,
             settings: settings.quote,
+            swap: settings.swap,
+            blockhashes,
             max_clock_stall: settings.ready.max_clock_stall(),
             read_timeout: settings.read_timeout(),
         };

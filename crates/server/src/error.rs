@@ -32,7 +32,7 @@ pub(crate) struct ApiError {
     search: Option<SearchBody>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchBody {
     pub pruned: bool,
@@ -99,6 +99,11 @@ impl ApiError {
         StatusCode::GATEWAY_TIMEOUT,
         "TIMEOUT",
         "the search did not finish in time",
+    );
+    pub(crate) const NO_BLOCKHASH: Self = Self::fixed(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "NO_BLOCKHASH",
+        "no recent blockhash to build the transaction on",
     );
     pub(crate) const INTERNAL: Self = Self::fixed(
         StatusCode::INTERNAL_SERVER_ERROR,

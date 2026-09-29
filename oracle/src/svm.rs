@@ -51,7 +51,10 @@ impl Machine {
     /// Token and Token-2022 run the bytecode mainnet runs.
     /// `rent` is mainnet's Rent sysvar: pool vaults hold only what it asks.
     pub fn new(programs: &Path, rent: &[u8]) -> Self {
-        let mut svm = LiteSVM::new().with_log_bytes_limit(Some(100_000));
+        // A replayed v1 transaction carries the blockhash the server built it on.
+        let mut svm = LiteSVM::new()
+            .with_log_bytes_limit(Some(100_000))
+            .with_blockhash_check(false);
         assert_eq!(
             f64::from_le_bytes(rent[8..16].try_into().expect("rent")),
             1.0,
@@ -112,7 +115,22 @@ impl Machine {
         }
     }
 
+    pub fn add_program(&mut self, id: Pubkey, bytes: &[u8]) {
+        self.svm
+            .add_program(id, bytes)
+            .unwrap_or_else(|e| panic!("loading {id}: {e:?}"));
+    }
+
+    pub fn set_account(&mut self, key: Pubkey, account: Account) {
+        self.svm.set_account(key, account).expect("set account");
+    }
+
     fn send(&mut self, instructions: &[Instruction]) -> Result<(), String> {
+        self.send_measured(instructions).map(|_| ())
+    }
+
+    /// The compute units the transaction consumed.
+    pub fn send_measured(&mut self, instructions: &[Instruction]) -> Result<u64, String> {
         self.svm.expire_blockhash();
         let tx = Transaction::new_signed_with_payer(
             instructions,
@@ -121,7 +139,7 @@ impl Machine {
             self.svm.latest_blockhash(),
         );
         let keys = tx.message.account_keys.clone();
-        self.svm.send_transaction(tx).map(|_| ()).map_err(|failed| {
+        self.svm.send_transaction(tx).map(|meta| meta.compute_units_consumed).map_err(|failed| {
             if let solana_transaction::TransactionError::InsufficientFundsForRent {
                 account_index,
             } = failed.err
@@ -188,6 +206,31 @@ impl Machine {
         Ok(destination)
     }
 
+    /// Signs `unsigned` as the payer, changing nothing else, and sends it.
+    pub fn send_unsigned(&mut self, unsigned: &[u8]) -> Result<u64, String> {
+        let unsigned: solana_transaction::versioned::VersionedTransaction =
+            wincode::deserialize(unsigned).map_err(|e| format!("decoding: {e}"))?;
+        let signed = solana_transaction::versioned::VersionedTransaction::try_new(
+            unsigned.message,
+            &[&self.payer],
+        )
+        .map_err(|e| format!("signing: {e}"))?;
+        self.svm
+            .send_transaction(signed)
+            .map(|meta| meta.compute_units_consumed)
+            .map_err(|failed| {
+                let last = failed
+                    .meta
+                    .logs
+                    .iter()
+                    .rev()
+                    .find(|l| l.contains("Error") || l.contains("failed"))
+                    .cloned()
+                    .unwrap_or_default();
+                format!("{:?} {last}", failed.err)
+            })
+    }
+
     pub fn balance(&self, account: &Pubkey) -> u64 {
         self.svm.get_account(account).map_or(0, |a| {
             u64::from_le_bytes(a.data[TOKEN_AMOUNT].try_into().expect("amount"))
@@ -195,13 +238,16 @@ impl Machine {
     }
 
     pub fn swap(&mut self, swap: Instruction) -> Result<(), String> {
-        let mut budget = vec![2];
-        budget.extend_from_slice(&COMPUTE_UNITS.to_le_bytes());
-        let limit = Instruction {
-            program_id: COMPUTE_BUDGET,
-            accounts: Vec::new(),
-            data: budget,
-        };
-        self.send(&[limit, swap])
+        self.send(&[compute_limit(), swap])
+    }
+}
+
+pub fn compute_limit() -> Instruction {
+    let mut budget = vec![2];
+    budget.extend_from_slice(&COMPUTE_UNITS.to_le_bytes());
+    Instruction {
+        program_id: COMPUTE_BUDGET,
+        accounts: Vec::new(),
+        data: budget,
     }
 }

@@ -196,6 +196,19 @@ impl Topology {
         self.inbound.pairs(mint)
     }
 
+    /// The direction of `pool` that spends `from`.
+    #[must_use]
+    pub fn edge(&self, pool: PoolId, from: MintId) -> Option<EdgeId> {
+        let node = self.pool(pool);
+        if node.mint_a == from {
+            Some(EdgeId::new(pool, true))
+        } else if node.mint_b == from {
+            Some(EdgeId::new(pool, false))
+        } else {
+            None
+        }
+    }
+
     #[must_use]
     pub fn edge_ends(&self, edge: EdgeId) -> (MintId, MintId) {
         let node = self.pool(edge.pool());

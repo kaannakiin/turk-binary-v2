@@ -62,7 +62,7 @@ pipeline = 0              # threads that read the gRPC streams, apply writes and
 search = 0                # serve only: route search threads; 0 = a quarter of the cores
 
 [server]                      # serve only
-api_addr = "127.0.0.1:8080"   # POST /route
+api_addr = "127.0.0.1:8080"   # POST /quote, /swap-instructions, /swap
 ops_addr = "127.0.0.1:9100"   # /health and /ready
 drain_delay_ms = 0            # /ready answers 503 this long before the listeners close
 read_timeout_ms = 5000        # headers (and the API body) must arrive within this
@@ -81,6 +81,12 @@ per_pair = 2                  # pools kept per pair while searching; 0 = all
 max_arrays = 8
 timeout_ms = 2000
 max_queued = 32               # searches waiting for a thread before OVERLOADED
+
+[server.swap]
+default_slippage_bps = 50     # when a request gives no slippageBps
+max_quote_age_slots = 32      # a quoteResponse older than this answers QUOTE_EXPIRED
+blockhash_refresh_ms = 2000   # getLatestBlockhash cadence for /swap
+max_blockhash_age_ms = 20000  # /swap answers NO_BLOCKHASH past this
 
 [grpc.transport]
 http2_keep_alive_interval_ms = 15000

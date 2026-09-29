@@ -1,0 +1,13 @@
+[package]
+name = "router-core"
+description = "Framework-free route logic of the router program: windows, balance deltas, venue adapters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+router-wire.workspace = true
+
+[lints]
+workspace = true

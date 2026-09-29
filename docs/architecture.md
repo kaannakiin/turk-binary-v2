@@ -2,18 +2,19 @@
 
 ## Crates
 
-| Crate              | Job                                                                                          | Talks to the network?      |
-| ------------------ | -------------------------------------------------------------------------------------------- | -------------------------- |
-| `apps/turk-binary` | CLI, config loading, logging                                                                 | No (uses the crates below) |
-| `domain`           | Shared types: `DexKind`, `Slot`, `AccountUpdate`, `AccountFilter`, `ChainClock`              | No                         |
-| `dex`              | What each DEX looks like on chain: program ID, pool filter, and every account a quote needs  | No                         |
-| `rpc`              | Every JSON-RPC call, rate-limited                                                            | Yes, JSON-RPC only         |
-| `grpc`             | Every Yellowstone gRPC stream: subscriptions, reconnects, provider probes                    | Yes, gRPC only             |
-| `market`           | Picks the pools, keeps every account they depend on subscribed and in sync, answers reads    | Through `rpc` and `grpc`   |
-| `quoter`           | Decodes a pool's accounts and computes swap quotes (DEX math and SDK binds); pure            | No                         |
-| `graph`            | Token graph built once from the universe: mints, pools, edges, per-pool activity bits        | No                         |
-| `route`            | Decodes each pool on the pipeline thread that publishes it; quotes against the decoded state | No (reads `market`)        |
-| `server`           | HTTP serving: the quote API, its search thread pool, readiness, graceful shutdown            | Serves HTTP only           |
+| Crate              | Job                                                                                           | Talks to the network?      |
+| ------------------ | --------------------------------------------------------------------------------------------- | -------------------------- |
+| `apps/turk-binary` | CLI, config loading, logging                                                                  | No (uses the crates below) |
+| `domain`           | Shared types: `DexKind`, `Slot`, `AccountUpdate`, `AccountFilter`, `ChainClock`, `SwapWindow` | No                         |
+| `dex`              | What each DEX looks like on chain: program ID, pool filter, and every account a quote needs   | No                         |
+| `rpc`              | Every JSON-RPC call, rate-limited                                                             | Yes, JSON-RPC only         |
+| `grpc`             | Every Yellowstone gRPC stream: subscriptions, reconnects, provider probes                     | Yes, gRPC only             |
+| `market`           | Picks the pools, keeps every account they depend on subscribed and in sync, answers reads     | Through `rpc` and `grpc`   |
+| `quoter`           | Decodes a pool's accounts and computes swap quotes (DEX math and SDK binds); pure             | No                         |
+| `graph`            | Token graph built once from the universe: mints, pools, edges, per-pool activity bits         | No                         |
+| `route`            | Decodes each pool on the pipeline thread that publishes it; quotes against the decoded state  | No (reads `market`)        |
+| `server`           | HTTP serving: the quote API, its search thread pool, readiness, graceful shutdown             | Serves HTTP only           |
+| `tx`               | Turns a route's swap windows into the router instruction plus ATA and WSOL setup/cleanup      | No                         |
 
 Dependencies point one way:
 
@@ -21,7 +22,7 @@ Dependencies point one way:
 turk-binary ──▶ route ──▶ quoter ──▶ dex ──▶ domain
      │            ├─────▶ graph ──▶ market
      │            └─────▶ market
-     ├──────────▶ server ──▶ route, graph, market
+     ├──────────▶ server ──▶ route, graph, market, tx ──▶ domain, router-wire (onchain/)
      ├──────────▶ graph
      └──────────▶ market ──▶ rpc ──┐
                      │  └──▶ grpc ─┤
@@ -214,7 +215,7 @@ A search reads through a `route::SearchSession`, taken from `QuoteReader::sessio
 
 `serve` runs `watch` and answers on two addresses, like the Metis and OKX (Pallas) binaries: the quote API on `server.api_addr` (default `127.0.0.1:8080`) and the probes on `server.ops_addr` (default `127.0.0.1:9100`), so probes and metrics stay off the API port. Both are bound before the universe is resolved: a taken port fails at once, and requests during the long startup get an answer (`503`) instead of a hung connection.
 
-It prices routes and builds no transactions. Instructions come later, from the same search inside the same request (the Pallas shape): a client never hands back a route for the server to trust or revalidate.
+It prices routes (`/quote`) and builds the instructions and the unsigned v1 transaction that run a route through our router program (`/swap-instructions`, `/swap`). It never signs or sends: the user's wallet signs. A swap's route comes either from a search inside the same request (`quoteRequest`, the Pallas shape) or from a `/quote` answer the client sends back (`quoteResponse`, the Metis shape), which is trusted for its amounts and threshold, since the router enforces the threshold on chain, and checked only for being buildable.
 
 ```text
 HTTP (axum, `app` runtime)            search threads (`search-{i}`)
@@ -223,7 +224,7 @@ HTTP (axum, `app` runtime)            search threads (`search-{i}`)
        └───────────────┴── wait ≤ timeout_ms ─▶ 504 TIMEOUT
 ```
 
-### `POST /route`
+### `POST /quote`
 
 ```json
 {
@@ -242,6 +243,7 @@ HTTP (axum, `app` runtime)            search threads (`search-{i}`)
 | `maxHops`               | no       | Pools a route may pass, `quote.default_max_hops` when absent, at most `quote.max_hops`.                                  |
 | `dexes`                 | no       | Only pools of these DEXes (config names such as `raydium_cpmm`). Empty: every DEX.                                       |
 | `excludeDexes`          | no       | Never pools of these DEXes.                                                                                              |
+| `slippageBps`           | no       | Slippage for `otherAmountThreshold`, in basis points, at most 10000; `swap.default_slippage_bps` when absent.            |
 
 Unknown fields are refused, so a client sending `slippagePercent` does not believe it was applied. The answer:
 
@@ -251,6 +253,8 @@ Unknown fields are refused, so a client sending `slippagePercent` does not belie
   "toTokenAddress": "EPjF…",
   "fromTokenAmount": "1000000000",
   "toTokenAmount": "33540506",
+  "otherAmountThreshold": "33372803",
+  "slippageBps": 50,
   "contextSlot": 450370213,
   "crossStream": false,
   "search": { "pruned": false, "exhausted": false, "quotes": 7 },
@@ -269,6 +273,7 @@ Unknown fields are refused, so a client sending `slippagePercent` does not belie
 
 - **Amounts** are the winning path priced again (`requote`) in a new session: the newest decoded state and Clock. The search compared paths on pins taken at different moments; the answer is not one of those. That session then `verify`s the path, since a pool pinned early can change or become unusable before the last is quoted. This catches what changed while the answer was prepared; it is not one chain snapshot and promises nothing about execution.
 - **Freshness** is checked when a search thread takes the request, so a feed that stalled while the request waited is caught too. It is the whole-feed signal: a stalled Clock means the streams stopped, however ready their pools still look. Traffic policy (the pool share, draining) stays with `/ready` and is not applied per quote.
+- **`otherAmountThreshold`** is `toTokenAmount` less `slippageBps`, rounded down (`tx::min_out`, u128): the least the router will accept on chain.
 - **`contextSlot`** is the slot of the Clock that requote used. It says when the price held, not that it will hold when a transaction lands.
 - **`search`** is the search's quality, apart from freshness: `pruned` means pools were dropped per pair so a better path may exist, `exhausted` that the quote budget ran out first. A fresh price can come from an approximate search, and an exhaustive one can be stale by the time it is read.
 - **`crossStream`** means some account a swap writes rides the shared stream, so the state priced may hold part of a transaction.
@@ -287,6 +292,77 @@ Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 | 503    | `ROUTE_CHANGED`   | A pool of the winning path failed its requote, or `verify` after it found one unusable or published again. Asking again searches again. |
 | 504    | `TIMEOUT`         | The search did not finish within `quote.timeout_ms`, queue time included.                                                               |
 | 500    | `INTERNAL`        | The search panicked. The thread survives.                                                                                               |
+
+### `POST /swap-instructions` and `POST /swap`
+
+```json
+{
+  "userPublicKey": "…",
+  "quoteRequest": {
+    "fromTokenAddress": "So111…",
+    "toTokenAddress": "EPjF…",
+    "amount": "1000000000"
+  }
+}
+```
+
+| Field                 | Required    | Meaning                                                                                           |
+| --------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| `userPublicKey`       | yes         | The wallet that signs, pays the fee and owns the token accounts.                                  |
+| `quoteRequest`        | one of them | A `/quote` body: the route is searched in this request, over the venues the router supports only. |
+| `quoteResponse`       | one of them | A `/quote` answer sent back unchanged: no search, no requote.                                     |
+| `wrapAndUnwrapSol`    | no          | Default `true`: a SOL input is wrapped into the user's WSOL account first and unwrapped after.    |
+| `priorityFeeLamports` | no          | The v1 transaction's priority fee, total lamports (not per compute unit). Default 0.              |
+
+A `quoteResponse`'s `search` and `crossStream` are echoed back as sent, or left out when it has none: nothing is searched or priced again to know them. A `quoteRequest` is searched over the pools its `dexes` and `excludeDexes` admit **and** the router can swap through; naming only venues the router lacks finds `NO_ROUTE`, never a route through another venue.
+
+A `quoteResponse` is refused with `QUOTE_EXPIRED` when its `contextSlot` is more than `swap.max_quote_age_slots` behind the market's Clock, and with `QUOTE_MISMATCH` when a leg's pool is not watched or not of the named venue, a leg does not spend what the last one paid, the legs do not add up to the route, or `otherAmountThreshold` is zero or above `toTokenAmount`. The swap accounts always come from the market's own pool state, never from the client.
+
+`/swap-instructions` answers the route and its instructions, for the client to put in its own transaction:
+
+```json
+{
+  "quote": { "…": "as /quote" },
+  "setupInstructions": [
+    {
+      "programId": "…",
+      "accounts": [{ "pubkey": "…", "isSigner": true, "isWritable": true }],
+      "data": "<base64>"
+    }
+  ],
+  "swapInstruction": {
+    "programId": "TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3",
+    "accounts": [],
+    "data": "<base64>"
+  },
+  "cleanupInstructions": [],
+  "computeUnitLimit": 210000,
+  "loadedAccountsDataSizeLimit": 2031616,
+  "priorityFeeLamports": 0
+}
+```
+
+- **Setup** creates every token account the route pays into (`CreateIdempotent`) and, for a SOL input, wraps it. **Cleanup** closes the WSOL account.
+- **The swap** is the router's `route` instruction ([router.md](router.md)): the router checks every hop's real balance change and that the route paid at least `otherAmountThreshold`.
+- **`computeUnitLimit`** is `tx::compute_unit_limit`: per-hop budgets above what `just router-replay` measured, plus a flat allowance for setup. There are no Compute Budget instructions: a v1 transaction carries the limit and the priority fee in its config (AGENTS.md → Transaction format).
+- **`loadedAccountsDataSizeLimit`** must be set too: a v1 transaction that leaves it unset may load 0 bytes and fails with `MaxLoadedAccountsDataSizeExceeded` before any instruction runs. `tx` sizes it from the programs and accounts of the transaction (`crates/tx/src/budget.rs`, see [open-work.md](open-work.md)); a program without a known size is refused.
+- **A cycle** (the route ends on the mint it spends) is built only when `otherAmountThreshold` exceeds the input, the router's own precondition; otherwise `UNPROFITABLE_CYCLE`. A `quoteResponse`'s threshold is never raised to make one pass.
+- A route must fit a v1 transaction: at most 64 accounts (`TOO_MANY_ACCOUNTS`), 4096 bytes (`TRANSACTION_TOO_LARGE`) and 64 MiB of loaded account data (`TOO_MUCH_ACCOUNT_DATA`).
+
+`/swap` answers the same route as one unsigned v1 transaction on the newest blockhash, `"transaction": "<base64>"` with its `lastValidBlockHeight`; every signature slot is zero for the wallet to fill. The blockhash comes from `getLatestBlockhash` at `confirmed`, refreshed every `swap.blockhash_refresh_ms`; `/swap` answers `NO_BLOCKHASH` while none newer than `swap.max_blockhash_age_ms` is known.
+
+| Status | `code`                  | When                                                                              |
+| ------ | ----------------------- | --------------------------------------------------------------------------------- |
+| 400    | `INVALID_REQUEST`       | Neither or both of `quoteRequest` and `quoteResponse`, or a malformed field.      |
+| 422    | `QUOTE_EXPIRED`         | The `quoteResponse` is older than `swap.max_quote_age_slots`.                     |
+| 422    | `QUOTE_MISMATCH`        | The `quoteResponse` is not a route this market can build.                         |
+| 422    | `CANNOT_SWAP`           | A pool of the route has no swap accounts (not ready, or no window for its venue). |
+| 422    | `UNSUPPORTED_VENUE`     | A leg's venue has no router adapter.                                              |
+| 422    | `TOO_MANY_ACCOUNTS`     | The route needs more than 64 accounts.                                            |
+| 422    | `TRANSACTION_TOO_LARGE` | The transaction is over 4096 bytes.                                               |
+| 503    | `NO_BLOCKHASH`          | `/swap` only: no recent blockhash yet.                                            |
+
+The other codes are `/quote`'s.
 
 ### Search threads
 
@@ -371,3 +447,4 @@ Designed for a free-tier key (about 10 requests per second, `getProgramAccounts`
 - Seeds are one `getMultipleAccounts` per 100 keys. A Whirlpool with `tick_spacing = 1` has about 10,000 possible tick arrays, about 100 reads.
 - After a gap only that stream's keys are read again.
 - In steady state only the audit reads: one request per `audit_interval_ms`.
+- `serve` adds one `getLatestBlockhash` per `swap.blockhash_refresh_ms` (default 2 s).

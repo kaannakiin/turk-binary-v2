@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["apps/*", "crates/*"]
-exclude = ["oracle"]
+exclude = ["oracle", "onchain"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,9 @@ quoter = { path = "crates/quoter" }
 route = { path = "crates/route" }
 rpc = { path = "crates/rpc" }
 server = { path = "crates/server" }
+tx = { path = "crates/tx" }
+# The router program's wire codecs, shared with onchain/ (no dependencies).
+router-wire = { path = "onchain/crates/router-wire" }
 
 ahash = "0.8.12"
 anyhow = "1.0.104"
@@ -41,12 +44,18 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 solana-account-decoder-client-types = "=4.3.0"
 solana-commitment-config = "3.1.1"
+solana-hash = "4.7.0"
+solana-instruction = "3.5.1"
+solana-message = { version = "4.6.0", features = ["wincode"] }
 solana-pubkey = "4.4.0"
+solana-signature = "3.6.0"
+solana-transaction = { version = "4.3.0", features = ["wincode"] }
 solana-rpc-client = "=4.3.0"
 solana-rpc-client-api = "=4.3.0"
 spl-token-2022-interface = "3.1.2"
 thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+wincode = "0.6.1"
 toml = "1.1.6"
 tower = { version = "0.5.3", default-features = false }
 tower-http = { version = "0.6.11", features = ["request-id", "timeout", "trace"] }
@@ -90,6 +99,7 @@ unwrap_used = "warn"
 
 [profile.dev]
 debug = "line-tables-only"
+incremental = false
 
 [profile.dev.package."*"]
 opt-level = 1

@@ -15,7 +15,7 @@ ahash = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smallvec = "1"
-solana-instruction = "~3.4.0"
+solana-instruction = "~3.5.0"
 solana-pubkey = "3"
 thiserror = "2"
 
@@ -30,7 +30,8 @@ publish = false
 arb-swap-ix = { path = "arb-swap-ix" }
 base64 = "0.22"
 flate2 = "1"
-litesvm = "0.16.0"
+litesvm = "0.17.0"
+router-wire = { path = "../onchain/crates/router-wire" }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
@@ -42,11 +43,13 @@ solana-message = "4"
 solana-pubkey.workspace = true
 solana-rent = "4"
 solana-signer = "3"
-solana-transaction = "4"
+solana-transaction = { version = "4", features = ["wincode"] }
+wincode = "0.6.1"
 ureq = { version = "3", features = ["json"] }
 
 [profile.dev]
 debug = "line-tables-only"
+incremental = false
 
 [profile.dev.package."*"]
 opt-level = 1

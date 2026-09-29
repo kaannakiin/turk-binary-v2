@@ -1,6 +1,6 @@
 use domain::Pubkey;
 use market::Reason;
-use quoter::{DecodeError, QuoteError};
+use quoter::{DecodeError, QuoteError, WindowError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RouteError {
@@ -18,4 +18,6 @@ pub enum RouteError {
     QuotePanicked,
     #[error(transparent)]
     Quote(#[from] QuoteError),
+    #[error(transparent)]
+    Window(#[from] WindowError),
 }
