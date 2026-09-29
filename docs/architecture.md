@@ -217,6 +217,8 @@ A search reads through a `route::SearchSession`, taken from `QuoteReader::sessio
 
 It prices routes (`/quote`) and builds the instructions and the unsigned v1 transaction that run a route through our router program (`/swap-instructions`, `/swap`). It never signs or sends: the user's wallet signs. A swap's route comes either from a search inside the same request (`quoteRequest`, the Pallas shape) or from a `/quote` answer the client sends back (`quoteResponse`, the Metis shape), which is trusted for its amounts and threshold, since the router enforces the threshold on chain, and checked only for being buildable.
 
+The router currently builds Raydium CPMM and AMM v4 hops. AMM v4 uses `SwapBaseInV2` and SPL Token accounts; its Token-2022 pools are refused. CPMM retains its Token-2022 transfer-fee handling. Both HTTP swap endpoints use the same route planner and v1 transaction budgets.
+
 ```text
 HTTP (axum, `app` runtime)            search threads (`search-{i}`)
   parse + validate ─▶ admit ──────────▶ open SearchSession ─▶ search_widening ─▶ requote ─▶ reply
@@ -343,6 +345,7 @@ A `quoteResponse` is refused with `QUOTE_EXPIRED` when its `contextSlot` is more
 ```
 
 - **Setup** creates every token account the route pays into (`CreateIdempotent`) and, for a SOL input, wraps it. **Cleanup** closes the WSOL account: all of its balance comes back as SOL, including WSOL the user held before the swap.
+- **The user's own token accounts are not checked, by design.** How the user configured them is theirs: a source with `CpiGuard` locked, a destination requiring memos or refusing non-confidential credits, or a frozen account makes the transaction fail on chain, and neither the server nor the router reads them first. OKX v3 and Metis do not either (their IDLs have no such error). Pool-side states, which the market streams, are refused at quote time ([dexes.md](dexes.md) → Quotes).
 - **The swap** is the router's `route` instruction ([router.md](router.md)): the router checks every hop's real balance change and that the route paid at least `otherAmountThreshold`.
 - **`computeUnitLimit`** is `tx::compute_unit_limit`: per-hop budgets above what `just router-replay` measured, plus a flat allowance for setup. There are no Compute Budget instructions: a v1 transaction carries the limit and the priority fee in its config (AGENTS.md → Transaction format).
 - **`loadedAccountsDataSizeLimit`** must be set too: a v1 transaction that leaves it unset may load 0 bytes and fails with `MaxLoadedAccountsDataSizeExceeded` before any instruction runs. `tx` sizes it from the programs and accounts of the transaction (`crates/tx/src/budget.rs`, see [open-work.md](open-work.md)); a program without a known size is refused.

@@ -104,6 +104,14 @@ Verified: 2026-09-24. Source code or IDL compared against mainnet `getAccountInf
 
 Our own router program (`onchain/`, [docs/router.md](docs/router.md)) is `TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3`, not deployed. Its keypair is the operator's; agents never read it. The keypair `cargo build-sbf` writes to `onchain/target/deploy/` is not the program's key and is never used.
 
+### Reference routers
+
+Verified: 2026-09-29, mainnet `getAccountInfo` and each program's on-chain Anchor IDL.
+
+- **"OKX" means OKX DEX Router v3, `proVF4pMXVaYqmy4NjniPh4pqKNfMmsihgd4wdkCX3u`**: the program Pallas ([okx/dex-solana-binary](https://github.com/okx/dex-solana-binary)) builds swaps for. Closed source; its IDL (`OKX: DEX Router`) is on chain at `8wXL8gQduvMr6pmzhJnbUqsnnegJnmnPiZVPzehLjoeT`.
+- [okxlabs/Web3-DEX-Router-Solana-V1](https://github.com/okxlabs/Web3-DEX-Router-Solana-V1) is OKX's **retired v1**, `6m2CDdhRgxpH4WjvdzxAYbGxwdGUz5MziiL5jek2kBma`: its ProgramData is closed and it last ran at slot 436855038. Its source shows method, never what OKX runs today.
+- **"Metis" means Jupiter's router `JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4`**, closed source; IDL on chain at `C88XWfp26heEmDkmfSzeXP7Fd7GQJ2j9dDTUsyiZbUTa`.
+
 Raydium repos have separate devnet IDs behind `#[cfg(feature = "devnet")]`. The mainnet ID is the one in the `not(feature = "devnet")` branch.
 
 All programs are upgradeable: layouts and account lists can change. This table is a starting point, not an authority.
