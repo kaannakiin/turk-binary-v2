@@ -115,10 +115,11 @@ Verified: 2026-09-28. The bot builds **v1** transactions; do not design around a
 - v1 (prefix `0x81`) is live on mainnet: `getTransaction` on CPMM swaps at slot ~451386322 returned version 1, and requests without `maxSupportedTransactionVersion: 1` fail with `-32015`.
 - v1 has no address lookup tables: every address is inline, at most 64 per transaction (duplicates rejected), in a 4096-byte envelope. SIMD-0596 (draft) would raise the limit to 96.
 - v1 has no Compute Budget instructions: compute unit limit, priority fee (total lamports, not micro-lamports per CU), heap size and loaded-data limit are `config` fields of the message.
+- An unset v1 config field is **0**, not the legacy default: without `compute_unit_limit` and `loaded_accounts_data_size_limit` the transaction fails before running (`MaxLoadedAccountsDataSizeExceeded`). Both are always set; the requested size is what the cost model charges (SIMD-0553, 32 KiB pages), so it is sized, not maxed.
 - Legacy and v0 still work and v0 still supports lookup tables, but they are slated for retirement; nothing new targets them.
 - So a route's account count is a hard budget: the router's fixed accounts plus every hop's window, plus the setup and cleanup instructions, must fit in 64.
 
-Sources: [SIMD-0385](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0385-transaction-v1.md) (format), [SIMD-0296](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0296-larger-transactions.md) (4096 bytes), [SIMD-0596](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0596-increase-txv1-account-lock-limit-to-96.md) (96 accounts, draft), <https://solana.com/upgrades/larger-transaction-sizes>. Recheck them before changing transaction assembly.
+Sources: <https://solana.com/docs/core/transactions/transaction-pipeline> (v1 limits default to zero), [SIMD-0385](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0385-transaction-v1.md) (format), [SIMD-0296](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0296-larger-transactions.md) (4096 bytes), [SIMD-0596](https://github.com/solana-foundation/solana-improvement-documents/blob/main/proposals/0596-increase-txv1-account-lock-limit-to-96.md) (96 accounts, draft), <https://solana.com/upgrades/larger-transaction-sizes>. Recheck them before changing transaction assembly.
 
 ## Skills
 

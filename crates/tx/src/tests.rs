@@ -6,7 +6,7 @@ use router_wire::RouterInstruction;
 use solana_instruction::AccountMeta;
 
 use crate::{
-    Fees, MAX_ACCOUNTS, MAX_TRANSACTION_BYTES, ROUTER_PROGRAM, SwapRequest, TxError, build,
+    MAX_ACCOUNTS, MAX_TRANSACTION_BYTES, ROUTER_PROGRAM, SwapRequest, TxError, build,
     router_config, unsigned_v1,
 };
 
@@ -289,12 +289,7 @@ fn routes_the_router_cannot_run_are_refused() {
 fn a_swap_compiles_to_an_unsigned_v1_transaction() {
     let hops = [mainnet_hop()];
     let built = build(&request(&hops)).unwrap();
-    let fees = Fees {
-        compute_unit_limit: 300_000,
-        priority_fee_lamports: 12_345,
-    };
-
-    let bytes = unsigned_v1(&built, &USER, [9; 32], fees).unwrap();
+    let bytes = unsigned_v1(&built, &USER, [9; 32], 12_345).unwrap();
 
     assert_eq!(bytes[0], 0x81);
     assert!(bytes.len() <= MAX_TRANSACTION_BYTES);
@@ -306,7 +301,14 @@ fn a_swap_compiles_to_an_unsigned_v1_transaction() {
     };
     assert_eq!(message.header.num_required_signatures, 1);
     assert_eq!(message.account_keys[0], USER);
-    assert_eq!(message.config.compute_unit_limit, Some(300_000));
+    assert_eq!(
+        message.config.compute_unit_limit,
+        Some(built.limits.compute_units)
+    );
+    assert_eq!(
+        message.config.loaded_accounts_data_size_limit,
+        Some(built.limits.loaded_accounts_data_bytes)
+    );
     assert_eq!(message.config.priority_fee, Some(12_345));
     assert_eq!(message.instructions.len(), 2);
 }
@@ -344,11 +346,15 @@ struct Replayed {
     paid: Option<String>,
     compute_units: Option<u32>,
     error: Option<String>,
+    v1_paid: Option<String>,
+    v1_compute_units: Option<u32>,
+    v1_error: Option<String>,
 }
 
 // src: `just router-replay` (oracle/src/router.rs): every swap of the CPMM program replay corpus,
-// built by `/swap-instructions` and run through the router on the same accounts, Clock and
-// mainnet bytecode.
+// run through the router on the same accounts, Clock and mainnet bytecode twice: as the
+// instructions `/swap-instructions` returns, and as the v1 transaction `/swap` returns, only
+// signed.
 fn replay() -> Replay {
     serde_json::from_str(include_str!("tests/fixtures/router_replay.json")).unwrap()
 }
@@ -358,13 +364,18 @@ fn the_router_pays_exactly_what_the_venue_paid_on_every_replayed_swap() {
     let replay = replay();
     assert!(!replay.cases.is_empty());
     for case in replay.cases {
-        assert_eq!(case.error, None, "{} {}", case.pool, case.amount_in);
+        let name = format!("{} {}", case.pool, case.amount_in);
+        assert_eq!(case.error, None, "{name}");
         assert_eq!(
             case.paid.as_deref(),
             Some(case.expected_out.as_str()),
-            "{} {}",
-            case.pool,
-            case.amount_in
+            "{name}"
+        );
+        assert_eq!(case.v1_error, None, "{name}");
+        assert_eq!(
+            case.v1_paid.as_deref(),
+            Some(case.expected_out.as_str()),
+            "{name}"
         );
     }
 }
@@ -374,8 +385,79 @@ fn the_compute_budget_covers_every_replayed_route() {
     let used = replay()
         .cases
         .iter()
-        .filter_map(|case| case.compute_units)
+        .flat_map(|case| [case.compute_units, case.v1_compute_units])
+        .flatten()
         .max()
         .unwrap();
-    assert!(used < crate::compute_unit_limit(&[mainnet_hop()]), "{used}");
+    let hops = [mainnet_hop()];
+    let limit = build(&request(&hops)).unwrap().limits.compute_units;
+    assert!(used < limit, "{used} of {limit}");
+}
+
+// src: SIMD-0186 (each loaded account counts its data plus 64 bytes, and a LoaderV3 program
+// its programdata too); sizes from mainnet getMultipleAccounts, dataSlice 0, slot 451401804,
+// for every account the mainnet route loads. The output account does not exist before the
+// transaction, so it loads nothing; the router's own sizes are its current build.
+#[test]
+fn the_loaded_data_limit_covers_what_the_route_loads_on_mainnet() {
+    let loaded: [u64; 20] = [
+        0,              // user
+        182,            // user input account
+        0,              // user output account, created by the setup
+        36,             // router config
+        36,             // router program
+        46_152 + 45,    // router programdata
+        36,             // CPMM program
+        793_869,        // CPMM programdata
+        0,              // CPMM authority
+        236,            // amm config
+        637,            // pool
+        178,            // input vault
+        165,            // output vault
+        36 + 1_382_061, // Token-2022 program and programdata
+        36 + 108_645,   // Token program and programdata
+        511,            // input mint
+        82,             // output mint
+        4_075,          // observation
+        105_032,        // associated token program
+        21,             // system program
+    ];
+    let accounts = 20 + 3;
+    let exact: u64 = loaded.iter().sum::<u64>() + accounts * 64;
+    let hops = [mainnet_hop()];
+
+    let limit = u64::from(
+        build(&request(&hops))
+            .unwrap()
+            .limits
+            .loaded_accounts_data_bytes,
+    );
+
+    assert!(limit >= exact, "{limit} < {exact}");
+    assert_eq!(limit % (32 * 1024), 0);
+}
+
+// src: onchain/crates/router-core/src/route_checks.rs (check_route_args: a circular route
+// needs min_out > in_amount).
+#[test]
+fn a_cycle_is_built_only_when_its_threshold_exceeds_its_input() {
+    let there = mainnet_hop();
+    let back = cpmm_window(there.destination, there.source);
+    let hops = [there, back];
+    let cycle = |min_out| SwapRequest {
+        amount_in: 1_000,
+        min_out,
+        ..request(&hops)
+    };
+    for min_out in [999, 1_000] {
+        assert_eq!(
+            build(&cycle(min_out)),
+            Err(TxError::UnprofitableCycle {
+                amount_in: 1_000,
+                min_out
+            }),
+            "{min_out}"
+        );
+    }
+    assert!(build(&cycle(1_001)).is_ok());
 }

@@ -64,20 +64,19 @@ pub(crate) struct DexFilter {
     pub except: Vec<DexKind>,
 }
 
-impl DexFilter {
-    /// Keeps only the venues the router can swap through.
-    pub(crate) fn swappable(mut self) -> Self {
-        if self.only.is_empty() {
-            self.only = DexKind::ALL.to_vec();
-        }
-        self.only.retain(|&dex| tx::supports(dex));
-        self
-    }
-}
-
 impl Filter for DexFilter {
     fn pool(&self, pool: &PoolNode) -> bool {
         (self.only.is_empty() || self.only.contains(&pool.dex)) && !self.except.contains(&pool.dex)
+    }
+}
+
+/// The request's filter and the router's venues both: a request naming only
+/// venues the router lacks admits no pool, never every pool.
+struct Swappable<'a>(&'a DexFilter);
+
+impl Filter for Swappable<'_> {
+    fn pool(&self, pool: &PoolNode) -> bool {
+        self.0.pool(pool) && tx::supports(pool.dex)
     }
 }
 
@@ -95,8 +94,10 @@ pub(crate) struct Routed {
     pub amount_in: u64,
     pub amount_out: u64,
     pub slot: Slot,
-    pub cross_stream: bool,
-    pub search: SearchQuality,
+    /// `None` on a route the client sent back without them: nothing was
+    /// searched or priced here to know.
+    pub cross_stream: Option<bool>,
+    pub search: Option<SearchQuality>,
     pub legs: Vec<RoutedLeg>,
 }
 
@@ -172,24 +173,24 @@ impl<F: PoolFeed> QuoteService<F> {
     /// Runs on a search thread. The search's session opens here, not when
     /// the request arrived, so a queued request pins no state while it waits.
     pub(crate) fn route(&self, request: &RouteRequest) -> Result<Routed, ServiceError> {
-        self.price(request, false).map(|priced| priced.routed)
+        self.price(request, &request.dexes, false)
+            .map(|priced| priced.routed)
     }
 
-    /// Searches only the venues the router supports, and returns the swap
-    /// accounts of the pools as the route was priced on them.
     pub(crate) fn route_to_swap(&self, request: &RouteRequest) -> Result<Priced, ServiceError> {
-        let request = RouteRequest {
-            dexes: request.dexes.clone().swappable(),
-            ..request.clone()
-        };
-        self.price(&request, true)
+        self.price(request, &Swappable(&request.dexes), true)
     }
 
-    fn price(&self, request: &RouteRequest, windows: bool) -> Result<Priced, ServiceError> {
+    fn price(
+        &self,
+        request: &RouteRequest,
+        filter: &impl Filter,
+        windows: bool,
+    ) -> Result<Priced, ServiceError> {
         self.fresh()?;
         let mut session = self.quotes.session().map_err(|_| ServiceError::NotReady)?;
         let query = self.query(session.topology(), request)?;
-        let found = session.search_widening(&query, &request.dexes);
+        let found = session.search_widening(&query, filter);
         let search = SearchQuality {
             pruned: found.pruned,
             exhausted: found.exhausted,
@@ -244,8 +245,8 @@ impl<F: PoolFeed> QuoteService<F> {
             amount_in: request.amount.get(),
             amount_out: path.amount_out(),
             slot: now.clock().slot,
-            cross_stream: path.cross_stream(),
-            search,
+            cross_stream: Some(path.cross_stream()),
+            search: Some(search),
             legs,
         };
         Ok(Priced { routed, windows })

@@ -18,7 +18,9 @@ just test-onchain    # nextest over the onchain workspace
 
 **Program ID:** `TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3`, not deployed.
 
-**Status:** one venue adapter, Raydium CPMM (kind 2). `just router-replay` runs every swap of the CPMM program replay corpus through the router, built by `/swap-instructions`, on the same accounts, Clock and mainnet bytecode: all 126 pay exactly what the venue paid alone, in at most 42,293 compute units with their setup (`crates/tx/src/tests/fixtures/router_replay.json`). Not deployed; nothing here has run on mainnet.
+**Status:** one venue adapter, Raydium CPMM (kind 2). `just router-replay` runs every swap of the CPMM program replay corpus through the router, built by `/swap-instructions`, on the same accounts, Clock and mainnet bytecode: twice, as `/swap-instructions`' instructions and as `/swap`'s unsigned v1 transaction, only signed. All 126 pay exactly what the venue paid alone both ways, in at most 42,293 compute units with their setup (`crates/tx/src/tests/fixtures/router_replay.json`). What the replay does not cover yet is in [open-work.md](open-work.md).
+
+**Deploy:** give the program at most 256 KiB of space (`--max-len`); `tx` budgets the router's loaded data at that size. Not deployed; nothing here has run on mainnet.
 
 ## How a route runs
 

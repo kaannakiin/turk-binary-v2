@@ -298,7 +298,11 @@ Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 ```json
 {
   "userPublicKey": "…",
-  "quoteRequest": { "fromTokenAddress": "So111…", "toTokenAddress": "EPjF…", "amount": "1000000000" }
+  "quoteRequest": {
+    "fromTokenAddress": "So111…",
+    "toTokenAddress": "EPjF…",
+    "amount": "1000000000"
+  }
 }
 ```
 
@@ -310,6 +314,8 @@ Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 | `wrapAndUnwrapSol`    | no          | Default `true`: a SOL input is wrapped into the user's WSOL account first and unwrapped after.    |
 | `priorityFeeLamports` | no          | The v1 transaction's priority fee, total lamports (not per compute unit). Default 0.              |
 
+A `quoteResponse`'s `search` and `crossStream` are echoed back as sent, or left out when it has none: nothing is searched or priced again to know them. A `quoteRequest` is searched over the pools its `dexes` and `excludeDexes` admit **and** the router can swap through; naming only venues the router lacks finds `NO_ROUTE`, never a route through another venue.
+
 A `quoteResponse` is refused with `QUOTE_EXPIRED` when its `contextSlot` is more than `swap.max_quote_age_slots` behind the market's Clock, and with `QUOTE_MISMATCH` when a leg's pool is not watched or not of the named venue, a leg does not spend what the last one paid, the legs do not add up to the route, or `otherAmountThreshold` is zero or above `toTokenAmount`. The swap accounts always come from the market's own pool state, never from the client.
 
 `/swap-instructions` answers the route and its instructions, for the client to put in its own transaction:
@@ -317,10 +323,21 @@ A `quoteResponse` is refused with `QUOTE_EXPIRED` when its `contextSlot` is more
 ```json
 {
   "quote": { "…": "as /quote" },
-  "setupInstructions": [{ "programId": "…", "accounts": [{ "pubkey": "…", "isSigner": true, "isWritable": true }], "data": "<base64>" }],
-  "swapInstruction": { "programId": "TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3", "accounts": [], "data": "<base64>" },
+  "setupInstructions": [
+    {
+      "programId": "…",
+      "accounts": [{ "pubkey": "…", "isSigner": true, "isWritable": true }],
+      "data": "<base64>"
+    }
+  ],
+  "swapInstruction": {
+    "programId": "TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3",
+    "accounts": [],
+    "data": "<base64>"
+  },
   "cleanupInstructions": [],
   "computeUnitLimit": 210000,
+  "loadedAccountsDataSizeLimit": 2031616,
   "priorityFeeLamports": 0
 }
 ```
@@ -328,7 +345,9 @@ A `quoteResponse` is refused with `QUOTE_EXPIRED` when its `contextSlot` is more
 - **Setup** creates every token account the route pays into (`CreateIdempotent`) and, for a SOL input, wraps it. **Cleanup** closes the WSOL account.
 - **The swap** is the router's `route` instruction ([router.md](router.md)): the router checks every hop's real balance change and that the route paid at least `otherAmountThreshold`.
 - **`computeUnitLimit`** is `tx::compute_unit_limit`: per-hop budgets above what `just router-replay` measured, plus a flat allowance for setup. There are no Compute Budget instructions: a v1 transaction carries the limit and the priority fee in its config (AGENTS.md → Transaction format).
-- A route must fit a v1 transaction: at most 64 accounts (`TOO_MANY_ACCOUNTS`) and 4096 bytes (`TRANSACTION_TOO_LARGE`).
+- **`loadedAccountsDataSizeLimit`** must be set too: a v1 transaction that leaves it unset may load 0 bytes and fails with `MaxLoadedAccountsDataSizeExceeded` before any instruction runs. `tx` sizes it from the programs and accounts of the transaction (`crates/tx/src/budget.rs`, see [open-work.md](open-work.md)); a program without a known size is refused.
+- **A cycle** (the route ends on the mint it spends) is built only when `otherAmountThreshold` exceeds the input, the router's own precondition; otherwise `UNPROFITABLE_CYCLE`. A `quoteResponse`'s threshold is never raised to make one pass.
+- A route must fit a v1 transaction: at most 64 accounts (`TOO_MANY_ACCOUNTS`), 4096 bytes (`TRANSACTION_TOO_LARGE`) and 64 MiB of loaded account data (`TOO_MUCH_ACCOUNT_DATA`).
 
 `/swap` answers the same route as one unsigned v1 transaction on the newest blockhash, `"transaction": "<base64>"` with its `lastValidBlockHeight`; every signature slot is zero for the wallet to fill. The blockhash comes from `getLatestBlockhash` at `confirmed`, refreshed every `swap.blockhash_refresh_ms`; `/swap` answers `NO_BLOCKHASH` while none newer than `swap.max_blockhash_age_ms` is known.
 

@@ -6,6 +6,7 @@ use router_wire::{Hop, MAX_HOPS, Route, RouterInstruction};
 use solana_instruction::{AccountMeta, Instruction};
 
 use crate::TxError;
+use crate::budget::{Limits, limits};
 use crate::router::{ROUTER_PROGRAM, hop_kind, router_config};
 use crate::token::{
     associated_token_address, close_account, create_idempotent, sync_native, transfer_lamports,
@@ -28,17 +29,20 @@ pub struct SwapInstructions {
     pub setup: Vec<Instruction>,
     pub swap: Instruction,
     pub cleanup: Vec<Instruction>,
+    pub limits: Limits,
 }
 
 impl SwapInstructions {
-    fn account_count(&self, fee_payer: &Pubkey) -> usize {
-        let mut keys: BTreeSet<&Pubkey> = BTreeSet::from([fee_payer]);
-        for instruction in self
-            .setup
+    pub(crate) fn all(&self) -> impl Iterator<Item = &Instruction> {
+        self.setup
             .iter()
             .chain(std::iter::once(&self.swap))
             .chain(&self.cleanup)
-        {
+    }
+
+    fn account_count(&self, fee_payer: &Pubkey) -> usize {
+        let mut keys: BTreeSet<&Pubkey> = BTreeSet::from([fee_payer]);
+        for instruction in self.all() {
             keys.insert(&instruction.program_id);
             keys.extend(instruction.accounts.iter().map(|meta| &meta.pubkey));
         }
@@ -48,6 +52,15 @@ impl SwapInstructions {
 
 pub fn build(request: &SwapRequest) -> Result<SwapInstructions, TxError> {
     let (first, last) = endpoints(request.hops)?;
+    // The router refuses a cycle whose threshold does not exceed its input before any swap
+    // runs (router-core `check_route_args`); building one would hand out a transaction that
+    // can only fail.
+    if first.source == last.destination && request.min_out <= request.amount_in {
+        return Err(TxError::UnprofitableCycle {
+            amount_in: request.amount_in,
+            min_out: request.min_out,
+        });
+    }
     let user = &request.user;
     let wraps_in = request.wrap_sol && first.source.mint == NATIVE_MINT;
     let wraps_out = request.wrap_sol && last.destination.mint == NATIVE_MINT;
@@ -86,10 +99,17 @@ pub fn build(request: &SwapRequest) -> Result<SwapInstructions, TxError> {
         .map(|wsol| close_account(wsol, user, user))
         .collect();
 
+    let swap = route_instruction(request, first, last)?;
+    let limits = limits(
+        request.hops,
+        setup.iter().chain(std::iter::once(&swap)).chain(&cleanup),
+        user,
+    )?;
     let instructions = SwapInstructions {
         setup,
-        swap: route_instruction(request, first, last)?,
+        swap,
         cleanup,
+        limits,
     };
     let count = instructions.account_count(user);
     if count > MAX_ACCOUNTS {

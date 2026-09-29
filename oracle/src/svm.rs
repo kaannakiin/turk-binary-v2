@@ -51,7 +51,10 @@ impl Machine {
     /// Token and Token-2022 run the bytecode mainnet runs.
     /// `rent` is mainnet's Rent sysvar: pool vaults hold only what it asks.
     pub fn new(programs: &Path, rent: &[u8]) -> Self {
-        let mut svm = LiteSVM::new().with_log_bytes_limit(Some(100_000));
+        // A replayed v1 transaction carries the blockhash the server built it on.
+        let mut svm = LiteSVM::new()
+            .with_log_bytes_limit(Some(100_000))
+            .with_blockhash_check(false);
         assert_eq!(
             f64::from_le_bytes(rent[8..16].try_into().expect("rent")),
             1.0,
@@ -201,6 +204,31 @@ impl Machine {
         }
         self.svm.set_account(source, account).expect("fund source");
         Ok(destination)
+    }
+
+    /// Signs `unsigned` as the payer, changing nothing else, and sends it.
+    pub fn send_unsigned(&mut self, unsigned: &[u8]) -> Result<u64, String> {
+        let unsigned: solana_transaction::versioned::VersionedTransaction =
+            wincode::deserialize(unsigned).map_err(|e| format!("decoding: {e}"))?;
+        let signed = solana_transaction::versioned::VersionedTransaction::try_new(
+            unsigned.message,
+            &[&self.payer],
+        )
+        .map_err(|e| format!("signing: {e}"))?;
+        self.svm
+            .send_transaction(signed)
+            .map(|meta| meta.compute_units_consumed)
+            .map_err(|failed| {
+                let last = failed
+                    .meta
+                    .logs
+                    .iter()
+                    .rev()
+                    .find(|l| l.contains("Error") || l.contains("failed"))
+                    .cloned()
+                    .unwrap_or_default();
+                format!("{:?} {last}", failed.err)
+            })
     }
 
     pub fn balance(&self, account: &Pubkey) -> u64 {

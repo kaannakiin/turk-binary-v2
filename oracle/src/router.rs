@@ -46,6 +46,7 @@ struct Plan {
     setup_instructions: Vec<InstructionBody>,
     swap_instruction: InstructionBody,
     cleanup_instructions: Vec<InstructionBody>,
+    transaction: String,
 }
 
 #[derive(Deserialize)]
@@ -101,6 +102,12 @@ struct Case {
     compute_units: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    v1_paid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    v1_compute_units: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    v1_error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -151,7 +158,7 @@ pub fn main(args: &[PathBuf]) {
         provenance: Provenance {
             corpus_sha256: format!("{:x}", Sha256::digest(&corpus_raw)),
             router_sha256: format!("{:x}", Sha256::digest(&router)),
-            litesvm: "0.16.0",
+            litesvm: "0.17.0",
         },
         cases,
     };
@@ -172,7 +179,48 @@ fn run(
         paid: None,
         compute_units: None,
         error: None,
+        v1_paid: None,
+        v1_compute_units: None,
+        v1_error: None,
     };
+    let instructions = |plan: &Plan| {
+        let mut all = vec![svm::compute_limit()];
+        all.extend(plan.setup_instructions.iter().map(InstructionBody::instruction));
+        all.push(plan.swap_instruction.instruction());
+        all.extend(plan.cleanup_instructions.iter().map(InstructionBody::instruction));
+        all
+    };
+    match replay(machine, clock, accounts, plan, |machine| {
+        machine.send_measured(&instructions(plan))
+    }) {
+        Ok((paid, units)) => {
+            case.paid = Some(paid.to_string());
+            case.compute_units = Some(units);
+        }
+        Err(error) => case.error = Some(error),
+    }
+    let transaction = STANDARD.decode(&plan.transaction).expect("base64 transaction");
+    match replay(machine, clock, accounts, plan, |machine| {
+        machine.send_unsigned(&transaction)
+    }) {
+        Ok((paid, units)) => {
+            case.v1_paid = Some(paid.to_string());
+            case.v1_compute_units = Some(units);
+        }
+        Err(error) => case.v1_error = Some(error),
+    }
+    case
+}
+
+/// Funds the user from the corpus state, sends, and reads what the output
+/// account received.
+fn replay(
+    machine: &mut Machine,
+    clock: &Clock,
+    accounts: &HashMap<Pubkey, Option<Stored>>,
+    plan: &Plan,
+    send: impl FnOnce(&mut Machine) -> Result<u64, String>,
+) -> Result<(u64, u64), String> {
     machine.set_clock(clock);
     machine.load(accounts);
     let (config, account) = unpaused_config();
@@ -188,28 +236,13 @@ fn run(
     let input: Pubkey = plan.input_mint.parse().expect("input mint");
     let output: Pubkey = plan.output_mint.parse().expect("output mint");
     let amount_in: u64 = plan.amount_in.parse().expect("amount");
-    let result = machine
-        .fund(
-            (&input, &program_of(&input)),
-            (&output, &program_of(&output)),
-            amount_in,
-        )
-        .and_then(|destination| {
-            let mut instructions = vec![svm::compute_limit()];
-            instructions.extend(plan.setup_instructions.iter().map(InstructionBody::instruction));
-            instructions.push(plan.swap_instruction.instruction());
-            instructions.extend(plan.cleanup_instructions.iter().map(InstructionBody::instruction));
-            let units = machine.send_measured(&instructions)?;
-            Ok((machine.balance(&destination), units))
-        });
-    match result {
-        Ok((paid, units)) => {
-            case.paid = Some(paid.to_string());
-            case.compute_units = Some(units);
-        }
-        Err(error) => case.error = Some(error),
-    }
-    case
+    let destination = machine.fund(
+        (&input, &program_of(&input)),
+        (&output, &program_of(&output)),
+        amount_in,
+    )?;
+    let units = send(machine)?;
+    Ok((machine.balance(&destination), units))
 }
 
 fn unpaused_config() -> (Pubkey, SolanaAccount) {

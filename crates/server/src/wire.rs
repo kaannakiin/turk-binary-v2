@@ -4,7 +4,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use domain::{DexKind, Pubkey, Slot};
 use serde::{Deserialize, Serialize};
-use tx::{Fees, SwapInstructions};
+use tx::SwapInstructions;
 
 use crate::error::{ApiError, SearchBody};
 use crate::service::{DexFilter, QuotedRoute, RouteRequest, Routed, RoutedLeg, SearchQuality};
@@ -104,8 +104,8 @@ impl SwapBody {
     }
 }
 
-/// A `/quote` response sent back. Fields the route does not depend on
-/// (`search`, `crossStream`) are ignored.
+/// A `/quote` response sent back. `search` and `crossStream` describe the
+/// search that priced it and are echoed as sent.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct QuotedBody {
@@ -116,6 +116,8 @@ pub(crate) struct QuotedBody {
     other_amount_threshold: String,
     slippage_bps: u16,
     context_slot: u64,
+    cross_stream: Option<bool>,
+    search: Option<SearchBody>,
     legs: Vec<QuotedLeg>,
 }
 
@@ -154,12 +156,12 @@ impl QuotedBody {
                 amount_in: amount(&self.from_token_amount)?.get(),
                 amount_out: amount(&self.to_token_amount)?.get(),
                 slot: Slot(self.context_slot),
-                cross_stream: false,
-                search: SearchQuality {
-                    pruned: false,
-                    exhausted: false,
-                    quotes: 0,
-                },
+                cross_stream: self.cross_stream,
+                search: self.search.map(|search| SearchQuality {
+                    pruned: search.pruned,
+                    exhausted: search.exhausted,
+                    quotes: search.quotes,
+                }),
                 legs,
             },
             min_out: amount(&self.other_amount_threshold)?.get(),
@@ -199,8 +201,10 @@ pub(crate) struct QuoteResponse {
     other_amount_threshold: String,
     slippage_bps: u16,
     context_slot: u64,
-    cross_stream: bool,
-    search: SearchBody,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cross_stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search: Option<SearchBody>,
     legs: Vec<LegBody>,
 }
 
@@ -236,7 +240,7 @@ impl QuoteResponse {
             slippage_bps,
             context_slot: routed.slot.0,
             cross_stream: routed.cross_stream,
-            search: routed.search.into(),
+            search: routed.search.map(Into::into),
             legs: routed
                 .legs
                 .into_iter()
@@ -295,18 +299,24 @@ pub(crate) struct SwapInstructionsResponse {
     swap_instruction: InstructionBody,
     cleanup_instructions: Vec<InstructionBody>,
     compute_unit_limit: u32,
+    loaded_accounts_data_size_limit: u32,
     priority_fee_lamports: u64,
 }
 
 impl SwapInstructionsResponse {
-    pub(crate) fn new(quote: QuoteResponse, instructions: &SwapInstructions, fees: Fees) -> Self {
+    pub(crate) fn new(
+        quote: QuoteResponse,
+        instructions: &SwapInstructions,
+        priority_fee_lamports: u64,
+    ) -> Self {
         Self {
             quote,
             setup_instructions: instructions.setup.iter().map(Into::into).collect(),
             swap_instruction: (&instructions.swap).into(),
             cleanup_instructions: instructions.cleanup.iter().map(Into::into).collect(),
-            compute_unit_limit: fees.compute_unit_limit,
-            priority_fee_lamports: fees.priority_fee_lamports,
+            compute_unit_limit: instructions.limits.compute_units,
+            loaded_accounts_data_size_limit: instructions.limits.loaded_accounts_data_bytes,
+            priority_fee_lamports,
         }
     }
 }
@@ -318,6 +328,7 @@ pub(crate) struct SwapResponse {
     transaction: String,
     last_valid_block_height: u64,
     compute_unit_limit: u32,
+    loaded_accounts_data_size_limit: u32,
     priority_fee_lamports: u64,
 }
 
@@ -326,14 +337,16 @@ impl SwapResponse {
         quote: QuoteResponse,
         transaction: &[u8],
         last_valid_block_height: u64,
-        fees: Fees,
+        instructions: &SwapInstructions,
+        priority_fee_lamports: u64,
     ) -> Self {
         Self {
             quote,
             transaction: STANDARD.encode(transaction),
             last_valid_block_height,
-            compute_unit_limit: fees.compute_unit_limit,
-            priority_fee_lamports: fees.priority_fee_lamports,
+            compute_unit_limit: instructions.limits.compute_units,
+            loaded_accounts_data_size_limit: instructions.limits.loaded_accounts_data_bytes,
+            priority_fee_lamports,
         }
     }
 }

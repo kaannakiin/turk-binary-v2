@@ -8,6 +8,7 @@ turk-binary watches Solana DEX pools and (later) trades price gaps between them.
 | [configuration.md](configuration.md) | Every config key and environment variable                         |
 | [dexes.md](dexes.md)                 | Supported DEXes, their names in config, and how each was verified |
 | [router.md](router.md)               | The on-chain router program: instructions, wire format, errors    |
+| [open-work.md](open-work.md)         | What is known to be missing and why it matters                    |
 
 ## Quick start
 

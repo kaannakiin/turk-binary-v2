@@ -32,7 +32,7 @@ pub(crate) struct ApiError {
     search: Option<SearchBody>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchBody {
     pub pruned: bool,

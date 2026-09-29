@@ -283,7 +283,7 @@ fn main() {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
         snapshot_sha256: format!("{:x}", Sha256::digest(&raw)),
-        litesvm: "0.16.0",
+        litesvm: "0.17.0",
         programs: std::fs::read_to_string(programs.join("programs.tsv"))
             .expect("programs.tsv")
             .lines()

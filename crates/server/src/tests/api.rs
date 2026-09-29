@@ -495,6 +495,10 @@ struct PaidCase {
 async fn router_replay_plans() {
     let out = std::env::var("ROUTER_PLANS").expect("ROUTER_PLANS names the plans file");
     let fixture = Fixture::new(1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
     let (_, _, probe) = call(fixture.router(), post(&sol_to_usdc())).await;
     let slot = probe["contextSlot"].clone();
     let file = std::fs::File::open(CPMM).expect("the corpus is in the repository");
@@ -537,6 +541,8 @@ async fn router_replay_plans() {
         });
         let (status, _, built) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
         assert_eq!(status, StatusCode::OK, "{}: {built}", case.pool);
+        let (status, _, swap) = call(fixture.router(), post_to("/swap", &body)).await;
+        assert_eq!(status, StatusCode::OK, "{}: {swap}", case.pool);
         plans.push(json!({
             "pool": case.pool,
             "inputMint": case.input_mint,
@@ -546,9 +552,130 @@ async fn router_replay_plans() {
             "setupInstructions": built["setupInstructions"],
             "swapInstruction": built["swapInstruction"],
             "cleanupInstructions": built["cleanupInstructions"],
+            "transaction": swap["transaction"],
         }));
     }
     let file = std::fs::File::create(&out).expect("creating the plans file");
     serde_json::to_writer(file, &json!({ "corpus": CPMM, "plans": plans })).expect("writing plans");
     eprintln!("{} plans written to {out}", plans.len());
+}
+
+#[tokio::test]
+async fn a_swap_limited_to_venues_the_router_lacks_finds_no_route() {
+    let fixture = Fixture::new(1, 4);
+    let mut body = swap_one_sol();
+    body["quoteRequest"]["dexes"] = json!(["orca_whirlpool"]);
+
+    let (status, _, answer) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+    assert_eq!(answer["error"]["code"], "NO_ROUTE");
+}
+
+fn cycle_quote(threshold: u64) -> Value {
+    let sol = sol_to_usdc()["fromTokenAddress"].clone();
+    let mut pools: Vec<String> = cases().into_iter().map(|case| case.pool).collect();
+    pools.sort();
+    pools.dedup();
+    let leg = |pool: &str, from: &Value, to: &Value, amount_in: u64, amount_out: u64| {
+        json!({
+            "poolAddress": pool,
+            "dex": "raydium_cpmm",
+            "fromTokenAddress": from,
+            "toTokenAddress": to,
+            "fromTokenAmount": amount_in.to_string(),
+            "toTokenAmount": amount_out.to_string(),
+        })
+    };
+    let usdc = json!(USDC);
+    json!({
+        "fromTokenAddress": sol,
+        "toTokenAddress": sol,
+        "fromTokenAmount": "1000000000",
+        "toTokenAmount": "1000000002",
+        "otherAmountThreshold": threshold.to_string(),
+        "slippageBps": 0,
+        "contextSlot": 450_370_213,
+        "legs": [
+            leg(&pools[0], &sol, &usdc, 1_000_000_000, 33_000_000),
+            leg(&pools[1], &usdc, &sol, 33_000_000, 1_000_000_002),
+        ],
+    })
+}
+
+// src: onchain/crates/router-core/src/route_checks.rs (check_route_args: a cycle needs
+// min_out > in_amount, or the router refuses it before any swap).
+#[tokio::test]
+async fn a_cycle_is_built_only_when_its_threshold_exceeds_its_input() {
+    let fixture = Fixture::new(1, 4);
+    for (threshold, status) in [
+        (999_999_999, StatusCode::UNPROCESSABLE_ENTITY),
+        (1_000_000_000, StatusCode::UNPROCESSABLE_ENTITY),
+        (1_000_000_001, StatusCode::OK),
+    ] {
+        let body = json!({ "userPublicKey": USER, "quoteResponse": cycle_quote(threshold) });
+
+        let (answer_status, _, answer) =
+            call(fixture.router(), post_to("/swap-instructions", &body)).await;
+
+        assert_eq!(answer_status, status, "{threshold}: {answer}");
+        if status != StatusCode::OK {
+            assert_eq!(answer["error"]["code"], "UNPROFITABLE_CYCLE", "{threshold}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_searched_cycle_that_pays_less_than_it_spends_is_not_built() {
+    let fixture = Fixture::new(1, 4);
+    let mut request = sol_to_usdc();
+    request["toTokenAddress"] = request["fromTokenAddress"].clone();
+    request["amount"] = json!(ONE_SOL);
+    request["enableCyclicArbitrage"] = json!(true);
+    let (_, _, quote) = call(fixture.router(), post(&request)).await;
+    let out: u64 = quote["toTokenAmount"]
+        .as_str()
+        .expect("an amount")
+        .parse()
+        .expect("u64");
+    assert!(
+        out < 1_000_000_000,
+        "the corpus has no profitable cycle: {quote}"
+    );
+
+    let body = json!({ "userPublicKey": USER, "quoteRequest": request });
+    let (status, _, answer) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+    assert_eq!(answer["error"]["code"], "UNPROFITABLE_CYCLE");
+}
+
+#[tokio::test]
+async fn a_quote_sent_back_keeps_what_its_search_said_about_it() {
+    let fixture = Fixture::new(1, 4);
+    let mut request = sol_to_usdc();
+    request["amount"] = json!(ONE_SOL);
+    let (_, _, mut quote) = call(fixture.router(), post(&request)).await;
+    quote["search"] = json!({ "pruned": true, "exhausted": true, "quotes": 3 });
+    quote["crossStream"] = json!(true);
+    let mut bare = quote.clone();
+    bare.as_object_mut().unwrap().remove("search");
+    bare.as_object_mut().unwrap().remove("crossStream");
+
+    let body = |quote: &Value| json!({ "userPublicKey": USER, "quoteResponse": quote });
+    let (_, _, kept) = call(
+        fixture.router(),
+        post_to("/swap-instructions", &body(&quote)),
+    )
+    .await;
+    let (_, _, unknown) = call(
+        fixture.router(),
+        post_to("/swap-instructions", &body(&bare)),
+    )
+    .await;
+
+    assert_eq!(kept["quote"]["search"], quote["search"]);
+    assert_eq!(kept["quote"]["crossStream"], true);
+    assert!(unknown["quote"].get("search").is_none(), "{unknown}");
+    assert!(unknown["quote"].get("crossStream").is_none(), "{unknown}");
 }

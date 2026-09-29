@@ -9,7 +9,7 @@ use axum::{Json, Router};
 use domain::Pubkey;
 use route::PoolFeed;
 use tower_http::timeout::RequestBodyTimeoutLayer;
-use tx::{Fees, SwapInstructions, SwapRequest, TxError};
+use tx::{SwapInstructions, SwapRequest, TxError};
 
 use crate::blockhash::BlockhashSlot;
 use crate::error::ApiError;
@@ -111,7 +111,7 @@ async fn swap_instructions<F: PoolFeed>(
     Ok(Json(SwapInstructionsResponse::new(
         plan.quote,
         &plan.instructions,
-        plan.fees,
+        plan.priority_fee_lamports,
     )))
 }
 
@@ -124,13 +124,19 @@ async fn swap<F: PoolFeed>(
         .blockhashes
         .fresh(api.swap.max_blockhash_age())
         .ok_or(ApiError::NO_BLOCKHASH)?;
-    let transaction = tx::unsigned_v1(&plan.instructions, &plan.user, blockhash.hash, plan.fees)
-        .map_err(ApiError::from)?;
+    let transaction = tx::unsigned_v1(
+        &plan.instructions,
+        &plan.user,
+        blockhash.hash,
+        plan.priority_fee_lamports,
+    )
+    .map_err(ApiError::from)?;
     Ok(Json(SwapResponse::new(
         plan.quote,
         &transaction,
         blockhash.last_valid_block_height,
-        plan.fees,
+        &plan.instructions,
+        plan.priority_fee_lamports,
     )))
 }
 
@@ -138,7 +144,7 @@ struct Plan {
     user: Pubkey,
     quote: QuoteResponse,
     instructions: SwapInstructions,
-    fees: Fees,
+    priority_fee_lamports: u64,
 }
 
 async fn plan<F: PoolFeed>(
@@ -175,10 +181,7 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
         user: swapping.user,
         quote: QuoteResponse::new(priced.routed, min_out, slippage_bps),
         instructions,
-        fees: Fees {
-            compute_unit_limit: tx::compute_unit_limit(&priced.windows),
-            priority_fee_lamports: swapping.priority_fee_lamports,
-        },
+        priority_fee_lamports: swapping.priority_fee_lamports,
     })
 }
 
@@ -194,7 +197,9 @@ impl From<TxError> for ApiError {
         let code = match error {
             TxError::TooManyAccounts { .. } => "TOO_MANY_ACCOUNTS",
             TxError::TooLarge { .. } => "TRANSACTION_TOO_LARGE",
-            TxError::Unsupported(_) => "UNSUPPORTED_VENUE",
+            TxError::TooMuchData { .. } => "TOO_MUCH_ACCOUNT_DATA",
+            TxError::UnprofitableCycle { .. } => "UNPROFITABLE_CYCLE",
+            TxError::Unsupported(_) | TxError::UnknownProgram(_) => "UNSUPPORTED_VENUE",
             TxError::EmptyRoute
             | TxError::TooManyHops { .. }
             | TxError::Discontinuous { .. }
