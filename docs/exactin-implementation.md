@@ -98,9 +98,11 @@ pre-existing fixture failures, reproduced unchanged in detached baseline
   initial array wait times out; separately reproduced in baseline release run
   `ad0a7f35-5704-458f-98e4-b601806b69ee` using its isolated target directory.
 
-After fixing new flow test assumptions, the full workspace run
-`82845b29-3fec-4a06-9b7d-13a92295a8b6` was followed by another complete run:
-361 passed, these three failed, 15 ignored. Workspace doc tests passed.
+The final `just ci` run on the integrated ExactIn change completed lint and
+cargo-deny, then ran 365 tests: 362 passed, the same three baseline tests
+failed, and 16 were skipped. `cargo test --workspace --doc` passed when run
+separately. `just test-onchain` passed 30/30; `just lint-onchain`, SBF build,
+and the independent flow replay passed.
 
 Fixture bytes and assertions were not fabricated, removed, or relaxed. These
 failures prevent claiming a green full CI independently of the flow work.
