@@ -93,9 +93,13 @@ impl Pool {
 pub fn load(path: &Path) -> (Snapshot, Vec<u8>) {
     let compressed = std::fs::read(path).expect("reading the snapshot");
     let mut text = String::new();
-    GzDecoder::new(compressed.as_slice())
-        .read_to_string(&mut text)
-        .expect("gzip snapshot");
+    if path.extension().is_some_and(|ext| ext == "gz") {
+        GzDecoder::new(compressed.as_slice())
+            .read_to_string(&mut text)
+            .expect("gzip snapshot");
+    } else {
+        text = String::from_utf8(compressed.clone()).expect("UTF-8 snapshot");
+    }
     (
         serde_json::from_str(&text).expect("snapshot parses"),
         compressed,

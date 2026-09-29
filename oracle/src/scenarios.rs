@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+use arb_swap_ix::BootLayout;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use router_wire::{CONFIG_SEED, Config, Route, RouterInstruction};
@@ -19,11 +20,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
+use solana_message::VersionedMessage;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer as _;
+use solana_transaction::versioned::VersionedTransaction;
 
 use crate::Hop;
 use crate::router::{self, Corpus, InstructionBody, ROUTER};
+use crate::rpc;
 use crate::snapshot::{Clock, Stored};
 use crate::svm::{self, Machine, Sent};
 use crate::venue::Venue;
@@ -122,6 +126,7 @@ struct Swap {
     tokens: BTreeMap<String, Change>,
     account_lamports: BTreeMap<String, Change>,
     lamports: Change,
+    venue_accounts_unchanged: bool,
 }
 
 #[derive(Serialize)]
@@ -150,8 +155,44 @@ struct Scenarios {
     admin: Vec<Step>,
 }
 
+#[derive(Serialize)]
+struct Matrix {
+    provenance: Provenance,
+    observations: Vec<crate::snapshot::Account>,
+    synthetic: Vec<Synthetic>,
+    transfer_fees: Vec<TransferFee>,
+    swaps: Vec<Swap>,
+    cycles: Vec<Swap>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    thresholds: Vec<Swap>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    hop_thresholds: Vec<Swap>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    bad_windows: Vec<Swap>,
+    budgets: Vec<Swap>,
+}
+
+#[derive(Serialize)]
+struct TransferFee {
+    plan: String,
+    gross_out: u64,
+    net_out: u64,
+}
+
+#[derive(Serialize)]
+struct Synthetic {
+    plan: String,
+    vault: String,
+    original_balance: u64,
+    adjusted_balance: u64,
+    payout_before: u64,
+    payout_one_less: u64,
+    payout_after: u64,
+}
+
 enum Via {
     V1,
+    Unsigned(Vec<u8>),
     Legacy(Vec<Instruction>),
 }
 
@@ -201,7 +242,10 @@ impl World<'_> {
         self.reset(plan.epoch);
         self.open(&plan.input(), plan.amount_in())?;
         for leg in &plan.legs {
-            self.open(&leg.output_mint.parse().expect("mint"), 0)?;
+            let output: Pubkey = leg.output_mint.parse().expect("mint");
+            if output != plan.input() {
+                self.open(&output, 0)?;
+            }
         }
         let payer = self.machine.payer();
         let mut amount = plan.amount_in();
@@ -251,6 +295,18 @@ impl World<'_> {
         let user = self.machine.payer();
         let before = self.holdings();
         let lamports_before = self.machine.lamports(&user);
+        let venue_before: Vec<_> = self
+            .accounts
+            .keys()
+            .map(|key| {
+                (
+                    *key,
+                    self.machine
+                        .account(key)
+                        .map(|account| (account.lamports, account.data)),
+                )
+            })
+            .collect();
         let (sent, route) = match send {
             Via::V1 => {
                 let tx = STANDARD
@@ -261,6 +317,10 @@ impl World<'_> {
                     plan.swap_instruction.instruction(),
                 )
             }
+            Via::Unsigned(tx) => (
+                self.machine.send_unsigned(tx),
+                plan.swap_instruction.instruction(),
+            ),
             Via::Legacy(instructions) => (
                 self.machine.send_measured(instructions),
                 instructions
@@ -271,6 +331,12 @@ impl World<'_> {
             ),
         };
         let after = self.holdings();
+        let venue_accounts_unchanged = venue_before.iter().all(|(key, account)| {
+            self.machine
+                .account(key)
+                .map(|now| (now.lamports, now.data))
+                == *account
+        });
         let (error, compute_units, fee) = match sent {
             Ok(Sent { compute_units, fee }) => (None, Some(compute_units), Some(fee)),
             Err(error) => (Some(error), None, None),
@@ -315,6 +381,7 @@ impl World<'_> {
                 before: Some(lamports_before),
                 after: Some(self.machine.lamports(&user)),
             },
+            venue_accounts_unchanged,
         }
     }
 }
@@ -535,7 +602,7 @@ fn refusals(world: &mut World<'_>, single: &Plan, other_mint: &Pubkey) -> Vec<St
     let cases: Vec<(&'static str, Instruction)> = vec![
         ("zero_min_out", with_data(|d| d[MIN_OUT].fill(0))),
         ("zero_in_amount", with_data(|d| d[IN_AMOUNT].fill(0))),
-        ("wire_version_2", with_data(|d| d[VERSION] = 2)),
+        ("wire_version_1", with_data(|d| d[VERSION] = 1)),
         (
             "no_hops",
             with_data(|d| {
@@ -929,6 +996,431 @@ pub fn main(args: &[PathBuf]) {
         admin,
     };
     write(out, &scenarios);
+}
+
+/// Replay three-token, two-hop plans against each venue program on its own,
+/// then sign and send the API's unsigned v1 transaction through the router.
+pub fn matrix_main(args: &[PathBuf]) {
+    let [corpus_path, plans_path, programs, router_so, out] = args else {
+        eprintln!("usage: oracle router-matrix SNAPSHOT PLANS PROGRAMS_DIR ROUTER_SO OUT");
+        std::process::exit(2);
+    };
+    let (corpus, corpus_raw) = Corpus::read(corpus_path);
+    let plans: Plans = serde_json::from_slice(&std::fs::read(plans_path).expect("reading plans"))
+        .expect("parsing plans");
+    let router = std::fs::read(router_so).expect("reading the router program");
+    let mut accounts = corpus.accounts();
+    let venues: HashMap<Pubkey, Venue> = corpus
+        .pools
+        .iter()
+        .map(|pool| {
+            let venue = Venue::new(&pool.dex, &pool.address(), &accounts).expect("a venue");
+            (pool.address(), venue)
+        })
+        .collect();
+    let needed: BTreeSet<Pubkey> = plans
+        .plans
+        .iter()
+        .flat_map(|plan| &plan.legs)
+        .filter_map(|leg| {
+            let pool: Pubkey = leg.pool.parse().expect("pool");
+            match &venues[&pool].layout {
+                BootLayout::RaydiumCpmm { layout } => Some(layout.observation_key),
+                _ => None,
+            }
+        })
+        .filter(|key| !accounts.contains_key(key))
+        .collect();
+    let corpus_sha256 = format!("{:x}", Sha256::digest(&corpus_raw));
+    let cached_observations = std::fs::read(out)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .filter(|fixture| fixture["provenance"]["corpus_sha256"] == corpus_sha256)
+        .and_then(|fixture| {
+            serde_json::from_value::<Vec<crate::snapshot::Account>>(fixture["observations"].clone())
+                .ok()
+        })
+        .map(|stored| {
+            stored
+                .into_iter()
+                .map(|account| (account.key(), account.stored()))
+                .collect::<HashMap<_, _>>()
+        })
+        .filter(|stored| needed.iter().all(|key| stored.contains_key(key)));
+    let observations = cached_observations
+        .unwrap_or_else(|| rpc::fetch(&needed.iter().copied().collect::<Vec<_>>()));
+    let recorded_observations: Vec<_> = needed
+        .iter()
+        .map(|key| crate::snapshot::Account::from_stored(key, observations[key].as_ref()))
+        .collect();
+    accounts.extend(observations);
+    let mints = plans
+        .plans
+        .iter()
+        .flat_map(|plan| &plan.legs)
+        .flat_map(|leg| [&leg.input_mint, &leg.output_mint])
+        .map(|mint| mint.parse().expect("mint"))
+        .collect();
+    let mut world = World {
+        machine: router::machine(programs, &router),
+        clock: &corpus.clock,
+        accounts,
+        venues,
+        mints,
+    };
+    let synthetic: Vec<Synthetic> = plans
+        .plans
+        .iter()
+        .filter(|plan| plan.name == "amm_v4_to_amm_v4_profit_synthetic")
+        .map(|plan| synthetic_v4_profit(&mut world, plan))
+        .collect();
+    let transfer_fees: Vec<TransferFee> = plans
+        .plans
+        .iter()
+        .filter(|plan| plan.name == "amm_v4_to_cpmm_token22_fee")
+        .map(|plan| direct_transfer_fee(&mut world, plan))
+        .collect();
+    let swaps = plans
+        .plans
+        .iter()
+        .map(|plan| {
+            eprintln!("replaying {}", plan.name);
+            let swap = world.swap(
+                "three_token_route",
+                plan,
+                |w| w.open(&plan.input(), plan.amount_in()).map(drop),
+                &Via::V1,
+            );
+            eprintln!("{}: {}", plan.name, swap.error.as_deref().unwrap_or("ok"));
+            swap
+        })
+        .collect();
+    let mut cycles = Vec::new();
+    for plan in plans
+        .plans
+        .iter()
+        .filter(|plan| plan.input() == plan.output())
+    {
+        let payout = *world.venue_out(plan).expect("direct cycle").last().unwrap();
+        for (name, threshold) in [
+            ("at_payout", payout),
+            (
+                "one_above_payout",
+                payout.checked_add(1).expect("threshold"),
+            ),
+        ] {
+            let route = with_min_out(&plan.swap_instruction.instruction(), threshold);
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    w.open(&plan.legs[0].output_mint.parse().expect("intermediate"), 0)
+                        .map(drop)
+                },
+                &Via::Legacy(vec![route]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            cycles.push(result);
+        }
+    }
+    let mut thresholds = Vec::new();
+    for plan in plans.plans.iter().filter(|plan| plan.name.contains("clmm")) {
+        let payout = *world.venue_out(plan).expect("direct route").last().unwrap();
+        for (name, threshold) in [
+            ("at_payout", payout),
+            (
+                "one_above_payout",
+                payout.checked_add(1).expect("threshold"),
+            ),
+        ] {
+            let route = with_min_out(&plan.swap_instruction.instruction(), threshold);
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    for leg in &plan.legs {
+                        let mint: Pubkey = leg.output_mint.parse().expect("output mint");
+                        if mint != plan.input() {
+                            w.open(&mint, 0)?;
+                        }
+                    }
+                    Ok(())
+                },
+                &Via::Legacy(vec![svm::compute_limit(), route]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            thresholds.push(result);
+        }
+    }
+    let mut hop_thresholds = Vec::new();
+    for plan in plans.plans.iter().filter(|plan| plan.name.contains("clmm")) {
+        let payouts = world.venue_out(plan).expect("direct route");
+        let base = plan.swap_instruction.instruction();
+        let RouterInstruction::Route(decoded) =
+            RouterInstruction::decode(&base.data).expect("route")
+        else {
+            panic!("the plan must contain a route");
+        };
+        for (index, name) in [
+            (0, "first_hop_one_above_payout"),
+            (1, "second_hop_one_above_payout"),
+        ] {
+            let mut hops = decoded.hops().to_vec();
+            hops[index].min_out = payouts[index].checked_add(1).expect("threshold");
+            let route = Route::new(decoded.in_amount(), decoded.min_out(), &hops).expect("route");
+            let ix = Instruction {
+                data: RouterInstruction::Route(route).encode(),
+                ..base.clone()
+            };
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    for leg in &plan.legs {
+                        let mint: Pubkey = leg.output_mint.parse().expect("output mint");
+                        if mint != plan.input() {
+                            w.open(&mint, 0)?;
+                        }
+                    }
+                    Ok(())
+                },
+                &Via::Legacy(vec![svm::compute_limit(), ix]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            hop_thresholds.push(result);
+        }
+    }
+    let mut bad_windows = Vec::new();
+    if let Some(plan) = plans.plans.iter().find(|plan| plan.name == "clmm_to_cpmm") {
+        let route = plan.swap_instruction.instruction();
+        let RouterInstruction::Route(decoded) =
+            RouterInstruction::decode(&route.data).expect("a route")
+        else {
+            panic!("the plan must contain a route");
+        };
+        let arrays_start = 4 + 14 + usize::from(decoded.hops()[0].tail & 0x80 != 0);
+        assert!(decoded.hops()[0].tail & 0x7f >= 2);
+        let mut missing = route.clone();
+        missing.accounts.remove(arrays_start);
+        let mut wrong = route.clone();
+        wrong.accounts[arrays_start].pubkey = SYSTEM;
+        let mut reversed = route;
+        reversed.accounts.swap(arrays_start, arrays_start + 1);
+        for (name, ix) in [
+            ("missing_tick_array", missing),
+            ("wrong_tick_array", wrong),
+            ("reversed_tick_arrays", reversed),
+        ] {
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    for leg in &plan.legs {
+                        let mint: Pubkey = leg.output_mint.parse().expect("output mint");
+                        if mint != plan.input() {
+                            w.open(&mint, 0)?;
+                        }
+                    }
+                    Ok(())
+                },
+                &Via::Legacy(vec![svm::compute_limit(), ix]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            bad_windows.push(result);
+        }
+    }
+    let mut budgets = Vec::new();
+    if let Some(plan) = plans.plans.first() {
+        for (name, low_compute) in [("compute_limit_one", true), ("loaded_data_one", false)] {
+            let mut tx: VersionedTransaction =
+                wincode::deserialize(&STANDARD.decode(&plan.transaction).expect("v1 base64"))
+                    .expect("v1 transaction");
+            let VersionedMessage::V1(message) = &mut tx.message else {
+                panic!("the API must build v1");
+            };
+            if low_compute {
+                message.config.compute_unit_limit = Some(1);
+            } else {
+                message.config.loaded_accounts_data_size_limit = Some(1);
+            }
+            let unsigned = wincode::serialize(&tx).expect("v1 bytes");
+            let result = world.swap(
+                name,
+                plan,
+                |w| w.open(&plan.input(), plan.amount_in()).map(drop),
+                &Via::Unsigned(unsigned),
+            );
+            eprintln!("budget {name}: {}", result.error.as_deref().unwrap_or("ok"));
+            budgets.push(result);
+        }
+    }
+    let matrix = Matrix {
+        provenance: Provenance {
+            corpus_sha256,
+            router_sha256: format!("{:x}", Sha256::digest(&router)),
+            litesvm: "0.17.0",
+        },
+        observations: recorded_observations,
+        synthetic,
+        transfer_fees,
+        swaps,
+        cycles,
+        thresholds,
+        hop_thresholds,
+        bad_windows,
+        budgets,
+    };
+    let mut file = std::fs::File::create(out).expect("creating the matrix fixture");
+    serde_json::to_writer_pretty(&mut file, &matrix).expect("writing the matrix fixture");
+    file.flush().expect("flush");
+}
+
+fn direct_transfer_fee(world: &mut World<'_>, plan: &Plan) -> TransferFee {
+    let pool: Pubkey = plan.legs[1].pool.parse().expect("fee pool");
+    let BootLayout::RaydiumCpmm { layout } = &world.venues[&pool].layout else {
+        panic!("fee hop must be CPMM");
+    };
+    let vault = if layout.token0_mint == plan.output() {
+        layout.token0_vault
+    } else if layout.token1_mint == plan.output() {
+        layout.token1_vault
+    } else {
+        panic!("fee pool must pay the output mint");
+    };
+    let before = u64::from_le_bytes(
+        world.accounts[&vault].as_ref().expect("vault").data[64..72]
+            .try_into()
+            .expect("amount"),
+    );
+    let net_out = *world
+        .venue_out(plan)
+        .expect("direct fee route")
+        .last()
+        .unwrap();
+    let gross_out = before
+        .checked_sub(world.machine.balance(&vault))
+        .expect("gross output");
+    assert!(
+        gross_out > net_out,
+        "the Token-2022 transfer must charge a fee"
+    );
+    TransferFee {
+        plan: plan.name.clone(),
+        gross_out,
+        net_out,
+    }
+}
+
+/// Find the smallest second-pool WSOL vault balance that makes direct program
+/// execution pay one unit above the route's input. The snapshot stays intact.
+fn synthetic_v4_profit(world: &mut World<'_>, plan: &Plan) -> Synthetic {
+    let pool: Pubkey = plan.legs[1].pool.parse().expect("second pool");
+    let BootLayout::RaydiumAmmV4 { layout } = &world.venues[&pool].layout else {
+        panic!("synthetic route must end at AMM v4");
+    };
+    let vault = if layout.base_mint == plan.output() {
+        layout.base_vault
+    } else if layout.quote_mint == plan.output() {
+        layout.quote_vault
+    } else {
+        panic!("the second pool must pay the route's mint");
+    };
+    let stored = world.accounts[&vault].as_ref().expect("captured vault");
+    let original_balance = u64::from_le_bytes(stored.data[64..72].try_into().expect("amount"));
+    let original_lamports = stored.lamports;
+    let target = plan.amount_in().checked_add(1).expect("profit target");
+    let payout_before = *world
+        .venue_out(plan)
+        .expect("live direct swaps")
+        .last()
+        .unwrap();
+    assert!(
+        payout_before < target,
+        "synthetic adjustment must be needed"
+    );
+    let set_vault = |world: &mut World<'_>, amount: u64| {
+        let account = world.accounts.get_mut(&vault).unwrap().as_mut().unwrap();
+        account.data[64..72].copy_from_slice(&amount.to_le_bytes());
+        account.lamports = original_lamports
+            .checked_add(amount - original_balance)
+            .expect("vault lamports");
+    };
+    let mut low = original_balance;
+    let mut high = original_balance
+        .checked_add(original_balance / 1_000 + 1)
+        .expect("initial search bound");
+    loop {
+        set_vault(world, high);
+        let payout = *world
+            .venue_out(plan)
+            .expect("direct venue swaps")
+            .last()
+            .unwrap();
+        if payout >= target {
+            break;
+        }
+        low = high;
+        high = original_balance
+            .checked_add(
+                (high - original_balance)
+                    .checked_mul(2)
+                    .expect("search span"),
+            )
+            .expect("search bound");
+    }
+    while high - low > 1 {
+        let mid = low + (high - low) / 2;
+        set_vault(world, mid);
+        let payout = *world
+            .venue_out(plan)
+            .expect("direct venue swaps")
+            .last()
+            .unwrap();
+        if payout >= target {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    set_vault(world, high - 1);
+    let payout_one_less = *world.venue_out(plan).expect("one less").last().unwrap();
+    assert!(payout_one_less < target);
+    set_vault(world, high);
+    let payout_after = *world
+        .venue_out(plan)
+        .expect("minimal profitable amount")
+        .last()
+        .unwrap();
+    assert!(payout_after >= target);
+    Synthetic {
+        plan: plan.name.clone(),
+        vault: vault.to_string(),
+        original_balance,
+        adjusted_balance: high,
+        payout_before,
+        payout_one_less,
+        payout_after,
+    }
 }
 
 fn write(path: &Path, scenarios: &Scenarios) {

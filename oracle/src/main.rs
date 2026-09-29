@@ -273,6 +273,7 @@ fn main() {
     match args.first().and_then(|mode| mode.to_str()) {
         Some("router") => return router::main(&args[1..]),
         Some("router-scenarios") => return scenarios::main(&args[1..]),
+        Some("router-matrix") => return scenarios::matrix_main(&args[1..]),
         _ => {}
     }
     let [snapshot_path, programs, out_dir] = args.as_slice() else {

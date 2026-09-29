@@ -27,6 +27,7 @@ pub const ROUTER: Pubkey = Pubkey::from_str_const("TURKAGEDZ6JgA9eSQydhARcWSc2hp
 pub struct Corpus {
     pub clock: Clock,
     pub pools: Vec<Pool>,
+    #[serde(default)]
     pub extra: Vec<Account>,
 }
 
@@ -34,8 +35,12 @@ impl Corpus {
     /// The corpus and the gzipped bytes it was read from.
     pub fn read(path: &Path) -> (Self, Vec<u8>) {
         let raw = std::fs::read(path).expect("reading the corpus");
-        let corpus = serde_json::from_reader(GzDecoder::new(BufReader::new(&raw[..])))
-            .expect("parsing the corpus");
+        let corpus = if path.extension().is_some_and(|ext| ext == "gz") {
+            serde_json::from_reader(GzDecoder::new(BufReader::new(&raw[..])))
+                .expect("parsing the gzip corpus")
+        } else {
+            serde_json::from_slice(&raw).expect("parsing the corpus")
+        };
         (corpus, raw)
     }
 

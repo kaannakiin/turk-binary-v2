@@ -40,14 +40,29 @@ build-onchain:
 test-onchain *args:
     cargo nextest run --manifest-path onchain/Cargo.toml {{args}}
 
-# LiteSVM: every swap the CPMM replay corpus paid, sent through the router as /swap-instructions
-# builds it, on the same accounts and mainnet bytecode. Writes crates/tx/src/tests/fixtures/router_replay.json.
-router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz" scenario_pools="crates/tx/src/tests/fixtures/scenario_pools.json.gz":
+# LiteSVM: every paid swap in the selected venue replay corpus, sent through the router
+# on the same accounts and mainnet bytecode. The default corpus is CPMM; pass the AMM v4
+# corpus and an output path to record its replay too.
+router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz" scenario_pools="crates/tx/src/tests/fixtures/scenario_pools.json.gz" out="crates/tx/src/tests/fixtures/router_replay.json":
     NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
     NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/short-venue/Cargo.toml
-    ROUTER_PLANS={{justfile_directory()}}/target/router-plans.json ROUTER_SCENARIO_PLANS={{justfile_directory()}}/target/router-scenario-plans.json cargo nextest run -p server --run-ignored only router_ --no-capture
-    cargo run --manifest-path oracle/Cargo.toml -- router {{corpus}} target/router-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_replay.json
+    ROUTER_CORPUS={{justfile_directory()}}/{{corpus}} ROUTER_PLANS={{justfile_directory()}}/target/router-plans.json cargo nextest run -p server --run-ignored only router_replay_plans --no-capture
+    ROUTER_SCENARIO_PLANS={{justfile_directory()}}/target/router-scenario-plans.json cargo nextest run -p server --run-ignored only router_scenario_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router {{corpus}} target/router-plans.json oracle/programs onchain/target/deploy/router.so {{out}}
     cargo run --manifest-path oracle/Cargo.toml -- router-scenarios {{scenario_pools}} target/router-scenario-plans.json oracle/programs onchain/target/deploy/router.so onchain/target/deploy/short_venue.so crates/tx/src/tests/fixtures/router_scenarios.json
+
+# LiteSVM: three-token AMM v4/CPMM routes, profitable cycles and a Token-2022 fee hop.
+router-matrix-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_AMM_V4_MATRIX_PLANS={{justfile_directory()}}/target/router-amm-v4-matrix-plans.json ROUTER_AMM_V4_TOKEN22_PLANS={{justfile_directory()}}/target/router-amm-v4-token22-plans.json cargo nextest run -p server --run-ignored only router_amm_v4_ --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix oracle/snapshots/amm-v4-routes.json.gz target/router-amm-v4-matrix-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_amm_v4_matrix.json
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix oracle/snapshots/amm-v4-token22.json.gz target/router-amm-v4-token22-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_amm_v4_token22.json
+
+# Same-slot CLMM/CPMM/AMM v4 paths, direct venue payouts, thresholds, and v1 budgets.
+router-clmm-cross-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_CLMM_CROSS_PLANS={{justfile_directory()}}/target/router-clmm-cross-plans.json cargo nextest run -p server --run-ignored only router_clmm_cross_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/clmm_cross_dex.json target/router-clmm-cross-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_clmm_cross.json
 
 watch config="config.toml":
     cargo run -p turk-binary -- watch --config {{config}}
