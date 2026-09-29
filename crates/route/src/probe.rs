@@ -40,6 +40,10 @@ impl RouteError {
                 QuoteError::Math => "math",
                 QuoteError::Arrays(_) => "arrays",
                 QuoteError::TransferHook => "transfer_hook",
+                QuoteError::MintPaused => "mint_paused",
+                QuoteError::NonTransferable => "non_transferable",
+                QuoteError::FrozenByDefault => "frozen_by_default",
+                QuoteError::VaultFrozen => "vault_frozen",
             },
             Self::Window(_) => "window",
         }

@@ -127,10 +127,18 @@ impl SearchSession {
 
     /// The swap accounts of `edge`'s pool as pinned, so they belong to the
     /// state the route was priced on.
-    pub fn swap_window(&mut self, edge: EdgeId) -> Result<SwapWindow, RouteError> {
+    pub fn swap_window(
+        &mut self,
+        edge: EdgeId,
+        arrays_used: u8,
+        max_arrays: u8,
+        guard: bool,
+    ) -> Result<SwapWindow, RouteError> {
         let decoded = &pin(&mut self.pins, &self.topology, &self.table, edge.pool())?.decoded;
         decoded.usable()?;
-        Ok(decoded.state.swap_window(edge.a_to_b())?)
+        Ok(decoded
+            .state
+            .swap_window_for_quote(edge.a_to_b(), arrays_used, max_arrays, guard)?)
     }
 
     pub(crate) fn pin(&mut self, pool: PoolId) -> Result<&Pin, RouteError> {

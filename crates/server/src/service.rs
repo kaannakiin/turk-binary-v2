@@ -218,7 +218,14 @@ impl<F: PoolFeed> QuoteService<F> {
         let windows = if windows {
             path.legs
                 .iter()
-                .map(|leg| window(&mut now, leg.edge))
+                .map(|leg| {
+                    window(
+                        &mut now,
+                        leg.edge,
+                        leg.arrays_used,
+                        self.settings.max_arrays,
+                    )
+                })
                 .collect::<Result<_, _>>()?
         } else {
             Vec::new()
@@ -307,7 +314,18 @@ impl<F: PoolFeed> QuoteService<F> {
             .collect::<Result<Vec<_>, _>>()?;
         let windows = edges
             .into_iter()
-            .map(|edge| window(&mut session, edge))
+            .zip(&routed.legs)
+            .map(|(edge, leg)| {
+                let arrays_used = session
+                    .quote(edge, leg.amount_in, self.settings.max_arrays)
+                    .map_err(|reason| ServiceError::NoWindow {
+                        pool: leg.pool,
+                        reason,
+                    })?
+                    .out
+                    .arrays_used;
+                window(&mut session, edge, arrays_used, self.settings.max_arrays)
+            })
             .collect::<Result<_, _>>()?;
         Ok(Priced {
             routed: routed.clone(),
@@ -373,9 +391,14 @@ impl<F: PoolFeed> QuoteService<F> {
     }
 }
 
-fn window(session: &mut SearchSession, edge: graph::EdgeId) -> Result<SwapWindow, ServiceError> {
+fn window(
+    session: &mut SearchSession,
+    edge: graph::EdgeId,
+    arrays_used: u8,
+    max_arrays: u8,
+) -> Result<SwapWindow, ServiceError> {
     session
-        .swap_window(edge)
+        .swap_window(edge, arrays_used, max_arrays, true)
         .map_err(|reason| ServiceError::NoWindow {
             pool: session.topology().pool(edge.pool()).pubkey,
             reason,

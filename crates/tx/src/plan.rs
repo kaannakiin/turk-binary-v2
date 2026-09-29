@@ -21,6 +21,7 @@ pub struct SwapRequest<'a> {
     pub hops: &'a [SwapWindow],
     pub amount_in: u64,
     pub min_out: u64,
+    pub hop_min_outs: &'a [u64],
     pub wrap_sol: bool,
 }
 
@@ -51,7 +52,42 @@ impl SwapInstructions {
 }
 
 pub fn build(request: &SwapRequest) -> Result<SwapInstructions, TxError> {
-    let (first, last) = endpoints(request.hops)?;
+    endpoints(request.hops)?;
+    if request.hops.iter().any(|hop| {
+        hop.optional_tail > (hop.tail & 0x7f) || usize::from(hop.optional_tail) > hop.accounts.len()
+    }) {
+        return Err(TxError::InvalidOptionalTail);
+    }
+    if request.hop_min_outs.len() != request.hops.len()
+        || request.hop_min_outs.contains(&0)
+        || request
+            .hop_min_outs
+            .last()
+            .is_some_and(|&last| last < request.min_out)
+    {
+        return Err(TxError::InvalidHopThresholds);
+    }
+    match build_once(request, request.hops) {
+        Err(TxError::TooManyAccounts { .. } | TxError::TooLarge { .. })
+            if request.hops.iter().any(|hop| hop.optional_tail > 0) =>
+        {
+            let mut trimmed = request.hops.to_vec();
+            for hop in &mut trimmed {
+                if hop.optional_tail > 0 {
+                    let remove = usize::from(hop.optional_tail);
+                    hop.accounts.truncate(hop.accounts.len() - remove);
+                    hop.tail -= hop.optional_tail;
+                    hop.optional_tail = 0;
+                }
+            }
+            build_once(request, &trimmed)
+        }
+        result => result,
+    }
+}
+
+fn build_once(request: &SwapRequest, hops: &[SwapWindow]) -> Result<SwapInstructions, TxError> {
+    let (first, last) = endpoints(hops)?;
     // The router refuses a cycle whose threshold does not exceed its input before any swap
     // runs (router-core `check_route_args`); building one would hand out a transaction that
     // can only fail.
@@ -79,7 +115,7 @@ pub fn build(request: &SwapRequest) -> Result<SwapInstructions, TxError> {
         setup.push(sync_native(&wsol));
         created.insert(first.source);
     }
-    for side in request.hops.iter().map(|hop| hop.destination) {
+    for side in hops.iter().map(|hop| hop.destination) {
         if created.insert(side) {
             setup.push(create_idempotent(
                 user,
@@ -99,9 +135,9 @@ pub fn build(request: &SwapRequest) -> Result<SwapInstructions, TxError> {
         .map(|wsol| close_account(wsol, user, user))
         .collect();
 
-    let swap = route_instruction(request, first, last)?;
+    let swap = route_instruction(request, hops, first, last)?;
     let limits = limits(
-        request.hops,
+        hops,
         setup.iter().chain(std::iter::once(&swap)).chain(&cleanup),
         user,
     )?;
@@ -118,6 +154,7 @@ pub fn build(request: &SwapRequest) -> Result<SwapInstructions, TxError> {
             max: MAX_ACCOUNTS,
         });
     }
+    crate::unsigned_v1(&instructions, user, [0; 32], u64::MAX)?;
     Ok(instructions)
 }
 
@@ -146,6 +183,7 @@ fn ata(user: &Pubkey, side: &TokenSide) -> Pubkey {
 
 fn route_instruction(
     request: &SwapRequest,
+    hops: &[SwapWindow],
     first: &SwapWindow,
     last: &SwapWindow,
 ) -> Result<Instruction, TxError> {
@@ -156,13 +194,14 @@ fn route_instruction(
         AccountMeta::new(ata(&user, &last.destination), false),
         AccountMeta::new_readonly(router_config(), false),
     ];
-    let mut plan = Vec::with_capacity(request.hops.len());
-    for hop in request.hops {
+    let mut plan = Vec::with_capacity(hops.len());
+    for (hop, &min_out) in hops.iter().zip(request.hop_min_outs) {
         plan.push(Hop {
             kind: hop_kind(hop.kind)?.into(),
             hook_a: 0,
             hook_b: 0,
-            tail: 0,
+            tail: hop.tail,
+            min_out,
         });
         let (source, destination) = (ata(&user, &hop.source), ata(&user, &hop.destination));
         accounts.push(AccountMeta::new_readonly(hop.program_id, false));

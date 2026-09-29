@@ -19,6 +19,8 @@ pub fn supports(kind: DexKind) -> bool {
 
 pub(crate) fn hop_kind(kind: DexKind) -> Result<HopKind, TxError> {
     match kind {
+        DexKind::RaydiumAmmV4 => Ok(HopKind::RaydiumAmmV4),
+        DexKind::RaydiumClmm => Ok(HopKind::RaydiumClmm),
         DexKind::RaydiumCpmm => Ok(HopKind::RaydiumCpmm),
         other => Err(TxError::Unsupported(other)),
     }

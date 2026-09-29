@@ -106,11 +106,32 @@ pub fn load() -> Universe {
 
 #[must_use]
 pub fn load_from(path: &str) -> Universe {
+    load_selected_from(path, &[])
+}
+
+#[must_use]
+pub fn load_selected_from(path: &str, pools: &[&str]) -> Universe {
     let file = std::fs::File::open(path)
         .unwrap_or_else(|e| panic!("{path}: {e}; capture it with `just snapshot-universe`"));
-    let snapshot: Snapshot =
+    let mut snapshot: Snapshot = if std::path::Path::new(path)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
+    {
         serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
-            .expect("the snapshot parses");
+            .expect("the gzip snapshot parses")
+    } else {
+        serde_json::from_reader(BufReader::new(file)).expect("the snapshot parses")
+    };
+    if !pools.is_empty() {
+        snapshot
+            .pools
+            .retain(|pool| pools.contains(&pool.address.as_str()));
+        assert_eq!(
+            snapshot.pools.len(),
+            pools.len(),
+            "all selected pools exist"
+        );
+    }
     let clock = ChainClock {
         slot: Slot(snapshot.clock.slot),
         epoch_start_timestamp: snapshot.clock.epoch_start_timestamp,

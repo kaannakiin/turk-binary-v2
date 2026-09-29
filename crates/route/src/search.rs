@@ -53,6 +53,7 @@ pub struct Leg {
     pub pool: Pubkey,
     pub amount_in: u64,
     pub amount_out: u64,
+    pub arrays_used: u8,
     pub cross_stream: bool,
 }
 
@@ -109,6 +110,7 @@ impl SearchSession {
                 let requoted = Leg {
                     amount_in: amount,
                     amount_out: quote.out.amount_out,
+                    arrays_used: quote.out.arrays_used,
                     cross_stream: quote.cross_stream,
                     ..*leg
                 };
@@ -269,6 +271,7 @@ impl<F: Filter> Walk<'_, F> {
             pool: node.pubkey,
             amount_in: amount,
             amount_out,
+            arrays_used: quote.out.arrays_used,
             cross_stream: quote.cross_stream,
         }))
     }

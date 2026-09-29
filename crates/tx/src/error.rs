@@ -12,6 +12,12 @@ pub enum TxError {
     UnprofitableCycle { amount_in: u64, min_out: u64 },
     #[error("hop {hop} does not start with the mint the previous hop paid out")]
     Discontinuous { hop: usize },
+    #[error(
+        "the route needs one positive minimum output per hop, with the last meeting the route minimum"
+    )]
+    InvalidHopThresholds,
+    #[error("a swap window has an invalid optional account tail")]
+    InvalidOptionalTail,
     #[error("the transaction needs {count} accounts, a v1 transaction holds {max}")]
     TooManyAccounts { count: usize, max: usize },
     #[error("the transaction is {bytes} bytes, a v1 transaction holds {max}")]

@@ -9,12 +9,43 @@ struct Scenarios {
 }
 
 #[derive(serde::Deserialize)]
+struct Matrix {
+    synthetic: Vec<Synthetic>,
+    transfer_fees: Vec<TransferFee>,
+    swaps: Vec<Swap>,
+    cycles: Vec<Swap>,
+    #[serde(default)]
+    thresholds: Vec<Swap>,
+    #[serde(default)]
+    hop_thresholds: Vec<Swap>,
+    #[serde(default)]
+    bad_windows: Vec<Swap>,
+    #[serde(default)]
+    budgets: Vec<Swap>,
+}
+
+#[derive(serde::Deserialize)]
+struct TransferFee {
+    gross_out: u64,
+    net_out: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct Synthetic {
+    original_balance: u64,
+    adjusted_balance: u64,
+    payout_before: u64,
+    payout_one_less: u64,
+    payout_after: u64,
+}
+
+#[derive(serde::Deserialize)]
 struct Keys {
     admin: String,
     next_admin: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, PartialEq, Eq)]
 struct Change {
     before: Option<u64>,
     after: Option<u64>,
@@ -23,6 +54,7 @@ struct Change {
 #[derive(serde::Deserialize)]
 struct Swap {
     name: String,
+    plan: String,
     epoch: u64,
     amount_in: u64,
     min_out: u64,
@@ -32,6 +64,8 @@ struct Swap {
     tokens: BTreeMap<String, Change>,
     account_lamports: BTreeMap<String, Change>,
     lamports: Change,
+    #[serde(default)]
+    venue_accounts_unchanged: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -50,6 +84,7 @@ struct ConfigState {
 
 const SOL: &str = "So11111111111111111111111111111111111111112";
 const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const USDT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 const NEAR: &str = "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG";
 const DHC: &str = "DCHLn5uLCDjPcmyxqeV3EFA1hAT518RR3u7gQe8iUiYQ";
 const DAILY: &str = "5iqjHxGgcRjNyGNtvWS9sSLsQgdrQe7L1Le8MDELmubX";
@@ -66,6 +101,253 @@ const WIWI: &str = "6cryqwcRfbWURXxGGuhA5oTvHo2aezrs1UGw1UgyqWhs";
 // the previous leg's payout, built by arb-swap-ix; lamports and fees are the runtime's.
 fn scenarios() -> Scenarios {
     serde_json::from_str(include_str!("fixtures/router_scenarios.json")).unwrap()
+}
+
+// src: oracle router-matrix over oracle/snapshots/amm-v4-routes.json.gz.
+// Each `venue_out` came from direct LiteSVM venue swaps on the same pool
+// accounts. The API's v1 transaction was signed and sent through the router.
+#[test]
+fn amm_v4_two_hop_v1_pays_the_direct_venue_amount_for_all_three_orders() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_amm_v4_matrix.json")).unwrap();
+    assert_eq!(matrix.swaps.len(), 5);
+    for (swap, plan) in
+        matrix
+            .swaps
+            .iter()
+            .take(3)
+            .zip(["amm_v4_to_cpmm", "cpmm_to_amm_v4", "amm_v4_to_amm_v4"])
+    {
+        assert_eq!(swap.plan, plan);
+        assert_eq!(swap.error, None, "{plan}");
+        assert_eq!(swap.venue_out.len(), 2, "{plan}");
+        assert_eq!(swap.tokens[SOL].before, Some(swap.amount_in), "{plan}");
+        assert_eq!(swap.tokens[SOL].after, Some(0), "{plan}");
+        assert_eq!(swap.tokens[USDC].after, Some(0), "{plan}");
+        assert_eq!(swap.tokens[USDT].after, Some(swap.venue_out[1]), "{plan}");
+        assert!(swap.min_out <= swap.venue_out[1], "{plan}");
+    }
+}
+
+// src: oracle router-matrix over clmm_cross_dex.json, slot 451631965.
+// The two venue instructions execute sequentially against the same captured
+// accounts; the API's unsigned v1 transaction executes the identical pools.
+#[test]
+fn clmm_cross_dex_v1_matches_direct_venues_and_enforces_atomic_thresholds() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_clmm_cross.json")).unwrap();
+    let orders = [
+        ("clmm_to_cpmm", SOL, USDT),
+        ("cpmm_to_clmm", USDT, SOL),
+        ("clmm_to_amm_v4", SOL, USDT),
+        ("amm_v4_to_clmm", USDT, SOL),
+    ];
+    assert_eq!(matrix.swaps.len(), orders.len());
+    assert_eq!(matrix.thresholds.len(), orders.len() * 2);
+    let (threshold_pairs, remainder) = matrix.thresholds.as_chunks::<2>();
+    assert!(remainder.is_empty());
+    for ((swap, (plan, input, output)), pair) in
+        matrix.swaps.iter().zip(orders).zip(threshold_pairs)
+    {
+        assert_eq!(swap.plan, plan);
+        assert_eq!(swap.error, None, "{plan}");
+        assert_eq!(swap.venue_out.len(), 2, "{plan}");
+        assert_eq!(swap.tokens[input].before, Some(swap.amount_in), "{plan}");
+        assert_eq!(swap.tokens[input].after, Some(0), "{plan}");
+        assert_eq!(swap.tokens[USDC].after, Some(0), "{plan}");
+        assert_eq!(swap.tokens[output].after, Some(swap.venue_out[1]), "{plan}");
+        assert!(swap.min_out <= swap.venue_out[1], "{plan}");
+
+        let [accepted, refused] = pair;
+        assert_eq!(accepted.plan, plan);
+        assert_eq!(accepted.name, "at_payout");
+        assert_eq!(accepted.error, None, "{plan}");
+        assert_eq!(accepted.min_out, swap.venue_out[1], "{plan}");
+        assert_eq!(
+            accepted.tokens[output].after,
+            Some(swap.venue_out[1]),
+            "{plan}"
+        );
+        assert_eq!(refused.plan, plan);
+        assert_eq!(refused.name, "one_above_payout");
+        assert_eq!(refused.min_out, swap.venue_out[1] + 1, "{plan}");
+        assert!(refused.error.is_some(), "{plan}");
+        assert!(refused.venue_accounts_unchanged, "{plan}");
+        assert!(
+            refused
+                .tokens
+                .values()
+                .all(|change| change.before == change.after),
+            "{plan}"
+        );
+        assert!(
+            refused
+                .account_lamports
+                .values()
+                .all(|change| change.before == change.after),
+            "{plan}"
+        );
+    }
+    assert_eq!(matrix.budgets.len(), 2);
+    for budget in &matrix.budgets {
+        assert!(budget.error.is_some(), "{}", budget.name);
+        assert!(budget.venue_accounts_unchanged, "{}", budget.name);
+        assert!(
+            budget
+                .tokens
+                .values()
+                .all(|change| change.before == change.after)
+        );
+    }
+}
+
+#[test]
+fn clmm_hop_thresholds_and_bad_tick_arrays_fail_atomically() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_clmm_cross.json")).unwrap();
+    assert_eq!(matrix.hop_thresholds.len(), 8);
+    let (hop_pairs, remainder) = matrix.hop_thresholds.as_chunks::<2>();
+    assert!(remainder.is_empty());
+    for (pair, (plan, errors)) in hop_pairs.iter().zip([
+        ("clmm_to_cpmm", ["Custom(6018)", "Custom(6005)"]),
+        ("cpmm_to_clmm", ["Custom(6005)", "Custom(6018)"]),
+        ("clmm_to_amm_v4", ["Custom(6018)", "Custom(30)"]),
+        ("amm_v4_to_clmm", ["Custom(30)", "Custom(6018)"]),
+    ]) {
+        for (hop, (name, code)) in pair.iter().zip([
+            ("first_hop_one_above_payout", errors[0]),
+            ("second_hop_one_above_payout", errors[1]),
+        ]) {
+            assert_eq!(hop.plan, plan);
+            assert_eq!(hop.name, name);
+            assert!(
+                hop.error
+                    .as_deref()
+                    .is_some_and(|error| error.contains(code)),
+                "{plan} {name}: {:?}",
+                hop.error
+            );
+            assert!(hop.venue_accounts_unchanged, "{plan} {name}");
+            assert!(
+                hop.tokens
+                    .values()
+                    .all(|change| change.before == change.after),
+                "{plan} {name}"
+            );
+        }
+    }
+    assert_eq!(matrix.bad_windows.len(), 3);
+    for (bad, name) in matrix.bad_windows.iter().zip([
+        "missing_tick_array",
+        "wrong_tick_array",
+        "reversed_tick_arrays",
+    ]) {
+        assert_eq!(bad.name, name);
+        assert!(bad.error.is_some(), "{name}");
+        assert!(bad.venue_accounts_unchanged, "{name}");
+        assert!(
+            bad.tokens
+                .values()
+                .all(|change| change.before == change.after),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn amm_v4_cycles_accept_the_exact_payout_and_reject_one_more_atomically() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_amm_v4_matrix.json")).unwrap();
+    assert_eq!(matrix.synthetic.len(), 1);
+    let synthetic = &matrix.synthetic[0];
+    assert!(synthetic.payout_before < 1_000_001);
+    assert!(synthetic.adjusted_balance > synthetic.original_balance);
+    assert_eq!(synthetic.payout_one_less, 1_000_000);
+    assert_eq!(synthetic.payout_after, 1_000_001);
+    assert_eq!(matrix.cycles.len(), 4);
+    for (plan, pair) in ["amm_v4_to_cpmm_profit", "amm_v4_to_amm_v4_profit_synthetic"]
+        .into_iter()
+        .zip(matrix.cycles.chunks(2))
+    {
+        let accepted = &pair[0];
+        let refused = &pair[1];
+        assert_eq!(accepted.name, "at_payout");
+        assert_eq!(refused.name, "one_above_payout");
+        assert_eq!(accepted.plan, plan);
+        assert_eq!(refused.plan, plan);
+        assert_eq!(accepted.error, None, "{plan}");
+        assert_eq!(accepted.min_out, accepted.venue_out[1]);
+        assert_eq!(
+            accepted.tokens[SOL].after,
+            Some(1_000_000 + accepted.venue_out[1] - accepted.amount_in)
+        );
+        assert!(refused.error.is_some(), "{plan}");
+        assert_eq!(refused.min_out, refused.venue_out[1] + 1);
+        assert!(refused.venue_accounts_unchanged, "{plan}");
+        assert!(
+            refused
+                .tokens
+                .values()
+                .all(|change| change.before == change.after),
+            "{plan}: token balances changed"
+        );
+        assert!(
+            refused
+                .account_lamports
+                .values()
+                .all(|change| change.before == change.after),
+            "{plan}: token account lamports changed"
+        );
+    }
+}
+
+// src: SOLADAO mint TransferFeeConfig at slot 451583673: epoch 1045 charges
+// 2500 bps. The gross vault debit and net user credit come from direct CPMM
+// execution on the slot-451601061 capture, independently of the quote port.
+#[test]
+fn amm_v4_then_cpmm_applies_token_2022_output_fee_to_the_net_payment() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_amm_v4_token22.json")).unwrap();
+    assert_eq!(matrix.swaps.len(), 1);
+    assert_eq!(matrix.transfer_fees.len(), 1);
+    let swap = &matrix.swaps[0];
+    let fee = &matrix.transfer_fees[0];
+    assert_eq!(swap.plan, "amm_v4_to_cpmm_token22_fee");
+    assert_eq!(swap.error, None);
+    assert_eq!(swap.venue_out.len(), 2);
+    assert_eq!(fee.net_out, swap.venue_out[1]);
+    assert_eq!(swap.tokens[SOLADAO].after, Some(fee.net_out));
+    assert_eq!(fee.gross_out - fee.net_out, fee.gross_out.div_ceil(4));
+}
+
+#[test]
+fn amm_v4_v1_rejects_insufficient_compute_and_loaded_data_without_balance_changes() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_amm_v4_matrix.json")).unwrap();
+    assert_eq!(matrix.budgets.len(), 2);
+    for (budget, name) in matrix
+        .budgets
+        .iter()
+        .zip(["compute_limit_one", "loaded_data_one"])
+    {
+        assert_eq!(budget.name, name);
+        assert!(budget.error.is_some(), "{name}");
+        assert!(budget.venue_accounts_unchanged, "{name}");
+        assert!(
+            budget
+                .tokens
+                .values()
+                .all(|change| change.before == change.after),
+            "{name}: token balance changed"
+        );
+        assert!(
+            budget
+                .account_lamports
+                .values()
+                .all(|change| change.before == change.after),
+            "{name}: token account lamports changed"
+        );
+    }
 }
 
 fn swap(name: &str) -> Swap {
@@ -359,7 +641,7 @@ fn a_route_with_one_wrong_byte_or_account_is_refused_by_the_right_check() {
     let expected = [
         ("zero_min_out", "Custom(6001)"),
         ("zero_in_amount", "Custom(6001)"),
-        ("wire_version_2", "Custom(6003)"),
+        ("wire_version_1", "Custom(6003)"),
         ("no_hops", "Custom(6002)"),
         ("five_hops", "Custom(6002)"),
         ("unknown_hop_kind", "Custom(6006)"),

@@ -11,6 +11,7 @@ use crate::{
 };
 
 const CPMM: Pubkey = Pubkey::from_str_const("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
+const HOP_MIN_OUTS: [u64; 5] = [1_917_139_225; 5];
 
 // src: mainnet tx 49Gr3dn1wF3QkLzACMVCnnZj9SXRKe3UgWAxdc7oL11fhncYR2Sn7fwqzgpWwRyL72CSSeU29x7cUCb9cnetC2PX
 // (slot 451386322): the swapper, its input account, and the pool's fixed swap_base_input accounts.
@@ -56,6 +57,8 @@ fn cpmm_window(source: TokenSide, destination: TokenSide) -> SwapWindow {
     SwapWindow {
         kind: DexKind::RaydiumCpmm,
         program_id: CPMM,
+        tail: 0,
+        optional_tail: 0,
         accounts: vec![
             WindowAccount::User,
             authority,
@@ -92,12 +95,112 @@ fn mainnet_hop() -> SwapWindow {
     )
 }
 
+fn clmm_budget_window(
+    seed: u8,
+    source: TokenSide,
+    destination: TokenSide,
+    arrays: u8,
+    guard: bool,
+) -> SwapWindow {
+    let key = |index: u8| {
+        let mut bytes = [seed; 32];
+        bytes[1] = index;
+        Pubkey::new_from_array(bytes)
+    };
+    let fixed = |index| WindowAccount::Fixed {
+        key: key(index),
+        writable: true,
+    };
+    let mut accounts = vec![
+        WindowAccount::User,
+        fixed(1),
+        fixed(2),
+        WindowAccount::UserSource,
+        WindowAccount::UserDestination,
+    ];
+    accounts.extend((5..13).map(fixed));
+    accounts.extend((0..arrays).map(|index| fixed(index + 13)));
+    SwapWindow {
+        kind: DexKind::RaydiumClmm,
+        // src: raydium-io/raydium-clmm@51fdba2 programs/amm/src/lib.rs.
+        program_id: Pubkey::from_str_const("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"),
+        accounts,
+        source,
+        destination,
+        tail: arrays,
+        optional_tail: u8::from(guard),
+    }
+}
+
+#[test]
+fn optional_clmm_guards_are_removed_at_the_v1_account_boundary() {
+    let side = |seed| TokenSide {
+        mint: Pubkey::new_from_array([seed; 32]),
+        token_program: TOKEN_PROGRAM,
+    };
+    let (input, middle, output) = (side(101), side(102), side(103));
+    let mut found = false;
+    for first in 1..=28 {
+        for second in 1..=28 {
+            let required = [
+                clmm_budget_window(81, input, middle, first, false),
+                clmm_budget_window(82, middle, output, second, false),
+            ];
+            let Ok(base) = build(&request(&required)) else {
+                continue;
+            };
+            let bytes = unsigned_v1(&base, &USER, [9; 32], 0).unwrap();
+            let tx: solana_transaction::versioned::VersionedTransaction =
+                wincode::deserialize(&bytes).unwrap();
+            let solana_message::VersionedMessage::V1(message) = tx.message else {
+                panic!("v1")
+            };
+            if message.account_keys.len() != MAX_ACCOUNTS {
+                continue;
+            }
+            let guarded = [
+                clmm_budget_window(81, input, middle, first + 1, true),
+                clmm_budget_window(82, middle, output, second + 1, true),
+            ];
+            let built =
+                build(&request(&guarded)).expect("required arrays fit after removing both guards");
+            let RouterInstruction::Route(route) =
+                RouterInstruction::decode(&built.swap.data).unwrap()
+            else {
+                panic!("route")
+            };
+            assert_eq!(route.hops()[0].tail, first);
+            assert_eq!(route.hops()[1].tail, second);
+            let mut oversized = required.clone();
+            oversized[0].accounts.push(WindowAccount::Fixed {
+                key: Pubkey::new_from_array([83; 32]),
+                writable: true,
+            });
+            oversized[0].tail += 1;
+            assert!(matches!(
+                build(&request(&oversized)),
+                Err(TxError::TooManyAccounts { .. } | TxError::TooLarge { .. })
+            ));
+            found = true;
+            break;
+        }
+        if found {
+            break;
+        }
+    }
+    assert!(
+        found,
+        "a two-hop CLMM route must reach the 64-account boundary"
+    );
+}
+
 fn request(hops: &[SwapWindow]) -> SwapRequest<'_> {
     SwapRequest {
         user: USER,
         hops,
         amount_in: 76_890_690_099,
         min_out: 1_917_139_225,
+        hop_min_outs: &HOP_MIN_OUTS[..hops.len().min(HOP_MIN_OUTS.len())],
         wrap_sol: true,
     }
 }
@@ -351,7 +454,8 @@ struct Replayed {
     v1_error: Option<String>,
 }
 
-// src: `just router-replay` (oracle/src/router.rs): every swap of the CPMM program replay corpus,
+// src: `just router-replay` (oracle/src/router.rs): every paid swap of the CPMM, AMM v4
+// and CLMM program replay corpora,
 // run through the router on the same accounts, Clock and mainnet bytecode twice: as the
 // instructions `/swap-instructions` returns, and as the v1 transaction `/swap` returns, only
 // signed.
@@ -361,22 +465,33 @@ fn replay() -> Replay {
 
 #[test]
 fn the_router_pays_exactly_what_the_venue_paid_on_every_replayed_swap() {
-    let replay = replay();
-    assert!(!replay.cases.is_empty());
-    for case in replay.cases {
-        let name = format!("{} {}", case.pool, case.amount_in);
-        assert_eq!(case.error, None, "{name}");
-        assert_eq!(
-            case.paid.as_deref(),
-            Some(case.expected_out.as_str()),
-            "{name}"
-        );
-        assert_eq!(case.v1_error, None, "{name}");
-        assert_eq!(
-            case.v1_paid.as_deref(),
-            Some(case.expected_out.as_str()),
-            "{name}"
-        );
+    for (venue, replay) in [
+        ("CPMM", replay()),
+        (
+            "AMM v4",
+            serde_json::from_str(include_str!("tests/fixtures/router_replay_amm_v4.json")).unwrap(),
+        ),
+        (
+            "CLMM",
+            serde_json::from_str(include_str!("tests/fixtures/router_replay_clmm.json")).unwrap(),
+        ),
+    ] {
+        assert!(!replay.cases.is_empty(), "{venue}");
+        for case in replay.cases {
+            let name = format!("{venue} {} {}", case.pool, case.amount_in);
+            assert_eq!(case.error, None, "{name}");
+            assert_eq!(
+                case.paid.as_deref(),
+                Some(case.expected_out.as_str()),
+                "{name}"
+            );
+            assert_eq!(case.v1_error, None, "{name}");
+            assert_eq!(
+                case.v1_paid.as_deref(),
+                Some(case.expected_out.as_str()),
+                "{name}"
+            );
+        }
     }
 }
 
@@ -390,6 +505,26 @@ fn the_compute_budget_covers_every_replayed_route() {
         .max()
         .unwrap();
     let hops = [mainnet_hop()];
+    let limit = build(&request(&hops)).unwrap().limits.compute_units;
+    assert!(used < limit, "{used} of {limit}");
+}
+
+#[test]
+fn the_clmm_many_array_budget_covers_the_largest_measured_swap() {
+    let replay: Replay =
+        serde_json::from_str(include_str!("tests/fixtures/router_replay_clmm.json")).unwrap();
+    let used = replay
+        .cases
+        .iter()
+        .flat_map(|case| [case.compute_units, case.v1_compute_units])
+        .flatten()
+        .max()
+        .unwrap();
+    let side = |seed| TokenSide {
+        mint: Pubkey::new_from_array([seed; 32]),
+        token_program: TOKEN_PROGRAM,
+    };
+    let hops = [clmm_budget_window(81, side(101), side(102), 4, false)];
     let limit = build(&request(&hops)).unwrap().limits.compute_units;
     assert!(used < limit, "{used} of {limit}");
 }

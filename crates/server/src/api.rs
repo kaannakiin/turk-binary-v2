@@ -170,11 +170,27 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
             (priced, quoted.min_out, slippage_bps)
         }
     };
+    let hop_min_outs = priced
+        .windows
+        .iter()
+        .zip(&priced.routed.legs)
+        .enumerate()
+        .map(|(index, (_, leg))| {
+            let net = threshold(leg.amount_out, slippage_bps)?;
+            let net = if index + 1 == priced.windows.len() {
+                net.max(min_out)
+            } else {
+                net
+            };
+            Ok::<u64, ApiError>(net)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let instructions = tx::build(&SwapRequest {
         user: swapping.user,
         hops: &priced.windows,
         amount_in: priced.routed.amount_in,
         min_out,
+        hop_min_outs: &hop_min_outs,
         wrap_sol: swapping.wrap_sol,
     })?;
     Ok(Plan {
@@ -202,6 +218,8 @@ impl From<TxError> for ApiError {
             TxError::Unsupported(_) | TxError::UnknownProgram(_) => "UNSUPPORTED_VENUE",
             TxError::EmptyRoute
             | TxError::TooManyHops { .. }
+            | TxError::InvalidHopThresholds
+            | TxError::InvalidOptionalTail
             | TxError::Discontinuous { .. }
             | TxError::Compile(_) => "CANNOT_BUILD",
         };

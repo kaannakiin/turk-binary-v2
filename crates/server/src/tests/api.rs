@@ -23,6 +23,35 @@ const CPMM: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz"
 );
+const AMM_V4: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../quoter/src/tests/fixtures/svm/raydium_amm_v4.json.gz"
+);
+const AMM_V4_ROUTES: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../oracle/snapshots/amm-v4-routes.json.gz"
+);
+const AMM_V4_TOKEN22: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../oracle/snapshots/amm-v4-token22.json.gz"
+);
+const CLMM_CROSS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tx/src/tests/fixtures/clmm_cross_dex.json"
+);
+const USDT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+const WSOL: &str = "So11111111111111111111111111111111111111112";
+// src: oracle/snapshots/amm-v4-routes.json.gz, slot 451598550.
+const V4_SOL_USDC: &str = "S2MiN5qmiRS8HBQMXcdJUhLwrBgX9P3naDuo4GkQ63t";
+const V4_USDC_USDT: &str = "7TbGqz32RsuwXbXY7EyBCiAnMbJq1gm1wKmfjQjuwoyF";
+const CPMM_SOL_USDC: &str = "fAjTnZ9QqJkUmrr8cXutkYhpVge2qqtSZNt9qKn7YC2";
+const CPMM_USDC_USDT: &str = "Tcvofhksa4QcUFLjvEJRuEdqW8qsYrVQxk7Mj46ZdXZ";
+// src: crates/tx/src/tests/fixtures/clmm_cross_dex.json, slot 451631965.
+const CLMM_SOL_USDC: &str = "2JtkunkYCRbe5YZuGU6kLFmNwN22Ba1pCicHoqW5Eqja";
+const V4_PROFIT_SOL_USDC: &str = "61acRgpURKTU8LKPJKs6WQa18KzD9ogavXzjxfD84KLu";
+const V4_CYCLE_FIRST: &str = "5oAvct85WyF7Sj73VYHbyFJkdRJ28D8m4z4Sxjvzuc6n";
+const V4_CYCLE_SECOND: &str = "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2";
+const CPMM_SOL_SOLADAO: &str = "Gms3MaNaz9mFKWwh3dvrHTF7f6FWstcPis21YYNPq3Fr";
 const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 #[derive(Deserialize)]
@@ -39,11 +68,63 @@ struct Case {
 }
 
 fn cases() -> Vec<Case> {
-    let file = std::fs::File::open(CPMM).expect("the corpus is in the repository");
+    cases_from(CPMM)
+}
+
+fn cases_from(corpus: &str) -> Vec<Case> {
+    let file = std::fs::File::open(corpus).expect("the corpus is in the repository");
     let corpus: Corpus =
         serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
             .expect("the corpus parses");
     corpus.cases
+}
+
+#[tokio::test]
+async fn simple_amm_v4_requests_quote_and_build_v1_in_both_directions() {
+    let fixture = Fixture::over(AMM_V4, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let cases = cases_from(AMM_V4);
+    for (from, to, amount) in [
+        (
+            "So11111111111111111111111111111111111111112",
+            USDC,
+            "1000000000",
+        ),
+        (
+            USDC,
+            "So11111111111111111111111111111111111111112",
+            "1000000",
+        ),
+    ] {
+        let expected = cases
+            .iter()
+            .filter(|case| case.input_mint == from && case.amount_in == amount)
+            .max_by_key(|case| case.out.parse::<u64>().expect("recorded payout"))
+            .expect("the program replay covers this direction");
+        let request = json!({
+            "fromTokenAddress": from,
+            "toTokenAddress": to,
+            "amount": amount,
+            "dexes": ["raydium_amm_v4"],
+        });
+        let (status, _, quote) = call(fixture.router(), post(&request)).await;
+        assert_eq!(status, StatusCode::OK, "{quote}");
+        assert_eq!(quote["toTokenAmount"], expected.out, "{from} → {to}");
+        assert_eq!(quote["legs"][0]["poolAddress"], expected.pool);
+        let body = json!({
+            "userPublicKey": ORACLE_PAYER,
+            "wrapAndUnwrapSol": false,
+            "quoteRequest": request,
+        });
+        for path in ["/swap-instructions", "/swap"] {
+            let (status, _, response) = call(fixture.router(), post_to(path, &body)).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {response}");
+            assert_eq!(response["quote"]["legs"][0]["dex"], "raydium_amm_v4");
+        }
+    }
 }
 
 const MAX_CLOCK_STALL: Duration = Duration::from_secs(10);
@@ -62,7 +143,18 @@ impl Fixture {
     }
 
     fn over(corpus: &str, threads: usize, max_queued: usize) -> Self {
-        let universe = universe::load_from(corpus);
+        Self::from_universe(universe::load_from(corpus), threads, max_queued)
+    }
+
+    fn over_selected(corpus: &str, pools: &[&str], threads: usize, max_queued: usize) -> Self {
+        Self::from_universe(
+            universe::load_selected_from(corpus, pools),
+            threads,
+            max_queued,
+        )
+    }
+
+    fn from_universe(universe: universe::Universe, threads: usize, max_queued: usize) -> Self {
         let quotes = QuoteSlot::default();
         quotes.attach(universe.reader);
         Self {
@@ -312,8 +404,8 @@ fn data(instruction: &Value) -> Vec<u8> {
         .expect("base64")
 }
 
-// src: docs/router.md → Instructions (route: tag 0, version 1, in_amount, min_out, hop_count,
-// then kind, hook_a, hook_b, tail per hop); the payout is what the deployed CPMM program paid.
+// src: docs/router.md → Instructions (route: tag 0, version 2, in_amount, min_out, hop_count,
+// then kind, hook_a, hook_b, tail, min_out per hop); the payout is what the deployed CPMM program paid.
 #[tokio::test]
 async fn swap_instructions_route_one_sol_through_the_pool_that_paid_most() {
     let fixture = Fixture::new(1, 4);
@@ -332,10 +424,11 @@ async fn swap_instructions_route_one_sol_through_the_pool_that_paid_most() {
     assert_eq!(body["quote"]["otherAmountThreshold"], min_out.to_string());
     let swap = &body["swapInstruction"];
     assert_eq!(swap["programId"], ROUTER);
-    let mut expected = vec![0u8, 1];
+    let mut expected = vec![0u8, 2];
     expected.extend_from_slice(&1_000_000_000u64.to_le_bytes());
     expected.extend_from_slice(&min_out.to_le_bytes());
     expected.extend_from_slice(&[1, 2, 0, 0, 0]);
+    expected.extend_from_slice(&min_out.to_le_bytes());
     assert_eq!(data(swap), expected);
     let accounts: Vec<&str> = swap["accounts"]
         .as_array()
@@ -498,14 +591,22 @@ struct PaidCase {
 #[ignore = "writes the router replay plans for `just router-replay`"]
 async fn router_replay_plans() {
     let out = std::env::var("ROUTER_PLANS").expect("ROUTER_PLANS names the plans file");
-    let fixture = Fixture::new(1, 4);
+    let corpus = std::env::var("ROUTER_CORPUS").unwrap_or_else(|_| CPMM.to_owned());
+    let dex = if corpus.ends_with("/raydium_clmm.json.gz") {
+        "raydium_clmm"
+    } else if corpus.ends_with("/raydium_amm_v4.json.gz") {
+        "raydium_amm_v4"
+    } else {
+        "raydium_cpmm"
+    };
+    let fixture = Fixture::over(&corpus, 1, 4);
     fixture.blockhashes.set(domain::chain::LatestBlockhash {
         hash: [5; 32],
         last_valid_block_height: 1,
     });
     let (_, _, probe) = call(fixture.router(), post(&sol_to_usdc())).await;
     let slot = probe["contextSlot"].clone();
-    let file = std::fs::File::open(CPMM).expect("the corpus is in the repository");
+    let file = std::fs::File::open(&corpus).expect("the corpus is in the repository");
     let paid: Paid = serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
         .expect("the corpus parses");
     let sol = sol_to_usdc()["fromTokenAddress"]
@@ -531,7 +632,7 @@ async fn router_replay_plans() {
             "contextSlot": slot,
             "legs": [{
                 "poolAddress": case.pool,
-                "dex": "raydium_cpmm",
+                "dex": dex,
                 "fromTokenAddress": case.input_mint,
                 "toTokenAddress": output,
                 "fromTokenAmount": case.amount_in,
@@ -560,7 +661,8 @@ async fn router_replay_plans() {
         }));
     }
     let file = std::fs::File::create(&out).expect("creating the plans file");
-    serde_json::to_writer(file, &json!({ "corpus": CPMM, "plans": plans })).expect("writing plans");
+    serde_json::to_writer(file, &json!({ "corpus": corpus, "plans": plans }))
+        .expect("writing plans");
     eprintln!("{} plans written to {out}", plans.len());
 }
 
@@ -627,6 +729,365 @@ async fn scenario_plan(
         "cleanupInstructions": built["cleanupInstructions"],
         "transaction": swap["transaction"],
     })
+}
+
+fn assert_hop_minimums(plan: &Value, quote: &Value, name: &str) {
+    let legs = quote["legs"].as_array().expect("route legs");
+    let wire = data(&plan["swapInstruction"]);
+    assert_eq!(wire[1], 2, "{name}");
+    let slippage = quote["slippageBps"].as_u64().expect("slippage bps");
+    let route_min: u64 = quote["otherAmountThreshold"]
+        .as_str()
+        .expect("route minimum")
+        .parse()
+        .expect("u64");
+    for (index, leg) in legs.iter().enumerate() {
+        let net_out: u64 = leg["toTokenAmount"]
+            .as_str()
+            .expect("net output")
+            .parse()
+            .expect("u64");
+        let expected = u64::try_from(u128::from(net_out) * u128::from(10_000 - slippage) / 10_000)
+            .expect("u64");
+        let expected = if index + 1 == legs.len() {
+            expected.max(route_min)
+        } else {
+            expected
+        };
+        let start = 19 + index * 12 + 4;
+        let actual = u64::from_le_bytes(wire[start..start + 8].try_into().expect("hop minimum"));
+        assert_eq!(actual, expected, "{name} hop {index}");
+    }
+}
+
+/// Three-token paths use only the two selected pools, so a simple search must
+/// traverse them in the requested venue order.
+fn amm_v4_matrix() -> [(&'static str, [&'static str; 2], [&'static str; 2]); 3] {
+    [
+        (
+            "amm_v4_to_cpmm",
+            [V4_SOL_USDC, CPMM_USDC_USDT],
+            ["raydium_amm_v4", "raydium_cpmm"],
+        ),
+        (
+            "cpmm_to_amm_v4",
+            [CPMM_SOL_USDC, V4_USDC_USDT],
+            ["raydium_cpmm", "raydium_amm_v4"],
+        ),
+        (
+            "amm_v4_to_amm_v4",
+            [V4_SOL_USDC, V4_USDC_USDT],
+            ["raydium_amm_v4", "raydium_amm_v4"],
+        ),
+    ]
+}
+
+async fn amm_v4_matrix_plan(name: &str, pools: [&str; 2], dexes: [&str; 2]) -> Value {
+    let fixture = Fixture::over_selected(AMM_V4_ROUTES, &pools, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": WSOL,
+        "toTokenAddress": USDT,
+        "amount": "100000000",
+        "maxHops": 2,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{name}: {quote}");
+    let legs = quote["legs"].as_array().expect("route legs");
+    assert_eq!(legs.len(), 2, "{name}");
+    for (leg, (pool, dex)) in legs.iter().zip(pools.into_iter().zip(dexes)) {
+        assert_eq!(leg["poolAddress"], pool, "{name}");
+        assert_eq!(leg["dex"], dex, "{name}");
+    }
+    let body = json!({
+        "userPublicKey": ORACLE_PAYER,
+        "wrapAndUnwrapSol": false,
+        "quoteRequest": request,
+    });
+    for path in ["/swap-instructions", "/swap"] {
+        let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
+        assert_eq!(status, StatusCode::OK, "{name} {path}: {built}");
+        assert_eq!(built["quote"]["legs"], quote["legs"], "{name} {path}");
+    }
+    let plan = scenario_plan(&fixture, name, &quote, false, None).await;
+    assert_hop_minimums(&plan, &quote, name);
+    plan
+}
+
+#[tokio::test]
+async fn simple_amm_v4_two_hop_requests_select_each_venue_order() {
+    for (name, pools, dexes) in amm_v4_matrix() {
+        let _ = amm_v4_matrix_plan(name, pools, dexes).await;
+    }
+}
+
+async fn amm_v4_profitable_cycle_plan() -> Value {
+    let fixture = Fixture::over_selected(AMM_V4_ROUTES, &[V4_PROFIT_SOL_USDC, CPMM_SOL_USDC], 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": WSOL,
+        "toTokenAddress": WSOL,
+        "amount": "1000000",
+        "maxHops": 2,
+        "enableCyclicArbitrage": true,
+        "slippageBps": 0,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{quote}");
+    let legs = quote["legs"].as_array().expect("cycle legs");
+    assert_eq!(legs.len(), 2);
+    assert_eq!(legs[0]["poolAddress"], V4_PROFIT_SOL_USDC);
+    assert_eq!(legs[1]["poolAddress"], CPMM_SOL_USDC);
+    let threshold = quote["otherAmountThreshold"]
+        .as_str()
+        .expect("threshold")
+        .parse::<u64>()
+        .expect("u64");
+    assert!(threshold > 1_000_000, "{quote}");
+    let body = json!({
+        "userPublicKey": ORACLE_PAYER,
+        "wrapAndUnwrapSol": false,
+        "quoteRequest": request,
+    });
+    for path in ["/swap-instructions", "/swap"] {
+        let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {built}");
+        assert_eq!(built["quote"]["legs"], quote["legs"]);
+    }
+    scenario_plan(&fixture, "amm_v4_to_cpmm_profit", &quote, false, None).await
+}
+
+#[tokio::test]
+async fn simple_amm_v4_to_cpmm_profit_cycle_is_buildable() {
+    let _ = amm_v4_profitable_cycle_plan().await;
+}
+
+async fn amm_v4_synthetic_cycle_plan() -> Value {
+    let fixture = Fixture::over_selected(AMM_V4_ROUTES, &[V4_CYCLE_FIRST, V4_CYCLE_SECOND], 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": WSOL,
+        "toTokenAddress": WSOL,
+        "amount": "1000000",
+        "maxHops": 2,
+        "enableCyclicArbitrage": true,
+        "slippageBps": 0,
+    });
+    let (status, _, mut quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{quote}");
+    let legs = quote["legs"].as_array().expect("cycle legs");
+    assert_eq!(legs.len(), 2);
+    assert_eq!(legs[0]["poolAddress"], V4_CYCLE_FIRST);
+    assert_eq!(legs[1]["poolAddress"], V4_CYCLE_SECOND);
+    // The stored pool balances do not profit. The oracle adjusts only the
+    // second pool's SOL vault until direct program execution pays 1 unit of profit.
+    quote["toTokenAmount"] = json!("1000001");
+    quote["otherAmountThreshold"] = json!("1000001");
+    quote["legs"][1]["toTokenAmount"] = json!("1000001");
+    scenario_plan(
+        &fixture,
+        "amm_v4_to_amm_v4_profit_synthetic",
+        &quote,
+        false,
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore = "writes three-token AMM v4 route plans for LiteSVM replay"]
+async fn router_amm_v4_matrix_plans() {
+    let out = std::env::var("ROUTER_AMM_V4_MATRIX_PLANS").expect("names the plans file");
+    let mut plans = Vec::new();
+    for (name, pools, dexes) in amm_v4_matrix() {
+        plans.push(amm_v4_matrix_plan(name, pools, dexes).await);
+    }
+    plans.push(amm_v4_profitable_cycle_plan().await);
+    plans.push(amm_v4_synthetic_cycle_plan().await);
+    let file = std::fs::File::create(&out).expect("creating matrix plans");
+    serde_json::to_writer(file, &json!({ "corpus": AMM_V4_ROUTES, "plans": plans }))
+        .expect("writing matrix plans");
+}
+
+type CrossRoute = (
+    &'static str,
+    [&'static str; 2],
+    [&'static str; 2],
+    &'static str,
+    &'static str,
+    &'static str,
+);
+
+fn clmm_cross_matrix() -> [CrossRoute; 4] {
+    [
+        (
+            "clmm_to_cpmm",
+            [CLMM_SOL_USDC, CPMM_USDC_USDT],
+            ["raydium_clmm", "raydium_cpmm"],
+            WSOL,
+            USDT,
+            "10000000",
+        ),
+        (
+            "cpmm_to_clmm",
+            [CPMM_USDC_USDT, CLMM_SOL_USDC],
+            ["raydium_cpmm", "raydium_clmm"],
+            USDT,
+            WSOL,
+            "1000000",
+        ),
+        (
+            "clmm_to_amm_v4",
+            [CLMM_SOL_USDC, V4_USDC_USDT],
+            ["raydium_clmm", "raydium_amm_v4"],
+            WSOL,
+            USDT,
+            "10000000",
+        ),
+        (
+            "amm_v4_to_clmm",
+            [V4_USDC_USDT, CLMM_SOL_USDC],
+            ["raydium_amm_v4", "raydium_clmm"],
+            USDT,
+            WSOL,
+            "1000000",
+        ),
+    ]
+}
+
+async fn clmm_cross_plan(
+    name: &str,
+    pools: [&str; 2],
+    dexes: [&str; 2],
+    from: &str,
+    to: &str,
+    amount: &str,
+) -> Value {
+    let captured = universe::load_selected_from(CLMM_CROSS, &pools);
+    assert!(
+        captured.skipped.is_empty(),
+        "{name}: {:?}",
+        captured.skipped
+    );
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": from,
+        "toTokenAddress": to,
+        "amount": amount,
+        "maxHops": 2,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{name}: {quote}");
+    let legs = quote["legs"].as_array().expect("route legs");
+    assert_eq!(legs.len(), 2, "{name}");
+    for (leg, (pool, dex)) in legs.iter().zip(pools.into_iter().zip(dexes)) {
+        assert_eq!(leg["poolAddress"], pool, "{name}");
+        assert_eq!(leg["dex"], dex, "{name}");
+    }
+    let body = json!({
+        "userPublicKey": ORACLE_PAYER,
+        "wrapAndUnwrapSol": false,
+        "quoteRequest": request,
+    });
+    for path in ["/swap-instructions", "/swap"] {
+        let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
+        assert_eq!(status, StatusCode::OK, "{name} {path}: {built}");
+        assert_eq!(built["quote"]["legs"], quote["legs"], "{name} {path}");
+    }
+    let plan = scenario_plan(&fixture, name, &quote, false, None).await;
+    assert_hop_minimums(&plan, &quote, name);
+    plan
+}
+
+#[tokio::test]
+async fn clmm_cross_dex_routes_build_v1_in_both_directions() {
+    use base64::Engine as _;
+    for (name, pools, dexes, from, to, amount) in clmm_cross_matrix() {
+        let plan = clmm_cross_plan(name, pools, dexes, from, to, amount).await;
+        let transaction = base64::engine::general_purpose::STANDARD
+            .decode(plan["transaction"].as_str().expect("unsigned transaction"))
+            .expect("base64 transaction");
+        assert_eq!(transaction[0], 0x81, "{name}");
+        assert!(
+            transaction.len() <= 4096,
+            "{name}: {} bytes",
+            transaction.len()
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "writes same-slot CLMM cross-DEX plans for LiteSVM replay"]
+async fn router_clmm_cross_plans() {
+    let out = std::env::var("ROUTER_CLMM_CROSS_PLANS").expect("names the plans file");
+    let mut plans = Vec::new();
+    for (name, pools, dexes, from, to, amount) in clmm_cross_matrix() {
+        plans.push(clmm_cross_plan(name, pools, dexes, from, to, amount).await);
+    }
+    let file = std::fs::File::create(&out).expect("creating cross-DEX plans");
+    serde_json::to_writer(file, &json!({ "corpus": CLMM_CROSS, "plans": plans }))
+        .expect("writing cross-DEX plans");
+}
+
+async fn amm_v4_token22_plan() -> Value {
+    let fixture = Fixture::over_selected(AMM_V4_TOKEN22, &[V4_SOL_USDC, CPMM_SOL_SOLADAO], 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": USDC,
+        "toTokenAddress": SOLADAO,
+        "amount": "1000000",
+        "maxHops": 2,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{quote}");
+    let legs = quote["legs"].as_array().expect("legs");
+    assert_eq!(legs.len(), 2);
+    assert_eq!(legs[0]["poolAddress"], V4_SOL_USDC);
+    assert_eq!(legs[0]["dex"], "raydium_amm_v4");
+    assert_eq!(legs[1]["poolAddress"], CPMM_SOL_SOLADAO);
+    assert_eq!(legs[1]["dex"], "raydium_cpmm");
+    let body = json!({
+        "userPublicKey": ORACLE_PAYER,
+        "wrapAndUnwrapSol": false,
+        "quoteRequest": request,
+    });
+    for path in ["/swap-instructions", "/swap"] {
+        let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {built}");
+        assert_eq!(built["quote"]["legs"], quote["legs"]);
+    }
+    scenario_plan(&fixture, "amm_v4_to_cpmm_token22_fee", &quote, false, None).await
+}
+
+#[tokio::test]
+async fn amm_v4_then_cpmm_token_2022_fee_route_builds() {
+    let _ = amm_v4_token22_plan().await;
+}
+
+#[tokio::test]
+#[ignore = "writes the AMM v4 / Token-2022 plan for LiteSVM replay"]
+async fn router_amm_v4_token22_plans() {
+    let out = std::env::var("ROUTER_AMM_V4_TOKEN22_PLANS").expect("names plans file");
+    let plan = amm_v4_token22_plan().await;
+    let file = std::fs::File::create(&out).expect("creating plans file");
+    serde_json::to_writer(file, &json!({ "corpus": AMM_V4_TOKEN22, "plans": [plan] }))
+        .expect("writing plans");
 }
 
 /// The swaps `just router-replay` runs as scenarios over `scenario_pools`,
