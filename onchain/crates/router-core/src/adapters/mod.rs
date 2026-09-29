@@ -7,6 +7,7 @@ use crate::{BuiltHop, HopAccountView, HopMeta, RouterError};
 pub struct HopInput<'a> {
     pub window: &'a [HopAccountView<'a>],
     pub amount_in: u64,
+    pub min_out: u64,
     pub user: &'a [u8; 32],
 }
 
@@ -16,6 +17,8 @@ fn kind(hop: Hop) -> Result<HopKind, RouterError> {
 
 pub fn window_len(hop: Hop) -> Result<usize, RouterError> {
     match kind(hop)? {
+        HopKind::RaydiumAmmV4 => raydium::amm_v4::window_len(hop),
+        HopKind::RaydiumClmm => raydium::clmm::window_len(hop),
         HopKind::RaydiumCpmm => raydium::cpmm::window_len(hop),
     }
 }
@@ -25,6 +28,8 @@ pub fn build(hop: Hop, input: &HopInput) -> Result<BuiltHop, RouterError> {
         return Err(RouterError::BadWindow);
     }
     match kind(hop)? {
+        HopKind::RaydiumAmmV4 => raydium::amm_v4::build(input),
+        HopKind::RaydiumClmm => raydium::clmm::build(hop, input),
         HopKind::RaydiumCpmm => raydium::cpmm::build(input),
     }
 }

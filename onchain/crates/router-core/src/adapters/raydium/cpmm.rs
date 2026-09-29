@@ -24,7 +24,7 @@ const POOL: usize = 4;
 const IN_ATA: usize = 5;
 const OUT_ATA: usize = 6;
 
-// CPMM refuses mints with a transfer hook and has no variable accounts.
+// CPMM passes no hook extras; an inert hook extension needs none.
 pub fn window_len(hop: Hop) -> Result<usize, RouterError> {
     if hop.hook_a != 0 || hop.hook_b != 0 || hop.tail != 0 {
         return Err(RouterError::BadWindow);
@@ -47,7 +47,7 @@ pub fn build(input: &HopInput) -> Result<BuiltHop, RouterError> {
     let mut data = Vec::with_capacity(24);
     data.extend_from_slice(&SWAP_BASE_INPUT);
     data.extend_from_slice(&input.amount_in.to_le_bytes());
-    data.extend_from_slice(&0u64.to_le_bytes());
+    data.extend_from_slice(&input.min_out.to_le_bytes());
     Ok(BuiltHop {
         ix: HopInstruction {
             program_id: PROGRAM_ID,

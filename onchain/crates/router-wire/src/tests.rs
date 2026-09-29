@@ -7,25 +7,29 @@ fn two_hop_route() -> RouterInstruction {
             hook_a: 0,
             hook_b: 0,
             tail: 0,
+            min_out: 11,
         },
         Hop {
             kind: 1,
             hook_a: 2,
             hook_b: 0,
             tail: 3,
+            min_out: 22,
         },
     ];
     RouterInstruction::Route(Route::new(1_000, 0x0102_0304_0506_0708, &hops).unwrap())
 }
 
 #[rustfmt::skip]
-const TWO_HOP_ROUTE_BYTES: [u8; 27] = [
-    0, 1,
+const TWO_HOP_ROUTE_BYTES: [u8; 43] = [
+    0, 2,
     0xe8, 0x03, 0, 0, 0, 0, 0, 0,
     0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
     2,
     3, 0, 0, 0,
+    11, 0, 0, 0, 0, 0, 0, 0,
     1, 2, 0, 3,
+    22, 0, 0, 0, 0, 0, 0, 0,
 ];
 
 #[test]
@@ -53,7 +57,7 @@ fn every_instruction_matches_the_documented_bytes() {
 #[test]
 fn malformed_instruction_data_is_refused_with_its_reason() {
     let mut wrong_version = TWO_HOP_ROUTE_BYTES;
-    wrong_version[1] = 2;
+    wrong_version[1] = 1;
     let mut zero_hops = TWO_HOP_ROUTE_BYTES[..19].to_vec();
     zero_hops[18] = 0;
     let mut five_hops = TWO_HOP_ROUTE_BYTES.to_vec();

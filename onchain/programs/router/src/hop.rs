@@ -34,6 +34,7 @@ pub fn build(
         &HopInput {
             window: &views,
             amount_in,
+            min_out: hop.min_out,
             user,
         },
     )
