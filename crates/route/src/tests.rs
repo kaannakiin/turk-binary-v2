@@ -362,6 +362,32 @@ fn a_session_keeps_the_state_it_pinned_while_a_new_session_sees_the_update() {
 }
 
 #[test]
+fn a_memoized_session_prices_each_distinct_quote_once() {
+    let recorded = recorded();
+    let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);
+    let edge = rig.edge(&recorded.pool);
+    rig.publish(view(&recorded, Readiness::Ready, 55));
+    let mut session = rig.reader.session().unwrap();
+    session.memoize();
+
+    let expected = oracle(&recorded, &rig.feed, 1_000_000);
+    for _ in 0..2 {
+        assert_eq!(
+            session.quote(edge, 1_000_000, 0).unwrap().out.amount_out,
+            expected
+        );
+    }
+    assert_eq!(session.quotes_computed(), 1);
+
+    session.quote(edge, 1_000_000, 1).unwrap();
+    assert_eq!(
+        session.quote(edge, 2_000_000, 0).unwrap().out.amount_out,
+        oracle(&recorded, &rig.feed, 2_000_000)
+    );
+    assert_eq!(session.quotes_computed(), 3);
+}
+
+#[test]
 fn an_unchanged_republish_keeps_a_pinned_pool_current() {
     let recorded = recorded();
     let mut rig = rig(&[(recorded.pool, DexKind::PumpAmm)]);

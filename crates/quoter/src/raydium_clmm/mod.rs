@@ -1,5 +1,5 @@
-use std::cell::RefCell;
-use std::collections::{BTreeMap, VecDeque};
+use std::cell::{OnceCell, RefCell, RefMut};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anchor_lang_032::prelude::{AccountInfo, Pubkey as AnchorPubkey};
@@ -8,7 +8,7 @@ use dex::{Role, Side};
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 use domain::{DexKind, Pubkey, SwapWindow, TokenSide, WindowAccount};
 use raydium_clmm::error::ErrorCode;
-use raydium_clmm::instructions::{SwapInternalResult, swap_internal_with_key};
+use raydium_clmm::instructions::{SwapInternalResult, TickArrayFeed, swap_internal_with_key};
 use raydium_clmm::libraries::tick_math;
 use raydium_clmm::states::{
     AmmConfig, ObservationState, PoolState, TickArrayBitmapExtension, TickArrayState,
@@ -68,6 +68,31 @@ const fn side_index(side: Side) -> usize {
 fn decode_pod<T: bytemuck::AnyBitPattern + Discriminator>(data: &[u8]) -> Option<T> {
     let body = data.strip_prefix(T::DISCRIMINATOR)?;
     bytemuck::try_pod_read_unaligned(body.get(..std::mem::size_of::<T>())?).ok()
+}
+
+// The swap writes to every array it draws, so each needs its own copy, but most
+// swaps stop after one or two of the walk: copying on draw skips the rest.
+struct DrawnArray<'a> {
+    source: &'a TickArrayState,
+    copy: OnceCell<RefCell<TickArrayState>>,
+}
+
+struct WalkFeed<'a>(std::slice::Iter<'a, DrawnArray<'a>>);
+
+impl<'a> TickArrayFeed<'a> for WalkFeed<'a> {
+    fn next_tick_array(&mut self) -> Option<RefMut<'a, TickArrayState>> {
+        let array = self.0.next()?;
+        Some(
+            array
+                .copy
+                .get_or_init(|| RefCell::new(*array.source))
+                .borrow_mut(),
+        )
+    }
+
+    fn remaining(&self) -> usize {
+        self.0.len()
+    }
 }
 
 fn transfer_fee(fee: Option<TransferFee>, amount: u64) -> Result<u64, QuoteError> {
@@ -149,7 +174,7 @@ impl Clmm {
         pool: &PoolState,
         zero_for_one: bool,
         max: u8,
-    ) -> Result<Vec<RefCell<TickArrayState>>, QuoteError> {
+    ) -> Result<Vec<DrawnArray<'_>>, QuoteError> {
         let extension = self.extension.as_ref().map(|e| e.1);
         let (_, first) = pool
             .get_first_initialized_tick_array(&extension, zero_for_one)
@@ -163,7 +188,10 @@ impl Clmm {
             let Some(array) = self.arrays.get(&start) else {
                 break;
             };
-            cells.push(RefCell::new(**array));
+            cells.push(DrawnArray {
+                source: array,
+                copy: OnceCell::new(),
+            });
             next = pool
                 .next_initialized_tick_array_start_index(&extension, start, zero_for_one)
                 .ok()
@@ -187,7 +215,7 @@ impl Clmm {
         let pool_key = self.key.ok_or(QuoteError::Incomplete(Role::Pool))?;
         let cells = self.walk(pool, zero_for_one, max_arrays)?;
         let given = cells.len();
-        let mut arrays: VecDeque<_> = cells.iter().map(RefCell::borrow_mut).collect();
+        let mut arrays = WalkFeed(cells.iter());
         let pool_cell = RefCell::new(*pool);
         let mut observation: ObservationState = bytemuck::Zeroable::zeroed();
         observation.pool_id = pool_key;

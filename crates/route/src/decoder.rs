@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use bytes::Bytes;
@@ -241,6 +241,7 @@ impl Decoder {
                     error: None,
                     panicked: false,
                     revision: Revision::default(),
+                    writes: OnceLock::new(),
                 },
             );
             self.mark(&pool, false);
@@ -260,6 +261,7 @@ impl Decoder {
             panicked,
             view: Arc::clone(view),
             revision: Revision::default(),
+            writes: OnceLock::new(),
         };
         if panicked {
             self.pools.remove(&pool);

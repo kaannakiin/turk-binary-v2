@@ -186,6 +186,9 @@ impl SearchSession {
             max_hops: query.max_hops.min(options.max_operations),
             ..*query
         };
+        if !options.single_route_only && query.goal != Goal::Cycle {
+            self.memoize();
+        }
         let found = self.search_widening(&bounded, &restricted);
         let target = match query.goal {
             Goal::To(mint) => mint,

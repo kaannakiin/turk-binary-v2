@@ -72,12 +72,12 @@ yellowstone-grpc-proto = { version = "12.7.0", features = ["account-data-as-byte
 raydium-cp-swap = { git = "https://github.com/kaannakiin/raydium-cp-swap", rev = "8055493659a014b7b0d00ff8d1391edba6792779", default-features = false, features = ["no-entrypoint"] }
 # src: kaannakiin/raydium-clmm@1de19c560b751cb685dea31e1aeb18f2f2602525 (raydium-io/raydium-clmm@51fdba2 + swap_internal_with_key, TickArrayFeed)
 raydium-clmm = { git = "https://github.com/kaannakiin/raydium-clmm", rev = "1de19c560b751cb685dea31e1aeb18f2f2602525", default-features = false, features = ["no-entrypoint", "client"] }
-# src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052 (client@8.0.0 tag + compute_swap by reference, post-swap state in SwapResult)
-orca_whirlpools_client = { git = "https://github.com/kaannakiin/whirlpools", rev = "536d2dac6c53eb50da09b4534ac5113b5c5c7052" }
-orca_whirlpools_core = { git = "https://github.com/kaannakiin/whirlpools", rev = "536d2dac6c53eb50da09b4534ac5113b5c5c7052" }
-# src: kaannakiin/damm-v2@0506639d8137024301829854d545533c2b9d1ea5 (MeteoraAg/damm-v2@2565067 + curve errors instead of panics)
-damm-v2-sdk = { package = "rust-sdk", git = "https://github.com/kaannakiin/damm-v2", rev = "0506639d8137024301829854d545533c2b9d1ea5" }
-cp-amm = { git = "https://github.com/kaannakiin/damm-v2", rev = "0506639d8137024301829854d545533c2b9d1ea5", features = ["no-entrypoint", "no-custom-entrypoint"] }
+# src: kaannakiin/whirlpools@86ea599eebe33ab4553a9bd273b5653dab90869b (client@8.0.0 tag + compute_swap by reference, post-swap state in SwapResult, TickArraySequence over borrowed arrays)
+orca_whirlpools_client = { git = "https://github.com/kaannakiin/whirlpools", rev = "86ea599eebe33ab4553a9bd273b5653dab90869b" }
+orca_whirlpools_core = { git = "https://github.com/kaannakiin/whirlpools", rev = "86ea599eebe33ab4553a9bd273b5653dab90869b" }
+# src: kaannakiin/damm-v2@cdabcae224286f859d33afb73d012b615c466268 (MeteoraAg/damm-v2@2565067 + curve errors instead of panics, exact integer Newton sqrt_u256)
+damm-v2-sdk = { package = "rust-sdk", git = "https://github.com/kaannakiin/damm-v2", rev = "cdabcae224286f859d33afb73d012b615c466268" }
+cp-amm = { git = "https://github.com/kaannakiin/damm-v2", rev = "cdabcae224286f859d33afb73d012b615c466268", features = ["no-entrypoint", "no-custom-entrypoint"] }
 # src: kaannakiin/dlmm-sdk@28e1f83f053aa64a80e33b5a0c71d5f509e2384d (MeteoraAg/dlmm-sdk@4eaaeaa + BinArraySource quote, RPC helpers behind `rpc`)
 commons = { git = "https://github.com/kaannakiin/dlmm-sdk", rev = "28e1f83f053aa64a80e33b5a0c71d5f509e2384d", default-features = false }
 solana-sdk-2 = { package = "solana-sdk", version = "2" }

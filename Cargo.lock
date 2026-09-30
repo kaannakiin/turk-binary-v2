@@ -1865,7 +1865,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 [[package]]
 name = "cp-amm"
 version = "0.2.3"
-source = "git+https://github.com/kaannakiin/damm-v2?rev=0506639d8137024301829854d545533c2b9d1ea5#0506639d8137024301829854d545533c2b9d1ea5"
+source = "git+https://github.com/kaannakiin/damm-v2?rev=cdabcae224286f859d33afb73d012b615c466268#cdabcae224286f859d33afb73d012b615c466268"
 dependencies = [
  "anchor-lang 1.2.0",
  "anchor-spl 1.2.0",
@@ -2206,7 +2206,7 @@ dependencies = [
 [[package]]
 name = "derive-variant-count"
 version = "0.1.0"
-source = "git+https://github.com/kaannakiin/damm-v2?rev=0506639d8137024301829854d545533c2b9d1ea5#0506639d8137024301829854d545533c2b9d1ea5"
+source = "git+https://github.com/kaannakiin/damm-v2?rev=cdabcae224286f859d33afb73d012b615c466268#cdabcae224286f859d33afb73d012b615c466268"
 dependencies = [
  "quote",
  "syn 2.0.119",
@@ -3924,7 +3924,7 @@ dependencies = [
 [[package]]
 name = "orca_whirlpools_client"
 version = "8.0.0"
-source = "git+https://github.com/kaannakiin/whirlpools?rev=536d2dac6c53eb50da09b4534ac5113b5c5c7052#536d2dac6c53eb50da09b4534ac5113b5c5c7052"
+source = "git+https://github.com/kaannakiin/whirlpools?rev=86ea599eebe33ab4553a9bd273b5653dab90869b#86ea599eebe33ab4553a9bd273b5653dab90869b"
 dependencies = [
  "borsh 1.8.1",
  "num-derive 0.4.2",
@@ -3943,7 +3943,7 @@ dependencies = [
 [[package]]
 name = "orca_whirlpools_core"
 version = "2.1.1"
-source = "git+https://github.com/kaannakiin/whirlpools?rev=536d2dac6c53eb50da09b4534ac5113b5c5c7052#536d2dac6c53eb50da09b4534ac5113b5c5c7052"
+source = "git+https://github.com/kaannakiin/whirlpools?rev=86ea599eebe33ab4553a9bd273b5653dab90869b#86ea599eebe33ab4553a9bd273b5653dab90869b"
 dependencies = [
  "ethnum",
  "libm",
@@ -3953,7 +3953,7 @@ dependencies = [
 [[package]]
 name = "orca_whirlpools_macros"
 version = "1.0.5"
-source = "git+https://github.com/kaannakiin/whirlpools?rev=536d2dac6c53eb50da09b4534ac5113b5c5c7052#536d2dac6c53eb50da09b4534ac5113b5c5c7052"
+source = "git+https://github.com/kaannakiin/whirlpools?rev=86ea599eebe33ab4553a9bd273b5653dab90869b#86ea599eebe33ab4553a9bd273b5653dab90869b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4947,7 +4947,7 @@ checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
 [[package]]
 name = "rust-sdk"
 version = "0.2.3"
-source = "git+https://github.com/kaannakiin/damm-v2?rev=0506639d8137024301829854d545533c2b9d1ea5#0506639d8137024301829854d545533c2b9d1ea5"
+source = "git+https://github.com/kaannakiin/damm-v2?rev=cdabcae224286f859d33afb73d012b615c466268#cdabcae224286f859d33afb73d012b615c466268"
 dependencies = [
  "anyhow",
  "cp-amm",
@@ -10669,9 +10669,9 @@ dependencies = [
 
 [[package]]
 name = "yoke-derive"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33811428bee40dbceb6d545e95754741d17a6aef9a4849f0fd62e2ba4f412a78"
+checksum = "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71"
 dependencies = [
  "proc-macro2",
  "quote",
