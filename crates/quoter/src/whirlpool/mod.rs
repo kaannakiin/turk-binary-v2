@@ -248,24 +248,20 @@ impl Whirlpools {
         Ok(())
     }
 
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "TickArraySequence takes its three arrays by value"
-    )]
     fn sequence(
         &self,
         pool: &Whirlpool,
         starts: &[i32],
         max: u8,
-    ) -> Result<TickArraySequence<SWAP_TICK_ARRAYS>, QuoteError> {
-        let mut slots = [None; SWAP_TICK_ARRAYS];
+    ) -> Result<TickArraySequence<SWAP_TICK_ARRAYS, Arc<TickArrayFacade>>, QuoteError> {
+        let mut slots: [Option<Arc<TickArrayFacade>>; SWAP_TICK_ARRAYS] = Default::default();
         for (slot, start) in slots.iter_mut().zip(starts.iter().take(usize::from(max))) {
             *slot = Some(match self.arrays.get(start) {
-                Some(Some(array)) => **array,
-                Some(None) => TickArrayFacade {
+                Some(Some(array)) => Arc::clone(array),
+                Some(None) => Arc::new(TickArrayFacade {
                     start_tick_index: *start,
                     ticks: [TickFacade::default(); TICK_ARRAY_SIZE],
-                },
+                }),
                 None => {
                     if slot_is_first(starts, *start) {
                         return Err(QuoteError::Incomplete(Role::TickArray { start: *start }));
@@ -277,7 +273,7 @@ impl Whirlpools {
         TickArraySequence::new(slots, pool.tick_spacing).map_err(|_| QuoteError::Liquidity)
     }
 
-    // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052 rust-sdk/core/src/quote/swap.rs (swap_quote_by_input_token: transfer fee in, compute_swap, transfer fee out)
+    // src: kaannakiin/whirlpools@86ea599eebe33ab4553a9bd273b5653dab90869b rust-sdk/core/src/quote/swap.rs (swap_quote_by_input_token: transfer fee in, compute_swap, transfer fee out)
     pub(crate) fn quote(&self, input: &QuoteInput<'_>) -> Result<QuoteOut, QuoteError> {
         let (pool, facade) = self
             .pool
