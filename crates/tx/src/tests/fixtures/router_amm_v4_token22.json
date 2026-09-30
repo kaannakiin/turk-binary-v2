@@ -1,7 +1,7 @@
 {
   "provenance": {
     "corpus_sha256": "a09aa31d2d269d0ac84511ce861b1d628774bd120aa02465d2d8398f75b5621d",
-    "router_sha256": "751dd3df3fc93d09364d86c5c0a470388dcafe0aadff8bdebb996b65d96011ae",
+    "router_sha256": "dd1f855362f7743bfcb9bde71e0629c8ec8a4357362a3b0b7db43a8db306890a",
     "litesvm": "0.17.0"
   },
   "observations": [
@@ -31,7 +31,7 @@
         6871864,
         22980106318
       ],
-      "compute_units": 89395,
+      "compute_units": 89361,
       "fee": 5000,
       "tokens": {
         "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi": {

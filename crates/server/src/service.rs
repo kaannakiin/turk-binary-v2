@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::num::{NonZeroU8, NonZeroU64};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -97,6 +98,45 @@ struct Swappable<'a> {
     user: Pubkey,
     wrap_sol: bool,
     max_arrays: u8,
+    slippage_bps: u16,
+    refused_unprofitable_cycle: Cell<bool>,
+}
+
+/// The quoted amount less slippage; `None` at zero, which the router could not tell
+/// from no output.
+pub(crate) fn min_out(amount_out: u64, slippage_bps: u16) -> Option<u64> {
+    tx::min_out(amount_out, slippage_bps).filter(|&min| min > 0)
+}
+
+/// Each operation's threshold, `(amount_out, destination slot)` in route order: its
+/// quoted output less slippage, raised to the route's on its one terminal operation.
+pub(crate) fn hop_min_outs(
+    operations: impl Iterator<Item = (u64, u8)> + Clone,
+    slippage_bps: u16,
+    route_min_out: u64,
+) -> Option<Vec<u64>> {
+    let terminal = operations
+        .clone()
+        .filter(|&(_, destination)| destination == 1)
+        .count();
+    operations
+        .map(|(out, destination)| {
+            let min = min_out(out, slippage_bps)?;
+            Some(if terminal == 1 && destination == 1 {
+                min.max(route_min_out)
+            } else {
+                min
+            })
+        })
+        .collect()
+}
+
+impl Swappable<'_> {
+    fn note(&self, error: &tx::TxError) {
+        if matches!(error, tx::TxError::UnprofitableCycle { .. }) {
+            self.refused_unprofitable_cycle.set(true);
+        }
+    }
 }
 
 impl Filter for Swappable<'_> {
@@ -159,22 +199,14 @@ fn admissible_flow(
             denominator: op.allocation.denominator,
         })
         .collect();
-    let min_out = if slots.first()?.mint == slots.get(1)?.mint {
-        flow.amount_in.checked_add(1)?
-    } else {
-        1
-    };
-    let minima: Vec<_> = flow
-        .operations
-        .iter()
-        .map(|op| {
-            if op.allocation.destination == 1 {
-                min_out
-            } else {
-                1
-            }
-        })
-        .collect();
+    let min_out = min_out(flow.amount_out, filter.slippage_bps)?;
+    let minima = hop_min_outs(
+        flow.operations
+            .iter()
+            .map(|op| (op.leg.amount_out, op.allocation.destination)),
+        filter.slippage_bps,
+        min_out,
+    )?;
     let linear = windows.len() <= tx::MAX_HOPS
         && allocations.iter().all(|a| a.numerator == a.denominator)
         && allocations
@@ -189,6 +221,7 @@ fn admissible_flow(
             hop_min_outs: &minima,
             wrap_sol: filter.wrap_sol,
         })
+        .inspect_err(|error| filter.note(error))
         .ok()?
     } else {
         tx::build_flow(&tx::FlowSwapRequest {
@@ -201,6 +234,7 @@ fn admissible_flow(
             min_out,
             wrap_sol: filter.wrap_sol,
         })
+        .inspect_err(|error| filter.note(error))
         .ok()?
     };
     tx::unsigned_v1(&instructions, &filter.user, [0; 32], 0).ok()?;
@@ -268,6 +302,8 @@ pub(crate) enum ServiceError {
     StaleData { age_ms: u128 },
     #[error("no route found")]
     NoRoute(SearchQuality),
+    #[error("every cycle found pays back no more than it spends once slippage is taken")]
+    UnprofitableCycle(SearchQuality),
     #[error("a pool of the route changed while it was priced again")]
     RouteChanged(#[source] Changed),
     #[error("the quote is {age} slots old, at most {max} are accepted")]
@@ -343,17 +379,23 @@ impl<F: PoolFeed> QuoteService<F> {
         request: &RouteRequest,
         user: Pubkey,
         wrap_sol: bool,
+        slippage_bps: u16,
     ) -> Result<Priced, ServiceError> {
-        self.price(
-            request,
-            &Swappable {
-                dexes: &request.dexes,
-                user,
-                wrap_sol,
-                max_arrays: self.settings.max_arrays,
-            },
-            true,
-        )
+        let filter = Swappable {
+            dexes: &request.dexes,
+            user,
+            wrap_sol,
+            max_arrays: self.settings.max_arrays,
+            slippage_bps,
+            refused_unprofitable_cycle: Cell::new(false),
+        };
+        self.price(request, &filter, true)
+            .map_err(|error| match error {
+                ServiceError::NoRoute(search) if filter.refused_unprofitable_cycle.get() => {
+                    ServiceError::UnprofitableCycle(search)
+                }
+                other => other,
+            })
     }
 
     fn price(

@@ -1,7 +1,7 @@
 {
   "provenance": {
     "corpus_sha256": "042e8b5e2410cec6201fc44a87a10f5adba07cf935f9dd9726b20d1850bbcdef",
-    "router_sha256": "751dd3df3fc93d09364d86c5c0a470388dcafe0aadff8bdebb996b65d96011ae",
+    "router_sha256": "dd1f855362f7743bfcb9bde71e0629c8ec8a4357362a3b0b7db43a8db306890a",
     "litesvm": "0.17.0"
   },
   "keys": {
@@ -22,7 +22,7 @@
         8548637,
         1803345711
       ],
-      "compute_units": 89443,
+      "compute_units": 89390,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -115,7 +115,7 @@
       "venue_out": [
         8548637
       ],
-      "compute_units": 66994,
+      "compute_units": 66962,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -208,7 +208,7 @@
       "venue_out": [
         8548637
       ],
-      "compute_units": 57920,
+      "compute_units": 57888,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -301,7 +301,7 @@
       "venue_out": [
         62966411
       ],
-      "compute_units": 47211,
+      "compute_units": 47179,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -394,7 +394,7 @@
       "venue_out": [
         5327319438
       ],
-      "compute_units": 53024,
+      "compute_units": 52992,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -488,7 +488,7 @@
         8548637,
         8440360015715
       ],
-      "compute_units": 104337,
+      "compute_units": 104284,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -581,7 +581,7 @@
       "venue_out": [
         9480303
       ],
-      "compute_units": 56530,
+      "compute_units": 56498,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -675,7 +675,7 @@
         21123375256,
         10558615
       ],
-      "compute_units": 111806,
+      "compute_units": 111753,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -768,7 +768,7 @@
       "venue_out": [
         335094141285
       ],
-      "compute_units": 55047,
+      "compute_units": 55015,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -861,7 +861,7 @@
       "venue_out": [
         312754531866
       ],
-      "compute_units": 55043,
+      "compute_units": 55011,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -954,7 +954,7 @@
       "venue_out": [
         10226
       ],
-      "compute_units": 61462,
+      "compute_units": 61430,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -1047,7 +1047,7 @@
       "venue_out": [
         8548637
       ],
-      "error": "InstructionError(1, Custom(6013)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "error": "InstructionError(1, Custom(6013)) Program log: Instruction: SwapBaseInput | Program data: QMbN6CYIceIJxxMqZsfAMmyMzfirWODUaRqj/AvTK0+f06qqdLNU2+FKFA8AAAAA9nXMAQAAAAAA4fUFAAAAAB1xggAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGm4hX/quBhPtof2NGGMA12sQ53BrrO1WYoPAAAAAAAcb6evO+2606PWXzaqvJdDGxu+TC0vbg5HymAgNFL11hiBMAAAAAAAAAAAAAAAAAAAE= | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 112 of 1371936 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 105 of 1369761 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 24445 of 1392519 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 32173 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
           "before": null,
@@ -1139,7 +1139,7 @@
       "venue_out": [
         8548637
       ],
-      "compute_units": 32345,
+      "compute_units": 32313,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -1232,7 +1232,7 @@
       "venue_out": [
         8548637
       ],
-      "error": "InstructionError(1, Custom(6010)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
+      "error": "InstructionError(1, Custom(6010)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C invoke [2] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 83 of 1391198 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 76 of 1385496 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 7109 of 1392519 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 14698 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
           "before": null,
@@ -1324,7 +1324,7 @@
       "venue_out": [
         8548637
       ],
-      "compute_units": 15009,
+      "compute_units": 14977,
       "fee": 5000,
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
@@ -1417,7 +1417,7 @@
       "venue_out": [
         8548637
       ],
-      "error": "InstructionError(1, Custom(6010)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
+      "error": "InstructionError(1, Custom(6010)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C invoke [2] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 83 of 1391198 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 76 of 1385496 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 7109 of 1392519 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 14581 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
           "before": null,
@@ -1509,7 +1509,7 @@
       "venue_out": [
         8548637
       ],
-      "error": "InstructionError(1, Custom(6011)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177b",
+      "error": "InstructionError(1, Custom(6011)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C invoke [2] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 83 of 1391198 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 94 of 1385496 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 7127 of 1392519 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 14812 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177b",
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
           "before": null,
@@ -1601,7 +1601,7 @@
       "venue_out": [
         8548637
       ],
-      "error": "InstructionError(1, Custom(6012)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177c",
+      "error": "InstructionError(1, Custom(6012)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C invoke [2] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 83 of 1391198 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 76 of 1390037 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 2568 of 1392519 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 10250 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177c",
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
           "before": null,
@@ -1693,7 +1693,7 @@
       "venue_out": [
         8548637
       ],
-      "error": "InstructionError(1, Custom(6010)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
+      "error": "InstructionError(1, Custom(6010)) Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 83 of 1391199 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 118 of 1390046 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 76 of 1384312 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 8293 of 1392519 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 15658 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177a",
       "tokens": {
         "3ZLekZYq2qkZiSpnSvabjit34tUkjSwD1JFuW9as9wBG": {
           "before": null,
@@ -1780,93 +1780,93 @@
   "refusals": [
     {
       "name": "zero_min_out",
-      "error": "InstructionError(1, Custom(6001)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1771"
+      "error": "InstructionError(1, Custom(6001)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 2456 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1771"
     },
     {
       "name": "zero_in_amount",
-      "error": "InstructionError(1, Custom(6001)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1771"
+      "error": "InstructionError(1, Custom(6001)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 2453 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1771"
     },
     {
       "name": "wire_version_1",
-      "error": "InstructionError(1, Custom(6003)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1773"
+      "error": "InstructionError(1, Custom(6003)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 325 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1773"
     },
     {
       "name": "no_hops",
-      "error": "InstructionError(1, Custom(6002)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1772"
+      "error": "InstructionError(1, Custom(6002)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 334 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1772"
     },
     {
       "name": "five_hops",
-      "error": "InstructionError(1, Custom(6002)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1772"
+      "error": "InstructionError(1, Custom(6002)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 334 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1772"
     },
     {
       "name": "unknown_hop_kind",
-      "error": "InstructionError(1, Custom(6006)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1776"
+      "error": "InstructionError(1, Custom(6006)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 2525 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1776"
     },
     {
       "name": "destination_owned_by_someone_else",
-      "error": "InstructionError(1, Custom(6004)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1774"
+      "error": "InstructionError(1, Custom(6004)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 789 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1774"
     },
     {
       "name": "source_not_a_token_account",
-      "error": "InstructionError(1, Custom(6008)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1778"
+      "error": "InstructionError(1, Custom(6008)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 605 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1778"
     },
     {
       "name": "cycle_without_profit",
-      "error": "InstructionError(1, Custom(6014)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177e"
+      "error": "InstructionError(1, Custom(6014)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 2482 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177e"
     },
     {
       "name": "source_not_the_first_hop_input",
-      "error": "InstructionError(1, Custom(6009)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1779"
+      "error": "InstructionError(1, Custom(6009)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 5128 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1779"
     },
     {
       "name": "destination_not_the_last_hop_output",
-      "error": "InstructionError(1, Custom(6009)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1779"
+      "error": "InstructionError(1, Custom(6009)) Program log: Instruction: SwapBaseInput | Program data: QMbN6CYIceIJxxMqZsfAMmyMzfirWODUaRqj/AvTK0+f06qqdLNU2+FKFA8AAAAA9nXMAQAAAAAA4fUFAAAAAB1xggAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGm4hX/quBhPtof2NGGMA12sQ53BrrO1WYoPAAAAAAAcb6evO+2606PWXzaqvJdDGxu+TC0vbg5HymAgNFL11hiBMAAAAAAAAAAAAAAAAAAAE= | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 112 of 1371931 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 105 of 1369756 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 24445 of 1392514 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 32155 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1779"
     },
     {
       "name": "window_one_account_short",
-      "error": "InstructionError(1, Custom(6005)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1775"
+      "error": "InstructionError(1, Custom(6005)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 2519 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1775"
     },
     {
       "name": "window_one_account_extra",
-      "error": "InstructionError(1, Custom(6007)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777"
+      "error": "InstructionError(1, Custom(6007)) Program log: Instruction: SwapBaseInput | Program data: QMbN6CYIceIJxxMqZsfAMmyMzfirWODUaRqj/AvTK0+f06qqdLNU2+FKFA8AAAAA9nXMAQAAAAAA4fUFAAAAAB1xggAAAAAAAAAAAAAAAAAAAAAAAAAAAAEGm4hX/quBhPtof2NGGMA12sQ53BrrO1WYoPAAAAAAAcb6evO+2606PWXzaqvJdDGxu+TC0vbg5HymAgNFL11hiBMAAAAAAAAAAAAAAAAAAAE= | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 112 of 1371921 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 105 of 1369746 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 24445 of 1392504 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 32161 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777"
     },
     {
       "name": "venue_program_swapped",
-      "error": "InstructionError(1, Custom(6007)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777"
+      "error": "InstructionError(1, Custom(6007)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 4281 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777"
     },
     {
       "name": "config_at_another_address",
-      "error": "InstructionError(1, InvalidSeeds) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: Provided seeds do not result in a valid address"
+      "error": "InstructionError(1, InvalidSeeds) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 2427 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: Provided seeds do not result in a valid address"
     },
     {
       "name": "user_not_signing",
-      "error": "InstructionError(1, MissingRequiredSignature) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: missing required signature for instruction"
+      "error": "InstructionError(1, MissingRequiredSignature) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 543 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: missing required signature for instruction"
     }
   ],
   "admin": [
     {
       "name": "route_before_initialize",
-      "error": "InstructionError(1, InvalidAccountOwner) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: Invalid account owner"
+      "error": "InstructionError(1, InvalidAccountOwner) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 815 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: Invalid account owner"
     },
     {
       "name": "initialize_by_a_stranger",
-      "error": "InstructionError(0, Custom(6017)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1781"
+      "error": "InstructionError(0, Custom(6017)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 9352 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1781"
     },
     {
       "name": "initialize_with_another_program_data",
-      "error": "InstructionError(0, Custom(6018)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1782"
+      "error": "InstructionError(0, Custom(6018)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 9258 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1782"
     },
     {
       "name": "initialize_with_another_system_program",
-      "error": "InstructionError(0, IncorrectProgramId) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: incorrect program id for instruction"
+      "error": "InstructionError(0, IncorrectProgramId) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 207 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: incorrect program id for instruction"
     },
     {
       "name": "initialize_off_the_config_address",
-      "error": "InstructionError(0, InvalidSeeds) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: Provided seeds do not result in a valid address"
+      "error": "InstructionError(0, InvalidSeeds) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 10877 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: Provided seeds do not result in a valid address"
     },
     {
       "name": "initialize_with_a_zero_admin",
-      "error": "InstructionError(0, Custom(6016)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1780"
+      "error": "InstructionError(0, Custom(6016)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 9369 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1780"
     },
     {
       "name": "lamports_sent_to_the_config_first"
@@ -1880,7 +1880,7 @@
     },
     {
       "name": "initialize_again",
-      "error": "InstructionError(0, Custom(0)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x0",
+      "error": "InstructionError(0, Custom(0)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program 11111111111111111111111111111111 invoke [2] | Allocate: account Address { address: EDkrjGBiDEyW29o9B8c8bkSHCFZ2iMUDkYJz54g4rNF4, base: None } already in use | Program 11111111111111111111111111111111 failed: custom program error: 0x0 | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 12464 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x0",
       "config": {
         "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
         "paused": true
@@ -1888,7 +1888,7 @@
     },
     {
       "name": "route_while_paused",
-      "error": "InstructionError(1, Custom(6000)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1770",
+      "error": "InstructionError(1, Custom(6000)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 2452 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1770",
       "config": {
         "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
         "paused": true
@@ -1896,7 +1896,7 @@
     },
     {
       "name": "unpause_by_the_upgrade_authority",
-      "error": "InstructionError(0, Custom(6015)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177f",
+      "error": "InstructionError(0, Custom(6015)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 1808 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177f",
       "config": {
         "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
         "paused": true
@@ -1904,7 +1904,7 @@
     },
     {
       "name": "unpause_without_the_admin_signing",
-      "error": "InstructionError(0, MissingRequiredSignature) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: missing required signature for instruction",
+      "error": "InstructionError(0, MissingRequiredSignature) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 136 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: missing required signature for instruction",
       "config": {
         "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
         "paused": true
@@ -1927,7 +1927,7 @@
     },
     {
       "name": "set_a_zero_admin",
-      "error": "InstructionError(0, Custom(6016)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1780",
+      "error": "InstructionError(0, Custom(6016)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 159 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1780",
       "config": {
         "admin": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
         "paused": false
@@ -1942,7 +1942,7 @@
     },
     {
       "name": "pause_by_the_previous_admin",
-      "error": "InstructionError(0, Custom(6015)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177f",
+      "error": "InstructionError(0, Custom(6015)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 1806 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177f",
       "config": {
         "admin": "AoVsGaj8MSJ6xwKxfFxo9iZWH3enC8RRTXKH2fx2F8os",
         "paused": false
@@ -1957,7 +1957,7 @@
     },
     {
       "name": "route_after_pause",
-      "error": "InstructionError(1, Custom(6000)) Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1770",
+      "error": "InstructionError(1, Custom(6000)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 2452 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1770",
       "config": {
         "admin": "AoVsGaj8MSJ6xwKxfFxo9iZWH3enC8RRTXKH2fx2F8os",
         "paused": true

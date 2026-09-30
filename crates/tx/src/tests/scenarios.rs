@@ -21,6 +21,10 @@ struct Matrix {
     #[serde(default)]
     bad_windows: Vec<Swap>,
     #[serde(default)]
+    accepted_windows: Vec<Swap>,
+    #[serde(default)]
+    unguarded_moves: Vec<Swap>,
+    #[serde(default)]
     budgets: Vec<Swap>,
 }
 
@@ -288,7 +292,6 @@ fn orca_cross_dex_v1_matches_direct_venues_and_reverts_on_thresholds() {
         ("orca_to_cpmm", AI66, USDC),
         ("cpmm_to_orca", USDC, AI66),
         ("orca_to_clmm", AI66, USDC),
-        ("clmm_to_orca", USDC, AI66),
     ];
     assert_eq!(matrix.swaps.len(), orders.len());
     for (swap, (name, input, output)) in matrix.swaps.iter().zip(orders) {
@@ -329,7 +332,7 @@ fn orca_cross_dex_v1_matches_direct_venues_and_reverts_on_thresholds() {
                 .all(|change| change.before == change.after)
         );
     }
-    assert_eq!(matrix.bad_windows.len(), 9);
+    assert_eq!(matrix.bad_windows.len(), 8);
     for bad in &matrix.bad_windows {
         assert!(bad.name.starts_with("orca_"));
         assert!(
@@ -344,6 +347,35 @@ fn orca_cross_dex_v1_matches_direct_venues_and_reverts_on_thresholds() {
                 .all(|change| change.before == change.after)
         );
     }
+    let accepted: Vec<&str> = matrix
+        .accepted_windows
+        .iter()
+        .map(|swap| swap.name.as_str())
+        .collect();
+    assert_eq!(
+        accepted,
+        ["orca_reversed_arrays", "orca_price_crossed_array"]
+    );
+    for swap in &matrix.accepted_windows {
+        assert_eq!(swap.error, None, "{}", swap.name);
+        assert_eq!(
+            swap.tokens[USDC].after,
+            swap.venue_out.last().copied(),
+            "{}",
+            swap.name
+        );
+    }
+    assert_eq!(matrix.unguarded_moves.len(), 1);
+    let unguarded = &matrix.unguarded_moves[0];
+    assert!(
+        unguarded
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("InvalidTickArraySequence")),
+        "{:?}",
+        unguarded.error
+    );
+    assert!(unguarded.venue_accounts_unchanged);
     assert_eq!(matrix.budgets.len(), 2);
     for budget in &matrix.budgets {
         assert!(budget.error.is_some(), "{}", budget.name);

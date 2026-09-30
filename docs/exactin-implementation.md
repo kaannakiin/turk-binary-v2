@@ -87,22 +87,16 @@ limits; no new network activation claim is made.
 ## Integration checks (in progress)
 
 `just lint` and cargo-deny completed during the CI run. Full CI found three
-pre-existing fixture failures, reproduced unchanged in detached baseline
-`b8f2eaf` (nextest run `82968560-96e0-4f8a-aa76-fa84f85f075a`):
+fixture failures that `b8f2eaf` (this change's own Meteora/Orca adapter commit)
+introduced by adding the Raydium CLMM observation account to the swap closure:
 
 - `dex::tests::arrays::every_required_dependency_of_the_complex_pools_exists_with_an_accepted_owner`:
-  captured Raydium CLMM observation account missing.
+  the observation of `3ucNos4N…` is now captured with `scripts/capture_accounts.py`.
 - `quoter::tests::svm::raydium_clmm_pays_what_the_deployed_program_pays`:
-  observation missing for pool `2JtkunkYCRbe5YZuGU6kLFmNwN22Ba1pCicHoqW5Eqja`.
+  the observation is a swap-only dependency the quote never reads; the test now
+  decodes the quote-only closure a quote-only market streams.
 - `market::tests::a_new_bitmap_bit_subscribes_its_tick_array_and_seeds_it`:
-  initial array wait times out; separately reproduced in baseline release run
-  `ad0a7f35-5704-458f-98e4-b601806b69ee` using its isolated target directory.
+  the synthetic pool now carries an observation key, which is the sixth
+  pool-scoped subscription the test waits for.
 
-The final `just ci` run on the integrated ExactIn change completed lint and
-cargo-deny, then ran 365 tests: 362 passed, the same three baseline tests
-failed, and 16 were skipped. `cargo test --workspace --doc` passed when run
-separately. `just test-onchain` passed 30/30; `just lint-onchain`, SBF build,
-and the independent flow replay passed.
-
-Fixture bytes and assertions were not fabricated, removed, or relaxed. These
-failures prevent claiming a green full CI independently of the flow work.
+Fixture bytes and assertions were not fabricated, removed, or relaxed.

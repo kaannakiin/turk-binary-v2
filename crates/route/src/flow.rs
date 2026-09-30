@@ -224,6 +224,7 @@ impl SearchSession {
                 );
                 result.quotes += partial.quotes;
                 result.refused += partial.refused;
+                result.pruned |= partial.pruned;
                 result.exhausted |= partial.exhausted;
                 if partial.best.is_some() {
                     return partial.best;
@@ -232,6 +233,9 @@ impl SearchSession {
             None
         });
         let Some(first) = first else {
+            // Splits are only explored from a single path found at some size; with none
+            // found down to an eighth, splits of smaller parts were never tried.
+            result.pruned = true;
             result.timed_out = restricted.should_stop();
             result.exhausted |= result.timed_out || result.quotes >= query.max_quotes;
             return result;

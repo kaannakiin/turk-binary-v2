@@ -490,6 +490,7 @@ impl Clmm {
             destination,
             tail: count | if needs_extension { 0x80 } else { 0 },
             optional_tail,
+            arrays_used,
         })
     }
 }

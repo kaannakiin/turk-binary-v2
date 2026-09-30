@@ -237,6 +237,7 @@ impl AmmV4 {
             program_id: dex::spec(DexKind::RaydiumAmmV4).program_id,
             tail: 0,
             optional_tail: 0,
+            arrays_used: 0,
             accounts: vec![
                 fixed(TOKEN_PROGRAM, false),
                 fixed(address, true),

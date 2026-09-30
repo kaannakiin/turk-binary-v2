@@ -73,11 +73,15 @@ fn is_valid_start_tick(tick_index: i32, tick_spacing: u16) -> bool {
 
 fn guard_starts(starts: &[i32], tick_spacing: u16) -> [Option<i32>; 2] {
     let step = TICK_ARRAY_SIZE_I32 * i32::from(tick_spacing);
-    let first = starts.first().copied();
-    let last = starts.last().copied();
     [
-        first.and_then(|start| start.checked_sub(step)),
-        last.and_then(|start| start.checked_add(step)),
+        starts
+            .iter()
+            .min()
+            .and_then(|start| start.checked_sub(step)),
+        starts
+            .iter()
+            .max()
+            .and_then(|start| start.checked_add(step)),
     ]
     .map(|start| {
         start.filter(|&index| is_valid_start_tick(index, tick_spacing) && !starts.contains(&index))
@@ -467,6 +471,7 @@ impl Whirlpools {
             destination,
             tail: optional_tail,
             optional_tail,
+            arrays_used,
         })
     }
 }

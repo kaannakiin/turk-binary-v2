@@ -424,6 +424,7 @@ impl Dlmm {
             destination,
             tail: arrays_used,
             optional_tail: 0,
+            arrays_used,
         })
     }
 }

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use dex::{AccountView, Known, PoolAccount, Role, Side};
+use dex::{AccountView, Known, Need, PoolAccount, Role, Side};
 use domain::{ChainClock, DexKind, Pubkey, Slot};
 use serde::Deserialize;
 
@@ -116,8 +116,13 @@ fn decode(dex: DexKind, address: Pubkey, accounts: &Snapshot) -> (VenueState, Pu
     );
     let mut state = VenueState::new(dex);
     let mut mint_a = None;
-    // The Clock reaches a quote as `QuoteInput::clock`, not as an account.
-    for dep in closure.deps.iter().filter(|d| d.role != Role::Clock) {
+    // The Clock reaches a quote as `QuoteInput::clock`, not as an account; a
+    // quote-only market drops swap-only dependencies before they reach the state.
+    for dep in closure
+        .deps
+        .iter()
+        .filter(|d| d.role != Role::Clock && d.need == Need::Quote)
+    {
         if dep.role == Role::Mint(Side::A) {
             mint_a = Some(dep.pubkey);
         }

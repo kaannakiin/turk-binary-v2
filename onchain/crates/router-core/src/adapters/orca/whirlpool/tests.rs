@@ -172,21 +172,21 @@ fn fixed_and_dynamic_tick_arrays_use_their_distinct_pool_offsets() {
 }
 
 #[test]
-fn initialized_tick_arrays_must_follow_the_pool_tick_and_direction() {
+fn named_tick_arrays_away_from_the_pool_tick_or_out_of_order_reach_the_program() {
+    // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
+    // programs/whirlpool/src/util/sparse_swap.rs (SparseSwapTickSequenceBuilder::new:
+    // tick arrays can be provided in any order; extras are a fallback if the price moves).
     let mut window = Window::mixed_token_programs();
-    for (slot, start) in [(12, 0i32), (13, -88), (14, -176)] {
+    for (slot, start) in [(12, 176i32), (13, 88), (14, 264)] {
         window.owners[slot] = PROGRAM_ID;
         window.data[slot] = vec![0; 148];
         window.data[slot][..8].copy_from_slice(&[0x11, 0xd8, 0xf6, 0x8e, 0xe1, 0xc7, 0xda, 0x38]);
         window.data[slot][8..12].copy_from_slice(&start.to_le_bytes());
         window.data[slot][12..44].copy_from_slice(&window.keys[5]);
     }
-    assert!(window.build(8, HOP).is_ok());
-    window.data.swap(12, 13);
-    assert_eq!(
-        window.build(8, HOP).map(|_| ()),
-        Err(RouterError::BadWindow)
-    );
+    for source in [8, 10] {
+        assert!(window.build(source, HOP).is_ok());
+    }
 }
 
 #[test]

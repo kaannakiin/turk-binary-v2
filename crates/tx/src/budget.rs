@@ -24,9 +24,12 @@ const AMM_V4_HOP_UNITS: u32 = 50_000;
 // a four-array swap reached 1,355,658 CU. `SETUP_UNITS` covers token-account setup.
 const CLMM_HOP_UNITS: u32 = 500_000;
 const CLMM_MANY_ARRAY_UNITS: u32 = 1_250_000;
-// src: crates/quoter/src/tests/fixtures/sim/whirlpool-onchain-sim.json.gz
-// (paid mainnet simulations use at most 896,495 CU; allow CPI and router overhead).
-const WHIRLPOOL_HOP_UNITS: u32 = 1_000_000;
+// src: crates/quoter/src/tests/fixtures/sim/whirlpool-onchain-sim{,-adaptive}.json.gz: 409 paid
+// mainnet simulations, max 313,199 CU when the quote walks one array, 758,402 for two and
+// 896,495 for three. Each tier rounds 110% up to the next 10k.
+const WHIRLPOOL_ONE_ARRAY_UNITS: u32 = 350_000;
+const WHIRLPOOL_TWO_ARRAY_UNITS: u32 = 840_000;
+const WHIRLPOOL_THREE_ARRAY_UNITS: u32 = 990_000;
 // src: crates/tx/src/tests/fixtures/router_dlmm_replay.json from `oracle router` over the 152-case
 // meteora_dlmm corpus: 89 paid v1 swaps, max 277,084 CU for one array and
 // 713,797 CU for two or three. Each tier rounds 110% up to the next 10k.
@@ -121,7 +124,11 @@ pub(crate) fn limits<'a>(
                 },
             ),
             DexKind::RaydiumCpmm => Ok(CPMM_HOP_UNITS),
-            DexKind::OrcaWhirlpool => Ok(WHIRLPOOL_HOP_UNITS),
+            DexKind::OrcaWhirlpool => Ok(match hop.arrays_used {
+                1 => WHIRLPOOL_ONE_ARRAY_UNITS,
+                2 => WHIRLPOOL_TWO_ARRAY_UNITS,
+                _ => WHIRLPOOL_THREE_ARRAY_UNITS,
+            }),
             DexKind::MeteoraDlmm => match hop.tail {
                 1 => Ok(DLMM_ONE_ARRAY_UNITS),
                 2 | 3 => Ok(DLMM_THREE_ARRAY_UNITS),
@@ -136,7 +143,6 @@ pub(crate) fn limits<'a>(
             max: MAX_COMPUTE_UNITS,
         });
     }
-    let compute_units = compute_units.min(MAX_COMPUTE_UNITS);
 
     let mut invoked = BTreeSet::new();
     let mut keys = BTreeSet::from([*fee_payer]);
@@ -193,6 +199,7 @@ mod tests {
             destination: side,
             tail: arrays,
             optional_tail: 0,
+            arrays_used: arrays,
         }
     }
 
@@ -213,6 +220,7 @@ mod tests {
             destination: output,
             tail: 4,
             optional_tail: 0,
+            arrays_used: 4,
         }
     }
 

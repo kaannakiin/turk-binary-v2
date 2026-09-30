@@ -47,15 +47,6 @@ const DYNAMIC_ARRAY_DISCRIMINATOR: [u8; 8] = [0x11, 0xd8, 0xf6, 0x8e, 0xe1, 0xc7
 const FIXED_ARRAY_LEN: usize = 9_988;
 const DYNAMIC_ARRAY_MIN_LEN: usize = 148;
 // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
-// programs/whirlpool/src/state/whirlpool.rs (tick_spacing, tick_current_index layout).
-const TICK_SPACING_OFFSET: usize = 41;
-const TICK_CURRENT_OFFSET: usize = 81;
-// src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
-// programs/whirlpool/src/util/sparse_swap.rs (get_start_tick_indexes).
-const TICKS_PER_ARRAY: i32 = 88;
-const MIN_TICK_INDEX: i32 = -443_636;
-const MAX_TICK_INDEX: i32 = 443_636;
-// src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
 // programs/whirlpool/src/instructions/v2/swap.rs (memo_program address).
 const MEMO_PROGRAM_ID: [u8; 32] = [
     5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124, 124, 53, 181, 221, 188, 146,
@@ -82,79 +73,6 @@ fn valid_array(array: &crate::HopAccountView, pool: &[u8; 32]) -> bool {
         // programs/whirlpool/src/util/sparse_swap.rs (system-owned empty PDA is a sparse array).
         array.owner.iter().all(|&byte| byte == 0) && array.data.is_empty()
     }
-}
-
-fn valid_start_tick(start: i32, span: i32) -> bool {
-    if (MIN_TICK_INDEX..=MAX_TICK_INDEX).contains(&start) {
-        start.checked_rem(span) == Some(0)
-    } else {
-        MIN_TICK_INDEX
-            .checked_rem(span)
-            .and_then(|remainder| remainder.checked_add(span))
-            .and_then(|distance| MIN_TICK_INDEX.checked_sub(distance))
-            == Some(start)
-    }
-}
-
-fn valid_array_order(w: &[crate::HopAccountView<'_>], a_to_b: bool) -> bool {
-    let pool = w[POOL].data;
-    let (Some(spacing), Some(current)) = (
-        pool.get(TICK_SPACING_OFFSET..TICK_SPACING_OFFSET + 2),
-        pool.get(TICK_CURRENT_OFFSET..TICK_CURRENT_OFFSET + 4),
-    ) else {
-        return false;
-    };
-    let spacing = i32::from(u16::from_le_bytes([spacing[0], spacing[1]]));
-    let current = i32::from_le_bytes([current[0], current[1], current[2], current[3]]);
-    let Some(span) = spacing
-        .checked_mul(TICKS_PER_ARRAY)
-        .filter(|&span| span > 0)
-    else {
-        return false;
-    };
-    let Some(base) = current.div_euclid(span).checked_mul(span) else {
-        return false;
-    };
-    let (Some(next), Some(current_next)) = (base.checked_add(span), current.checked_add(spacing))
-    else {
-        return false;
-    };
-    let offsets: [i32; 3] = if a_to_b {
-        [0, -1, -2]
-    } else if current_next >= next {
-        [1, 2, 3]
-    } else {
-        [0, 1, 2]
-    };
-    let mut starts = [base; 3];
-    let mut len = 0;
-    for offset in offsets {
-        let Some(start) = offset
-            .checked_mul(span)
-            .and_then(|step| base.checked_add(step))
-        else {
-            return false;
-        };
-        if valid_start_tick(start, span) {
-            starts[len] = start;
-            len = len.saturating_add(1);
-        }
-    }
-    if len == 0 {
-        return false;
-    }
-    for (slot, array) in w[ARRAY_FIRST..ORACLE].iter().enumerate() {
-        if !array.data.is_empty() {
-            let Some(start) = array.data.get(8..12) else {
-                return false;
-            };
-            let actual = i32::from_le_bytes([start[0], start[1], start[2], start[3]]);
-            if actual != if slot < len { starts[slot] } else { starts[0] } {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 fn validate(hop: Hop, input: &HopInput) -> Result<bool, RouterError> {
@@ -199,6 +117,9 @@ fn validate(hop: Hop, input: &HopInput) -> Result<bool, RouterError> {
             return Err(RouterError::BadWindow);
         }
     }
+    // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
+    // programs/whirlpool/src/util/sparse_swap.rs (SparseSwapTickSequenceBuilder: named and
+    // supplemental arrays merge in any order and the program picks the ones the pool tick needs).
     if !(ARRAY_FIRST..ORACLE)
         .chain(FIXED_LEN..w.len())
         .all(|index| w[index].is_writable && valid_array(&w[index], w[POOL].key))
@@ -212,9 +133,6 @@ fn validate(hop: Hop, input: &HopInput) -> Result<bool, RouterError> {
     } else {
         return Err(RouterError::HopContinuityViolation);
     };
-    if !valid_array_order(w, a_to_b) {
-        return Err(RouterError::BadWindow);
-    }
     Ok(a_to_b)
 }
 

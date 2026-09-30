@@ -153,8 +153,8 @@ fn clmm_pool(bitmap_bits: &[usize]) -> Pool {
     let spec = dex::spec(DexKind::RaydiumClmm);
     let mut data = vec![0u8; 1544];
     data[..8].copy_from_slice(&spec.discriminator.unwrap());
-    let keys: Vec<Pubkey> = (0..5).map(|_| Pubkey::new_unique()).collect();
-    for (offset, key) in [9, 73, 105, 137, 169].into_iter().zip(&keys) {
+    let keys: Vec<Pubkey> = (0..6).map(|_| Pubkey::new_unique()).collect();
+    for (offset, key) in [9, 73, 105, 137, 169, 201].into_iter().zip(&keys) {
         put(&mut data, offset, key);
     }
     data[235..237].copy_from_slice(&1u16.to_le_bytes());
@@ -167,6 +167,7 @@ fn clmm_pool(bitmap_bits: &[usize]) -> Pool {
         TOKEN_PROGRAM,
         TOKEN_PROGRAM,
         TOKEN_PROGRAM,
+        spec.program_id,
     ];
     let mut deps: Vec<(Pubkey, Pubkey)> = keys.into_iter().zip(owners).collect();
     deps.push((CLOCK_SYSVAR, SYSVAR_OWNER));
@@ -599,7 +600,7 @@ async fn a_new_bitmap_bit_subscribes_its_tick_array_and_seeds_it() {
     let rig = subscribed(&pool).await;
     rig.effective_all(100).await;
     rig.until("initial arrays", |r| {
-        r.hub.keys_on(Placement::Pool).len() == 5
+        r.hub.keys_on(Placement::Pool).len() == 6
     })
     .await;
     let before = rig.hub.keys_on(Placement::Pool);

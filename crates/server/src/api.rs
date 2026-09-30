@@ -15,7 +15,7 @@ use tx::{SwapInstructions, SwapRequest, TxError};
 use crate::blockhash::BlockhashSlot;
 use crate::error::ApiError;
 use crate::executor::{Refused, SearchPool};
-use crate::service::{QuoteService, QuoteSlot, ServiceError};
+use crate::service::{self, QuoteService, QuoteSlot, ServiceError};
 use crate::settings::{QuoteSettings, SwapSettings};
 use crate::transport;
 use crate::wire::{
@@ -174,8 +174,12 @@ async fn plan<F: PoolFeed>(
 fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Result<Plan, ApiError> {
     let (priced, min_out, slippage_bps) = match swapping.source {
         SwapSource::Search(quoting) => {
-            let priced =
-                service.route_to_swap(&quoting.request, swapping.user, swapping.wrap_sol)?;
+            let priced = service.route_to_swap(
+                &quoting.request,
+                swapping.user,
+                swapping.wrap_sol,
+                quoting.slippage_bps,
+            )?;
             let min_out = threshold(priced.routed.amount_out, quoting.slippage_bps)?;
             (priced, min_out, quoting.slippage_bps)
         }
@@ -184,26 +188,16 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
             (priced, quoted.min_out, slippage_bps)
         }
     };
-    let terminal_operations = priced
-        .routed
-        .legs
-        .iter()
-        .filter(|leg| leg.allocation.destination == 1)
-        .count();
-    let hop_min_outs = priced
-        .windows
-        .iter()
-        .zip(&priced.routed.legs)
-        .map(|(_, leg)| {
-            let net = threshold(leg.amount_out, slippage_bps)?;
-            let net = if terminal_operations == 1 && leg.allocation.destination == 1 {
-                net.max(min_out)
-            } else {
-                net
-            };
-            Ok::<u64, ApiError>(net)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let hop_min_outs = service::hop_min_outs(
+        priced
+            .routed
+            .legs
+            .iter()
+            .map(|leg| (leg.amount_out, leg.allocation.destination)),
+        slippage_bps,
+        min_out,
+    )
+    .ok_or_else(no_output_to_require)?;
     let linear = priced.windows.len() <= tx::MAX_HOPS
         && priced
             .routed
@@ -282,9 +276,11 @@ fn flow_slots(priced: &crate::service::Priced) -> Result<Vec<domain::TokenSide>,
 }
 
 fn threshold(amount_out: u64, slippage_bps: u16) -> Result<u64, ApiError> {
-    tx::min_out(amount_out, slippage_bps)
-        .filter(|&min_out| min_out > 0)
-        .ok_or_else(|| ApiError::invalid("slippagePercent leaves no output to require"))
+    service::min_out(amount_out, slippage_bps).ok_or_else(no_output_to_require)
+}
+
+fn no_output_to_require() -> ApiError {
+    ApiError::invalid("slippagePercent leaves no output to require")
 }
 
 impl From<TxError> for ApiError {
@@ -337,6 +333,12 @@ impl From<ServiceError> for ApiError {
                 },
             )
             .with_search(search.into()),
+            ServiceError::UnprofitableCycle(search) => Self::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "UNPROFITABLE_CYCLE",
+                message,
+            )
+            .with_search(search.into()),
             ServiceError::RouteChanged(changed) => {
                 tracing::debug!(%changed, "route changed while priced again");
                 Self::new(StatusCode::SERVICE_UNAVAILABLE, "ROUTE_CHANGED", message)
@@ -359,7 +361,7 @@ fn no_route(pruned: bool, exhausted: bool) -> &'static str {
         (false, false) => "no path connects the mints within maxHops over the admitted pools",
         (_, true) => "the quote budget ran out before a path was found; one may still exist",
         (true, false) => {
-            "no path among the pools kept per pair; one may exist through a pool dropped"
+            "not every candidate was explored (pools dropped per pair or split sizes left untried); a route may still exist"
         }
     }
 }

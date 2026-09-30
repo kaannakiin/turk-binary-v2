@@ -929,6 +929,37 @@ fn split_discovery_does_not_require_a_full_size_single_route() {
 }
 
 #[test]
+fn a_split_search_with_no_starting_path_at_any_probed_size_does_not_claim_no_route() {
+    struct Capped;
+    impl Filter for Capped {
+        fn path(&self, _: &mut crate::SearchSession, path: &crate::Path) -> bool {
+            path.legs.iter().all(|leg| leg.amount_in <= AMOUNT / 10)
+        }
+        fn flow(&self, _: &mut crate::SearchSession, flow: &crate::Flow) -> bool {
+            flow.operations
+                .iter()
+                .all(|op| op.leg.amount_in <= AMOUNT / 10)
+        }
+    }
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let first = recorded();
+    let second = recorded();
+    let rig = universe(&[placed(&first, y, x), placed(&second, y, x)]);
+    let from = rig.topology.mint_id(&x).expect("placed mint");
+    let to = rig.topology.mint_id(&y).expect("placed mint");
+    let mut session = rig.reader.session().unwrap();
+    let found = session.search_flow(
+        &query(from, Goal::To(to), 1, 10_000),
+        &Capped,
+        crate::FlowOptions::default(),
+    );
+    assert_eq!(
+        (found.best.is_none(), found.pruned, found.exhausted),
+        (true, true, false)
+    );
+}
+
+#[test]
 fn pruning_keeps_the_runner_up_when_the_best_pool_is_taken() {
     let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
     let shallow = recorded();

@@ -1604,7 +1604,11 @@ fn orca_cross_matrix() -> [CrossRoute; 6] {
     ]
 }
 
-async fn orca_cross_plan(snapshot: &str, route: CrossRoute) -> Value {
+// The route's summed per-hop compute budget exceeds the v1 limit although its replay
+// used far less: the builder refuses it by policy, not because it cannot run.
+const ORCA_CROSS_OVER_BUDGET: [&str; 1] = ["clmm_to_orca"];
+
+async fn orca_cross_quote(snapshot: &str, route: CrossRoute) -> (Fixture, Value) {
     let (name, pools, dexes, from, to, amount) = route;
     let captured = universe::load_selected_from(snapshot, &pools);
     assert!(
@@ -1631,6 +1635,12 @@ async fn orca_cross_plan(snapshot: &str, route: CrossRoute) -> Value {
         assert_eq!(leg["poolAddress"], pool, "{name}");
         assert_eq!(leg["dex"], dex, "{name}");
     }
+    (fixture, quote)
+}
+
+async fn orca_cross_plan(snapshot: &str, route: CrossRoute) -> Value {
+    let name = route.0;
+    let (fixture, quote) = orca_cross_quote(snapshot, route).await;
     let plan = scenario_plan(&fixture, name, &quote, false, None).await;
     assert_hop_minimums(&plan, &quote, name);
     plan
@@ -1677,7 +1687,9 @@ async fn router_orca_cross_plans() {
     let out = std::env::var("ROUTER_ORCA_CROSS_PLANS").expect("names plans file");
     let mut plans = Vec::new();
     for route in orca_cross_matrix() {
-        plans.push(orca_cross_plan(&snapshot, route).await);
+        if !ORCA_CROSS_OVER_BUDGET.contains(&route.0) {
+            plans.push(orca_cross_plan(&snapshot, route).await);
+        }
     }
     if std::env::var_os("ROUTER_ORCA_THREE_HOP_SNAPSHOT").is_some() {
         orca_three_hop_cycle_rejected(&snapshot).await;
@@ -1685,6 +1697,49 @@ async fn router_orca_cross_plans() {
     let file = std::fs::File::create(&out).expect("creating cross-DEX plans");
     serde_json::to_writer(file, &json!({ "corpus": snapshot, "plans": plans }))
         .expect("writing plans");
+}
+
+// src: crates/tx/src/tests/fixtures/router_orca_cross.json (`just router-orca-cross-replay`):
+// what the deployed programs paid for each leg, run in order on the same snapshot.
+#[tokio::test]
+async fn recorded_orca_cross_dex_routes_build_and_quote_what_the_programs_paid_within_the_compute_budget()
+ {
+    let snapshot = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../tx/src/tests/fixtures/orca_cross_dex.json"
+    );
+    let replay: Value = serde_json::from_str(include_str!(
+        "../../../tx/src/tests/fixtures/router_orca_cross.json"
+    ))
+    .expect("replay fixture");
+    for route in orca_cross_matrix() {
+        let name = route.0;
+        if ORCA_CROSS_OVER_BUDGET.contains(&name) {
+            let (fixture, quote) = orca_cross_quote(snapshot, route).await;
+            let body = json!({
+                "userWalletAddress": ORACLE_PAYER,
+                "wrapAndUnwrapSol": false,
+                "quoteResponse": quote,
+            });
+            let (status, _, refused) =
+                call(fixture.router(), post_to("/swap-instructions", &body)).await;
+            assert_eq!(
+                (status, &refused["error"]["code"]),
+                (StatusCode::UNPROCESSABLE_ENTITY, &json!("TOO_MUCH_COMPUTE")),
+                "{name}"
+            );
+            continue;
+        }
+        let paid = replay["swaps"]
+            .as_array()
+            .expect("swaps")
+            .iter()
+            .find(|swap| swap["plan"] == name)
+            .and_then(|swap| swap["venue_out"].as_array()?.last()?.as_u64())
+            .expect("replayed payout");
+        let plan = orca_cross_plan(snapshot, route).await;
+        assert_eq!(plan["expectedOut"], paid.to_string(), "{name}");
+    }
 }
 
 #[tokio::test]

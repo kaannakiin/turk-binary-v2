@@ -59,6 +59,7 @@ fn cpmm_window(source: TokenSide, destination: TokenSide) -> SwapWindow {
         program_id: CPMM,
         tail: 0,
         optional_tail: 0,
+        arrays_used: 0,
         accounts: vec![
             WindowAccount::User,
             authority,
@@ -129,6 +130,7 @@ fn clmm_budget_window(
         destination,
         tail: arrays,
         optional_tail: u8::from(guard),
+        arrays_used: arrays,
     }
 }
 
@@ -354,6 +356,7 @@ fn a_non_dlmm_flow_over_compute_limit_is_refused() {
         destination,
         tail: 4,
         optional_tail: 0,
+        arrays_used: 4,
     };
     let windows = [
         window(input, middle),
