@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use arc_swap::ArcSwap;
 use domain::{ChainClock, DexKind, Pubkey};
@@ -26,6 +26,9 @@ pub(crate) struct Decoded {
     pub panicked: bool,
     /// Assigned by [`Table::publish`].
     pub revision: Revision,
+    /// Built on first pin, not by the decoder: its thread would sort a
+    /// closure of thousands of tick arrays on every update, read or not.
+    pub writes: OnceLock<Box<[Pubkey]>>,
 }
 
 impl Decoded {
@@ -37,6 +40,22 @@ impl Decoded {
             && self.error == other.error
             && self.view.cross_stream == other.view.cross_stream
             && Arc::ptr_eq(&self.state, &other.state)
+    }
+
+    /// Sorted and deduplicated, for merging against another pool's.
+    pub(crate) fn writes(&self) -> &[Pubkey] {
+        self.writes.get_or_init(|| {
+            let mut writes: Vec<Pubkey> = self
+                .view
+                .accounts
+                .iter()
+                .filter(|(dep, _)| dep.role.swap_writes())
+                .map(|(dep, _)| dep.pubkey)
+                .collect();
+            writes.sort_unstable();
+            writes.dedup();
+            writes.into_boxed_slice()
+        })
     }
 
     pub(crate) fn usable(&self) -> Result<(), RouteError> {

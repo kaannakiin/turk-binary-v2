@@ -23,50 +23,25 @@ pub struct SearchSession {
     computed: u64,
 }
 
-type Pins = HashMap<PoolId, Pin, ahash::RandomState>;
+type Pins = HashMap<PoolId, Arc<Decoded>, ahash::RandomState>;
 
 type MemoKey = (EdgeId, u64, u8);
 
 /// Bounds the memo of an exhaustive search; later quotes are computed, not stored.
 const MEMO_ENTRIES: usize = 1 << 17;
 
-pub(crate) struct Pin {
-    decoded: Arc<Decoded>,
-    /// Sorted and deduplicated, for [`intersect`]: a Whirlpool closure can
-    /// hold thousands of tick arrays.
-    writes: Box<[Pubkey]>,
-}
-
-impl Pin {
-    fn new(decoded: Arc<Decoded>) -> Self {
-        let mut writes: Vec<Pubkey> = decoded
-            .view
-            .accounts
-            .iter()
-            .filter(|(dep, _)| dep.role.swap_writes())
-            .map(|(dep, _)| dep.pubkey)
-            .collect();
-        writes.sort_unstable();
-        writes.dedup();
-        Self {
-            decoded,
-            writes: writes.into_boxed_slice(),
-        }
-    }
-}
-
 fn pin<'p>(
     pins: &'p mut Pins,
     topology: &Topology,
     table: &Table,
     id: PoolId,
-) -> Result<&'p Pin, RouteError> {
+) -> Result<&'p Arc<Decoded>, RouteError> {
     match pins.entry(id) {
         Entry::Occupied(pinned) => Ok(pinned.into_mut()),
         Entry::Vacant(slot) => {
             let pool = topology.pool(id).pubkey;
             let decoded = table.load(&pool).ok_or(RouteError::UnknownPool(pool))?;
-            Ok(slot.insert(Pin::new(decoded)))
+            Ok(slot.insert(decoded))
         }
     }
 }
@@ -108,7 +83,7 @@ impl SearchSession {
         &mut self,
         pool: PoolId,
     ) -> Result<quoter::VenueState, RouteError> {
-        let state = &self.pin(pool)?.decoded.state;
+        let state = &self.pin(pool)?.state;
         if !state.supports_transition() {
             return Err(RouteError::StatefulFlowUnsupported);
         }
@@ -137,7 +112,7 @@ impl SearchSession {
             cross_stream: self
                 .pins
                 .get(&edge.pool())
-                .is_some_and(|pin| pin.decoded.view.cross_stream),
+                .is_some_and(|pin| pin.view.cross_stream),
         })
     }
     #[must_use]
@@ -155,7 +130,7 @@ impl SearchSession {
     #[must_use]
     pub fn active(&self, pool: PoolId) -> bool {
         match self.pins.get(&pool) {
-            Some(pinned) => pinned.decoded.usable().is_ok(),
+            Some(pinned) => pinned.usable().is_ok(),
             None => self.topology.activity().is_active(pool),
         }
     }
@@ -174,7 +149,7 @@ impl SearchSession {
             return memo.clone();
         }
         // A pool that fails to pin is not memoized: it can be published later.
-        let decoded = &pin(&mut self.pins, &self.topology, &self.table, edge.pool())?.decoded;
+        let decoded = pin(&mut self.pins, &self.topology, &self.table, edge.pool())?;
         let quote = decoded
             .usable()
             .and_then(|()| decoded.quote(&self.clock, amount_in, edge.a_to_b(), max_arrays));
@@ -207,14 +182,14 @@ impl SearchSession {
         max_arrays: u8,
         guard: bool,
     ) -> Result<SwapWindow, RouteError> {
-        let decoded = &pin(&mut self.pins, &self.topology, &self.table, edge.pool())?.decoded;
+        let decoded = pin(&mut self.pins, &self.topology, &self.table, edge.pool())?;
         decoded.usable()?;
         Ok(decoded
             .state
             .swap_window_for_quote(edge.a_to_b(), arrays_used, max_arrays, guard)?)
     }
 
-    pub(crate) fn pin(&mut self, pool: PoolId) -> Result<&Pin, RouteError> {
+    pub(crate) fn pin(&mut self, pool: PoolId) -> Result<&Arc<Decoded>, RouteError> {
         pin(&mut self.pins, &self.topology, &self.table, pool)
     }
 
@@ -232,7 +207,7 @@ impl SearchSession {
         others.into_iter().any(|other| {
             self.pins
                 .get(&other)
-                .is_none_or(|o| intersect(&o.writes, &pin.writes))
+                .is_none_or(|o| intersect(o.writes(), pin.writes()))
         })
     }
 
@@ -252,7 +227,7 @@ impl SearchSession {
                 return Verdict::Unusable { pool, reason };
             }
             match self.pins.get(&id) {
-                Some(pinned) if pinned.decoded.revision == now.revision => current.push(Pinned {
+                Some(pinned) if pinned.revision == now.revision => current.push(Pinned {
                     pool,
                     revision: now.revision,
                 }),
