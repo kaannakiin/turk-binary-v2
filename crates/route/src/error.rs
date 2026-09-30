@@ -2,7 +2,7 @@ use domain::Pubkey;
 use market::Reason;
 use quoter::{DecodeError, QuoteError, WindowError};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum RouteError {
     #[error("invalid exact-in flow")]
     InvalidFlow,

@@ -190,6 +190,7 @@ just test-crate domain         # single-crate tests (nextest)
 just test -p domain <filter>   # tests filtered by name
 just bench graph               # criterion benches of one crate (heavy: ask first)
 just bench route               # route search on the snapshot-universe capture (heavy: ask first)
+just bench-ab --base <ref>      # route search bench, <ref> vs working tree, interleaved rounds (heavy: ask first)
 just deny                      # cargo-deny
 just watch                     # read-only watch with .env (config.toml)
 just serve                     # watch plus POST /quote, /swap-instructions, /swap and /health, /ready (unsigned txs; never signs or sends)

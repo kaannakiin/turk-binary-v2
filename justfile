@@ -22,6 +22,10 @@ test-crate crate *args:
 bench crate *args:
     cargo bench -p {{crate}} {{args}}
 
+# Interleaved A/B of the route search bench: a git ref against the working tree (heavy).
+bench-ab *args:
+    python3 scripts/bench_ab.py {{args}}
+
 deny:
     cargo deny check
 

@@ -18,10 +18,17 @@ pub struct SearchSession {
     pub(crate) topology: Arc<Topology>,
     table: Arc<Table>,
     clock: ChainClock,
-    pins: HashMap<PoolId, Pin, ahash::RandomState>,
+    pins: Pins,
+    memo: Option<HashMap<MemoKey, Result<Quote, RouteError>, ahash::RandomState>>,
+    computed: u64,
 }
 
 type Pins = HashMap<PoolId, Pin, ahash::RandomState>;
+
+type MemoKey = (EdgeId, u64, u8);
+
+/// Bounds the memo of an exhaustive search; later quotes are computed, not stored.
+const MEMO_ENTRIES: usize = 1 << 17;
 
 pub(crate) struct Pin {
     decoded: Arc<Decoded>,
@@ -89,6 +96,8 @@ impl<F: PoolFeed> QuoteReader<F> {
             table: Arc::clone(&self.table),
             clock: self.feed.clock().ok_or(RouteError::NoClock)?,
             pins: HashMap::default(),
+            memo: None,
+            computed: 0,
         })
     }
 }
@@ -151,15 +160,42 @@ impl SearchSession {
         }
     }
 
+    /// The pin and the Clock are fixed for the session, so once
+    /// [`Self::memoize`] is on a repeated `(edge, amount_in, max_arrays)` is
+    /// answered from a memo.
     pub fn quote(
         &mut self,
         edge: EdgeId,
         amount_in: u64,
         max_arrays: u8,
     ) -> Result<Quote, RouteError> {
+        let key = (edge, amount_in, max_arrays);
+        if let Some(memo) = self.memo.as_ref().and_then(|memo| memo.get(&key)) {
+            return memo.clone();
+        }
+        // A pool that fails to pin is not memoized: it can be published later.
         let decoded = &pin(&mut self.pins, &self.topology, &self.table, edge.pool())?.decoded;
-        decoded.usable()?;
-        decoded.quote(&self.clock, amount_in, edge.a_to_b(), max_arrays)
+        let quote = decoded
+            .usable()
+            .and_then(|()| decoded.quote(&self.clock, amount_in, edge.a_to_b(), max_arrays));
+        self.computed += 1;
+        if let Some(memo) = self.memo.as_mut().filter(|memo| memo.len() < MEMO_ENTRIES) {
+            memo.insert(key, quote.clone());
+        }
+        quote
+    }
+
+    /// Only split refinement repeats enough quotes to pay for the memo: a
+    /// single path search repeats almost none, and there the memo measured
+    /// slower than quoting again.
+    pub(crate) fn memoize(&mut self) {
+        self.memo.get_or_insert_with(HashMap::default);
+    }
+
+    /// Quotes priced in this session, memo answers excluded.
+    #[must_use]
+    pub fn quotes_computed(&self) -> u64 {
+        self.computed
     }
 
     /// The swap accounts of `edge`'s pool as pinned, so they belong to the

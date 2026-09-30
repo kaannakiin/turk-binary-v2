@@ -52,6 +52,7 @@ impl Engine {
 struct Outcome {
     amount_out: u64,
     quotes: u32,
+    computed: u64,
     refused: u32,
     exhausted: bool,
     pruned: bool,
@@ -68,7 +69,7 @@ fn capped(query: Query) -> Query {
 
 fn run(universe: &universe::Universe, query: &Query, engine: Engine) -> Outcome {
     let mut session = universe.reader.session().expect("clock");
-    match engine {
+    let outcome = match engine {
         Engine::Dfs => {
             let found = session.search(query, &Everything);
             Outcome {
@@ -108,8 +109,13 @@ fn run(universe: &universe::Universe, query: &Query, engine: Engine) -> Outcome 
                 pruned: found.pruned,
                 timed_out: found.timed_out,
                 legs: found.best.as_ref().map_or(0, |flow| flow.operations.len()),
+                ..Outcome::default()
             }
         }
+    };
+    Outcome {
+        computed: session.quotes_computed(),
+        ..outcome
     }
 }
 
@@ -125,9 +131,6 @@ fn search(c: &mut Criterion) {
     );
 
     let mut group = c.benchmark_group("search");
-    group
-        .sample_size(10)
-        .measurement_time(Duration::from_secs(1));
 
     for (name, base_query) in universe.queries() {
         let is_cycle = matches!(base_query.goal, Goal::Cycle);
@@ -147,7 +150,7 @@ fn search(c: &mut Criterion) {
                 let observed = run(&universe, &query, engine);
                 eprintln!(
                     "quality {name}/{} {}: out {}, delta_vs_dfs {}, quotes {}, refused {}, \
-                     exhausted {}, pruned {}, timed_out {}, legs {}",
+                     exhausted {}, pruned {}, timed_out {}, legs {}, computed {}",
                     per_pair.map_or_else(|| "all".to_owned(), |k| k.to_string()),
                     engine.label(),
                     observed.amount_out,
@@ -158,6 +161,7 @@ fn search(c: &mut Criterion) {
                     observed.pruned,
                     observed.timed_out,
                     observed.legs,
+                    observed.computed,
                 );
 
                 let label = format!(
@@ -174,5 +178,13 @@ fn search(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, search);
+// Set here, not on the group: a group setting overrides `--sample-size` and
+// `--measurement-time`, which `scripts/bench_ab.py` raises.
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(10)
+        .measurement_time(Duration::from_secs(1));
+    targets = search
+}
 criterion_main!(benches);
