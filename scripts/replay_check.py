@@ -128,7 +128,7 @@ def provenance(cases, programs, router_so, short_venue_so):
     inputs = sorted({rel(c["corpus"]) for c in cases})
     return {
         "commit": run(["git", "rev-parse", "HEAD"], capture=True).strip(),
-        "dirty": bool(run(["git", "status", "--porcelain"], capture=True).strip()),
+        "dirty": bool(run(["git", "status", "--porcelain", "--untracked-files=no"], capture=True).strip()),
         "rustc": run(["rustc", "-V"], capture=True).strip(),
         "cargo_build_sbf": run(["cargo", "build-sbf", "--version"], capture=True).split("\n")[:2],
         "litesvm": next(p["version"] for p in oracle_lock if p["name"] == "litesvm"),
