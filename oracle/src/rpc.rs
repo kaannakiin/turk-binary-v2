@@ -31,6 +31,10 @@ fn post(body: &Value) -> Value {
 }
 
 pub fn fetch(keys: &[Pubkey]) -> HashMap<Pubkey, Option<Stored>> {
+    assert!(
+        std::env::var_os("ORACLE_OFFLINE").is_none(),
+        "ORACLE_OFFLINE is set, but the replay needs accounts its inputs do not hold: {keys:?}"
+    );
     let mut out = HashMap::new();
     for chunk in keys.chunks(CHUNK) {
         let names: Vec<String> = chunk.iter().map(ToString::to_string).collect();

@@ -18,7 +18,6 @@ use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 
 use crate::Hop;
-use crate::rpc;
 use crate::snapshot::{Account, Clock, Pool, Stored};
 use crate::svm::{self, Machine, Sent};
 use crate::venue::Venue;
@@ -28,6 +27,11 @@ pub const ROUTER: Pubkey = Pubkey::from_str_const("TURKAGEDZ6JgA9eSQydhARcWSc2hp
 const CPMM: Pubkey = Pubkey::from_str_const("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
 // src: raydium-io/raydium-cp-swap@59fb845a9e5bb569c8b2f3415f13b0c0ebcc6b92 programs/cp-swap/src/states/pool.rs
 const AMM_CONFIG: std::ops::Range<usize> = 8..40;
+// src: mainnet getAccountInfo SysvarRent111111111111111111111111111111111 at slot 452002261
+// (lamportsPerByte 5080), the SIMD-0437 step after 6333. Every router fixture was recorded
+// at this rate. Not fetched live: SIMD-0437 lowers the rate by feature gate, and a live
+// fetch would change every created account's lamports without any input changing.
+const REPLAY_LAMPORTS_PER_BYTE: u64 = 5080;
 
 #[derive(Deserialize)]
 pub struct Corpus {
@@ -63,12 +67,7 @@ impl Corpus {
 }
 
 pub fn machine(programs: &Path, router: &[u8]) -> Machine {
-    let rent_data = rpc::fetch(&[svm::RENT])
-        .remove(&svm::RENT)
-        .flatten()
-        .expect("Rent sysvar")
-        .data;
-    let mut machine = Machine::new(programs, &rent_data);
+    let mut machine = Machine::new(programs, REPLAY_LAMPORTS_PER_BYTE);
     machine.add_program(ROUTER, router);
     machine
 }

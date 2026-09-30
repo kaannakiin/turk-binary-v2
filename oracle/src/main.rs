@@ -298,7 +298,7 @@ fn main() {
         .remove(&svm::RENT)
         .flatten()
         .expect("Rent sysvar");
-    let machine = Machine::new(programs, &rent.data);
+    let machine = Machine::new(programs, svm::lamports_per_byte(&rent.data));
     let mut skip: HashSet<Pubkey> = machine.programs.iter().copied().collect();
     skip.extend([SYSTEM, COMPUTE_BUDGET, machine.payer()]);
     let mut runner = Runner {
