@@ -3,7 +3,9 @@
 //! Every result is computed from a fresh session at the same captured state.
 //! Quality and quote counts are printed before Criterion starts timing. Flow
 //! search is capped to a representative quote budget so this benchmark does
-//! not turn into an unbounded exhaustive allocation run.
+//! not turn into an unbounded exhaustive allocation run. Quotes cross at most
+//! the server's default of 8 arrays: past it a route cannot fit the accounts
+//! of a v1 transaction, and CLMM copies would dominate the profile.
 
 use std::hint::black_box;
 use std::num::NonZeroU8;
@@ -17,6 +19,7 @@ mod universe;
 
 const PER_PAIR: [Option<NonZeroU8>; 2] = [None, NonZeroU8::new(3)];
 const BENCH_MAX_QUOTES: u32 = 25_000;
+const BENCH_MAX_ARRAYS: u8 = 8;
 
 #[derive(Clone, Copy, Debug)]
 enum Engine {
@@ -63,6 +66,7 @@ struct Outcome {
 fn capped(query: Query) -> Query {
     Query {
         max_quotes: query.max_quotes.min(BENCH_MAX_QUOTES),
+        max_arrays: query.max_arrays.min(BENCH_MAX_ARRAYS),
         ..query
     }
 }
@@ -122,12 +126,13 @@ fn run(universe: &universe::Universe, query: &Query, engine: Engine) -> Outcome 
 fn search(c: &mut Criterion) {
     let universe = universe::load();
     eprintln!(
-        "slot {}: {} pools, widest pair {}, {} skipped, max_quotes {}",
+        "slot {}: {} pools, widest pair {}, {} skipped, max_quotes {}, max_arrays {}",
         universe.slot,
         universe.topology.pools().len(),
         universe.widest_pair(),
         universe.skipped.len(),
         BENCH_MAX_QUOTES,
+        BENCH_MAX_ARRAYS,
     );
 
     let mut group = c.benchmark_group("search");
