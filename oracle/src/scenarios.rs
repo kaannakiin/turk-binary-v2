@@ -1110,9 +1110,17 @@ pub fn main(args: &[PathBuf]) {
 /// Replay three-token, two-hop plans against each venue program on its own,
 /// then sign and send the API's unsigned v1 transaction through the router.
 pub fn matrix_main(args: &[PathBuf]) {
-    let [corpus_path, plans_path, programs, router_so, out] = args else {
-        eprintln!("usage: oracle router-matrix SNAPSHOT PLANS PROGRAMS_DIR ROUTER_SO OUT");
-        std::process::exit(2);
+    let (corpus_path, plans_path, programs, router_so, out, observations_from) = match args {
+        [corpus, plans, programs, router, out] => (corpus, plans, programs, router, out, out),
+        [corpus, plans, programs, router, out, from] => {
+            (corpus, plans, programs, router, out, from)
+        }
+        _ => {
+            eprintln!(
+                "usage: oracle router-matrix SNAPSHOT PLANS PROGRAMS_DIR ROUTER_SO OUT [OBSERVATIONS_FROM]"
+            );
+            std::process::exit(2);
+        }
     };
     let (corpus, corpus_raw) = Corpus::read(corpus_path);
     let plans: Plans = serde_json::from_slice(&std::fs::read(plans_path).expect("reading plans"))
@@ -1142,7 +1150,7 @@ pub fn matrix_main(args: &[PathBuf]) {
         .filter(|key| !accounts.contains_key(key))
         .collect();
     let corpus_sha256 = format!("{:x}", Sha256::digest(&corpus_raw));
-    let cached_observations = std::fs::read(out)
+    let cached_observations = std::fs::read(observations_from)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
         .filter(|fixture| fixture["provenance"]["corpus_sha256"] == corpus_sha256)

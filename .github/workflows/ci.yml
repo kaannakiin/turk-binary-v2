@@ -96,14 +96,15 @@ jobs:
         run: |
           tag="oracle-programs-$(sha256sum oracle/programs/programs.tsv | cut -c1-12)"
           gh release download "$tag" --pattern '*.so' --dir oracle/programs
+      - run: python3 -m unittest discover -s scripts -p 'test_replay_check.py'
       - run: just replay-check
       - if: always()
-        run: cat target/replay-check/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+        run: cat target/replay-check/run-*/summary.md >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: replay-report
-          path: target/replay-check/replay-report.json
+          path: target/replay-check/run-*/replay-report.json
 
   deny:
     runs-on: ubuntu-latest

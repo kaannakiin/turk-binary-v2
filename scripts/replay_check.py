@@ -15,8 +15,11 @@ that runs out of the builder's CU budget fails and shows up as a difference.
 Program bytecode is never fetched here: PROGRAMS_DIR must hold every program
 `programs.tsv` lists, with the ELF hash it records.
 
-The report (replay-report.json, summary.md) records the commit, toolchains,
-LiteSVM, SDK fork commits, program hashes and input hashes.
+Each run writes into a new run-* directory under --out and never deletes
+anything: plans/, results/ (each result a file the oracle must create; the
+committed fixture is only read), replay-report.json and summary.md. The report
+records the commit, toolchains, LiteSVM, SDK fork commits, program hashes and
+input hashes.
 
 Usage: replay_check.py [--programs DIR] [--router SO] [--short-venue SO] [--out DIR]
                        [FIXTURE]...
@@ -27,9 +30,9 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -167,6 +170,46 @@ def compare(recorded, now, path, key, differences, units):
                             "now": normalized(key, now)})
 
 
+def run_dir(root):
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="run-", dir=root))
+
+
+def failed(fixture, reason):
+    return {"fixture": fixture, "status": "failed", "difference_count": 1,
+            "differences": [{"path": "oracle", "recorded": "a replay result", "now": reason}],
+            "compute_units": []}
+
+
+def replay(c, oracle, plans_file, programs_dir, router, short_venue, results_dir, env):
+    committed = FIXTURES / c["fixture"]
+    result = results_dir / c["fixture"]
+    if result.exists():
+        return failed(c["fixture"], f"{result} existed before the replay")
+    if c["mode"] == "router-scenarios":
+        tail = [short_venue, result]
+    elif c["mode"] == "router-matrix":
+        tail = [result, committed]
+    elif c["short_venue_last"]:
+        tail = [result, short_venue]
+    else:
+        tail = [result]
+    try:
+        run([oracle, c["mode"], c["corpus"], plans_file, programs_dir, router, *tail], env=env)
+    except subprocess.CalledProcessError as error:
+        return failed(c["fixture"], f"exit {error.returncode}")
+    if not result.is_file():
+        return failed(c["fixture"], "the oracle exited 0 without writing a result")
+    differences, units = [], []
+    compare(json.loads(committed.read_text()), json.loads(result.read_text()),
+            "$", None, differences, units)
+    return {"fixture": c["fixture"],
+            "status": "match" if not differences else "differs",
+            "difference_count": len(differences),
+            "differences": differences[:SHOWN_DIFFERENCES],
+            "compute_units": units}
+
+
 def summary(report):
     lines = ["# Router replay check", "", f"Commit `{report['provenance']['commit']}`", "",
              "| Fixture | Result | Differences | CU changes |", "| --- | --- | --- | --- |"]
@@ -198,10 +241,11 @@ def main():
 
     programs_dir = args.programs.resolve()
     programs = verify_programs(programs_dir)
-    out = args.out.resolve()
+    out = run_dir(args.out.resolve())
     plans = out / "plans"
-    shutil.rmtree(out, ignore_errors=True)
-    plans.mkdir(parents=True)
+    results_dir = out / "results"
+    plans.mkdir()
+    results_dir.mkdir()
 
     env = dict(os.environ)
     for c in cases:
@@ -213,39 +257,18 @@ def main():
     run(["cargo", "build", "--locked", "--manifest-path", "oracle/Cargo.toml"])
 
     offline = dict(os.environ, ORACLE_OFFLINE="1")
-    results = []
-    for c in cases:
-        committed = FIXTURES / c["fixture"]
-        replayed = out / c["fixture"]
-        # router-matrix reuses the observation accounts cached in its output file.
-        shutil.copyfile(committed, replayed)
-        tail = [replayed, args.short_venue] if c["short_venue_last"] else [replayed]
-        if c["mode"] == "router-scenarios":
-            tail = [args.short_venue, replayed]
-        try:
-            run([ROOT / "oracle/target/debug/oracle", c["mode"], c["corpus"],
-                 plans / c["fixture"], programs_dir, args.router, *tail], env=offline)
-        except subprocess.CalledProcessError as error:
-            results.append({"fixture": c["fixture"], "status": "failed",
-                            "difference_count": 1,
-                            "differences": [{"path": "oracle", "recorded": "exit 0",
-                                             "now": f"exit {error.returncode}"}],
-                            "compute_units": []})
-            continue
-        differences, units = [], []
-        compare(json.loads(committed.read_text()), json.loads(replayed.read_text()),
-                "$", None, differences, units)
-        results.append({"fixture": c["fixture"],
-                        "status": "match" if not differences else "differs",
-                        "difference_count": len(differences),
-                        "differences": differences[:SHOWN_DIFFERENCES],
-                        "compute_units": units})
+    results = [
+        replay(c, ROOT / "oracle/target/debug/oracle", plans / c["fixture"], programs_dir,
+               args.router, args.short_venue, results_dir, offline)
+        for c in cases
+    ]
 
     report = {"provenance": provenance(cases, programs, args.router, args.short_venue),
               "results": results}
     (out / "replay-report.json").write_text(json.dumps(report, indent=2) + "\n")
     (out / "summary.md").write_text(summary(report))
     print(summary(report))
+    print(f"report: {out}", file=sys.stderr)
     if any(r["status"] != "match" for r in results):
         sys.exit(1)
 
