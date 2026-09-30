@@ -22,6 +22,16 @@ const NATIVE_MINT: Pubkey = Pubkey::from_str_const("So11111111111111111111111111
 const TOKEN_AMOUNT: std::ops::Range<usize> = 64..72;
 const COMPUTE_UNITS: u32 = 1_400_000;
 pub const RENT: Pubkey = Pubkey::from_str_const("SysvarRent111111111111111111111111111111111");
+
+/// The live Rent sysvar's per-byte rate.
+pub fn lamports_per_byte(rent: &[u8]) -> u64 {
+    assert_eq!(
+        f64::from_le_bytes(rent[8..16].try_into().expect("rent")),
+        1.0,
+        "mainnet Rent is per byte since the exemption threshold became 1"
+    );
+    u64::from_le_bytes(rent[0..8].try_into().expect("rent"))
+}
 const LOADER_V3: Pubkey = Pubkey::from_str_const("BPFLoaderUpgradeab1e11111111111111111111111");
 
 pub struct Sent {
@@ -56,22 +66,15 @@ fn empty() -> Account {
 impl Machine {
     /// Every `.so` in `programs` replaces LiteSVM's bundled copy, so SPL
     /// Token and Token-2022 run the bytecode mainnet runs.
-    /// `rent` is mainnet's Rent sysvar: pool vaults hold only what it asks.
-    pub fn new(programs: &Path, rent: &[u8]) -> Self {
+    /// `lamports_per_byte` is mainnet's rent rate: pool vaults hold only what it asks.
+    pub fn new(programs: &Path, lamports_per_byte: u64) -> Self {
         // A replayed v1 transaction carries the blockhash the server built it on.
         // Scenarios send the same signed transaction over different state.
         let mut svm = LiteSVM::new()
             .with_log_bytes_limit(Some(100_000))
             .with_blockhash_check(false)
             .with_transaction_history(0);
-        assert_eq!(
-            f64::from_le_bytes(rent[8..16].try_into().expect("rent")),
-            1.0,
-            "mainnet Rent is per byte since the exemption threshold became 1"
-        );
-        svm.set_sysvar(&Rent::with_lamports_per_byte(u64::from_le_bytes(
-            rent[0..8].try_into().expect("rent"),
-        )));
+        svm.set_sysvar(&Rent::with_lamports_per_byte(lamports_per_byte));
         let mut loaded = Vec::new();
         for entry in std::fs::read_dir(programs).expect("programs dir") {
             let path = entry.expect("dir entry").path();

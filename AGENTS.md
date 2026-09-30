@@ -203,6 +203,8 @@ just lint-onchain              # router program workspace: fmt --check + clippy 
 just build-onchain             # cargo build-sbf → onchain/target/deploy/router.so
 just test-onchain              # router program workspace tests (nextest; ask first like any suite)
 just router-replay             # LiteSVM: the CPMM replay corpus's swaps and the router scenarios through the router → tx fixtures (ask first)
+just replay-check              # router replay pack rebuilt from the tree, offline; fails unless it reproduces the committed fixtures (CI; ask first)
+just publish-oracle-programs   # uploads the program bytecode programs.tsv pins as a GitHub release for CI (human only)
 just ci                        # everything CI runs
 ```
 
