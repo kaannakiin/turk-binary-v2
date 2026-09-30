@@ -18,6 +18,7 @@ pub enum Role {
     Vault(Side),
     Mint(Side),
     AmmConfig,
+    Observation,
     TickArray { start: i32 },
     TickArrayBitmapExtension,
     Oracle,

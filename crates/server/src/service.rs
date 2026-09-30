@@ -1,6 +1,8 @@
+use std::cell::Cell;
 use std::num::{NonZeroU8, NonZeroU64};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use domain::{DexKind, Pubkey, Slot, SwapWindow};
 use graph::{MintId, PoolNode, Topology};
@@ -40,6 +42,8 @@ impl<F: PoolFeed> QuoteSlot<F> {
         let quotes = self.0.get()?.clone();
         Some(QuoteService {
             quotes,
+            deadline: Instant::now().checked_add(settings.timeout()),
+            cancelled: Arc::default(),
             settings,
             swap,
             max_clock_stall,
@@ -48,6 +52,7 @@ impl<F: PoolFeed> QuoteSlot<F> {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)] // Independent public routing controls compose.
 pub(crate) struct RouteRequest {
     pub from: Pubkey,
     pub to: Pubkey,
@@ -55,6 +60,9 @@ pub(crate) struct RouteRequest {
     pub cycle: bool,
     pub max_hops: Option<u8>,
     pub dexes: DexFilter,
+    pub direct_route: bool,
+    pub single_route_only: bool,
+    pub single_pool_per_hop: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -62,28 +70,182 @@ pub(crate) struct DexFilter {
     /// Empty admits every DEX.
     pub only: Vec<DexKind>,
     pub except: Vec<DexKind>,
+    /// `None` admits every loaded pool; `Some([])` admits no pool.
+    pub allowed_pools: Option<Vec<Pubkey>>,
+    /// DEXes which may appear at most once in a cyclic route.
+    pub unique: Vec<DexKind>,
 }
 
 impl Filter for DexFilter {
     fn pool(&self, pool: &PoolNode) -> bool {
-        (self.only.is_empty() || self.only.contains(&pool.dex)) && !self.except.contains(&pool.dex)
+        (self.only.is_empty() || self.only.contains(&pool.dex))
+            && !self.except.contains(&pool.dex)
+            && self
+                .allowed_pools
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(&pool.pubkey))
+    }
+
+    fn unique_dex(&self, dex: DexKind) -> bool {
+        self.unique.contains(&dex)
     }
 }
 
 /// The request's filter and the router's venues both: a request naming only
 /// venues the router lacks admits no pool, never every pool.
-struct Swappable<'a>(&'a DexFilter);
+struct Swappable<'a> {
+    dexes: &'a DexFilter,
+    user: Pubkey,
+    wrap_sol: bool,
+    max_arrays: u8,
+    slippage_bps: u16,
+    refused_unprofitable_cycle: Cell<bool>,
+}
+
+/// The quoted amount less slippage; `None` at zero, which the router could not tell
+/// from no output.
+pub(crate) fn min_out(amount_out: u64, slippage_bps: u16) -> Option<u64> {
+    tx::min_out(amount_out, slippage_bps).filter(|&min| min > 0)
+}
+
+/// Each operation's threshold, `(amount_out, destination slot)` in route order: its
+/// quoted output less slippage, raised to the route's on its one terminal operation.
+pub(crate) fn hop_min_outs(
+    operations: impl Iterator<Item = (u64, u8)> + Clone,
+    slippage_bps: u16,
+    route_min_out: u64,
+) -> Option<Vec<u64>> {
+    let terminal = operations
+        .clone()
+        .filter(|&(_, destination)| destination == 1)
+        .count();
+    operations
+        .map(|(out, destination)| {
+            let min = min_out(out, slippage_bps)?;
+            Some(if terminal == 1 && destination == 1 {
+                min.max(route_min_out)
+            } else {
+                min
+            })
+        })
+        .collect()
+}
+
+impl Swappable<'_> {
+    fn note(&self, error: &tx::TxError) {
+        if matches!(error, tx::TxError::UnprofitableCycle { .. }) {
+            self.refused_unprofitable_cycle.set(true);
+        }
+    }
+}
 
 impl Filter for Swappable<'_> {
     fn pool(&self, pool: &PoolNode) -> bool {
-        self.0.pool(pool) && tx::supports(pool.dex)
+        self.dexes.pool(pool) && tx::supports(pool.dex)
     }
+
+    fn unique_dex(&self, dex: DexKind) -> bool {
+        self.dexes.unique_dex(dex)
+    }
+
+    fn path(&self, session: &mut SearchSession, path: &route::Path) -> bool {
+        let Some(first) = path.legs.first() else {
+            return false;
+        };
+        let Some(last) = path.legs.last() else {
+            return false;
+        };
+        let from = session.topology().edge_ends(first.edge).0;
+        let to = session.topology().edge_ends(last.edge).1;
+        self.flow(session, &route::Flow::linear(path, from, to, session))
+    }
+
+    fn flow(&self, session: &mut SearchSession, flow: &route::Flow) -> bool {
+        admissible_flow(session, flow, self).is_some()
+    }
+}
+
+fn admissible_flow(
+    session: &mut SearchSession,
+    flow: &route::Flow,
+    filter: &Swappable<'_>,
+) -> Option<()> {
+    let windows: Vec<_> = flow
+        .operations
+        .iter()
+        .map(|op| window(session, op.leg.edge, op.leg.arrays_used, filter.max_arrays).ok())
+        .collect::<Option<_>>()?;
+    let mut slots = vec![None; flow.slots.len()];
+    for (op, window) in flow.operations.iter().zip(&windows) {
+        for (index, side) in [
+            (op.allocation.source, window.source),
+            (op.allocation.destination, window.destination),
+        ] {
+            let slot = slots.get_mut(usize::from(index))?;
+            if slot.is_some_and(|old| old != side) {
+                return None;
+            }
+            *slot = Some(side);
+        }
+    }
+    let slots: Vec<_> = slots.into_iter().collect::<Option<_>>()?;
+    let allocations: Vec<_> = flow
+        .operations
+        .iter()
+        .map(|op| tx::FlowAllocation {
+            source: op.allocation.source,
+            destination: op.allocation.destination,
+            numerator: op.allocation.numerator,
+            denominator: op.allocation.denominator,
+        })
+        .collect();
+    let min_out = min_out(flow.amount_out, filter.slippage_bps)?;
+    let minima = hop_min_outs(
+        flow.operations
+            .iter()
+            .map(|op| (op.leg.amount_out, op.allocation.destination)),
+        filter.slippage_bps,
+        min_out,
+    )?;
+    let linear = windows.len() <= tx::MAX_HOPS
+        && allocations.iter().all(|a| a.numerator == a.denominator)
+        && allocations
+            .windows(2)
+            .all(|pair| pair[0].destination == pair[1].source);
+    let instructions = if linear {
+        tx::build(&tx::SwapRequest {
+            user: filter.user,
+            hops: &windows,
+            amount_in: flow.amount_in,
+            min_out,
+            hop_min_outs: &minima,
+            wrap_sol: filter.wrap_sol,
+        })
+        .inspect_err(|error| filter.note(error))
+        .ok()?
+    } else {
+        tx::build_flow(&tx::FlowSwapRequest {
+            user: filter.user,
+            slots: &slots,
+            windows: &windows,
+            allocations: &allocations,
+            step_min_outs: &minima,
+            amount_in: flow.amount_in,
+            min_out,
+            wrap_sol: filter.wrap_sol,
+        })
+        .inspect_err(|error| filter.note(error))
+        .ok()?
+    };
+    tx::unsigned_v1(&instructions, &filter.user, [0; 32], 0).ok()?;
+    Some(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SearchQuality {
     pub pruned: bool,
     pub exhausted: bool,
+    pub timed_out: bool,
     pub quotes: u32,
 }
 
@@ -98,11 +260,13 @@ pub(crate) struct Routed {
     /// searched or priced here to know.
     pub cross_stream: Option<bool>,
     pub search: Option<SearchQuality>,
+    pub slots: Vec<Pubkey>,
     pub legs: Vec<RoutedLeg>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RoutedLeg {
+    pub allocation: route::Allocation,
     pub pool: Pubkey,
     pub dex: DexKind,
     pub from: Pubkey,
@@ -138,6 +302,8 @@ pub(crate) enum ServiceError {
     StaleData { age_ms: u128 },
     #[error("no route found")]
     NoRoute(SearchQuality),
+    #[error("every cycle found pays back no more than it spends once slippage is taken")]
+    UnprofitableCycle(SearchQuality),
     #[error("a pool of the route changed while it was priced again")]
     RouteChanged(#[source] Changed),
     #[error("the quote is {age} slots old, at most {max} are accepted")]
@@ -167,9 +333,40 @@ pub(crate) struct QuoteService<F> {
     settings: QuoteSettings,
     swap: SwapSettings,
     max_clock_stall: Duration,
+    deadline: Option<Instant>,
+    cancelled: Arc<AtomicBool>,
+}
+
+struct Interrupted<'a, F> {
+    inner: &'a F,
+    cancelled: &'a AtomicBool,
+}
+
+impl<F: Filter> Filter for Interrupted<'_, F> {
+    fn pool(&self, pool: &PoolNode) -> bool {
+        self.inner.pool(pool)
+    }
+    fn via(&self, mint: graph::MintId) -> bool {
+        self.inner.via(mint)
+    }
+    fn unique_dex(&self, dex: DexKind) -> bool {
+        self.inner.unique_dex(dex)
+    }
+    fn should_stop(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed) || self.inner.should_stop()
+    }
+    fn path(&self, session: &mut SearchSession, path: &route::Path) -> bool {
+        self.inner.path(session, path)
+    }
+    fn flow(&self, session: &mut SearchSession, flow: &route::Flow) -> bool {
+        self.inner.flow(session, flow)
+    }
 }
 
 impl<F: PoolFeed> QuoteService<F> {
+    pub(crate) fn cancellation(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
+    }
     /// Runs on a search thread. The search's session opens here, not when
     /// the request arrived, so a queued request pins no state while it waits.
     pub(crate) fn route(&self, request: &RouteRequest) -> Result<Routed, ServiceError> {
@@ -177,8 +374,28 @@ impl<F: PoolFeed> QuoteService<F> {
             .map(|priced| priced.routed)
     }
 
-    pub(crate) fn route_to_swap(&self, request: &RouteRequest) -> Result<Priced, ServiceError> {
-        self.price(request, &Swappable(&request.dexes), true)
+    pub(crate) fn route_to_swap(
+        &self,
+        request: &RouteRequest,
+        user: Pubkey,
+        wrap_sol: bool,
+        slippage_bps: u16,
+    ) -> Result<Priced, ServiceError> {
+        let filter = Swappable {
+            dexes: &request.dexes,
+            user,
+            wrap_sol,
+            max_arrays: self.settings.max_arrays,
+            slippage_bps,
+            refused_unprofitable_cycle: Cell::new(false),
+        };
+        self.price(request, &filter, true)
+            .map_err(|error| match error {
+                ServiceError::NoRoute(search) if filter.refused_unprofitable_cycle.get() => {
+                    ServiceError::UnprofitableCycle(search)
+                }
+                other => other,
+            })
     }
 
     fn price(
@@ -190,10 +407,24 @@ impl<F: PoolFeed> QuoteService<F> {
         self.fresh()?;
         let mut session = self.quotes.session().map_err(|_| ServiceError::NotReady)?;
         let query = self.query(session.topology(), request)?;
-        let found = session.search_widening(&query, filter);
+        let filter = Interrupted {
+            inner: filter,
+            cancelled: &self.cancelled,
+        };
+        let found = session.search_flow(
+            &query,
+            &filter,
+            route::FlowOptions {
+                single_route_only: request.direct_route || request.single_route_only,
+                single_pool_per_hop: request.single_pool_per_hop,
+                max_operations: self.settings.max_operations,
+                deadline: self.deadline,
+            },
+        );
         let search = SearchQuality {
             pruned: found.pruned,
             exhausted: found.exhausted,
+            timed_out: found.timed_out,
             quotes: found.quotes,
         };
         let best = found.best.ok_or(ServiceError::NoRoute(search))?;
@@ -201,11 +432,11 @@ impl<F: PoolFeed> QuoteService<F> {
         // answer is the winner priced again on the newest state and Clock.
         let mut now = self.quotes.session().map_err(|_| ServiceError::NotReady)?;
         let path = now
-            .requote(&best, self.settings.max_arrays)
+            .requote_flow(&best, self.settings.max_arrays)
             .map_err(|error| ServiceError::RouteChanged(Changed::Requote(error)))?;
         // Each pool is checked as it is pinned; one pinned early can still
         // change or become unusable before the last is quoted.
-        match now.verify(path.legs.iter().map(|leg| leg.edge.pool())) {
+        match now.verify(path.operations.iter().map(|op| op.leg.edge.pool())) {
             Verdict::Current(_) => {}
             Verdict::Stale(pools) => return Err(ServiceError::RouteChanged(Changed::Stale(pools))),
             Verdict::Unusable { pool, reason } => {
@@ -216,20 +447,30 @@ impl<F: PoolFeed> QuoteService<F> {
             }
         }
         let windows = if windows {
-            path.legs
+            path.operations
                 .iter()
-                .map(|leg| window(&mut now, leg.edge))
+                .map(|op| {
+                    let leg = &op.leg;
+                    window(
+                        &mut now,
+                        leg.edge,
+                        leg.arrays_used,
+                        self.settings.max_arrays,
+                    )
+                })
                 .collect::<Result<_, _>>()?
         } else {
             Vec::new()
         };
         let topology = now.topology();
         let legs = path
-            .legs
+            .operations
             .iter()
-            .map(|leg| {
+            .map(|op| {
+                let leg = &op.leg;
                 let (from, to) = topology.edge_ends(leg.edge);
                 RoutedLeg {
+                    allocation: op.allocation,
                     pool: leg.pool,
                     dex: topology.pool(leg.edge.pool()).dex,
                     from: *topology.mint(from),
@@ -243,10 +484,15 @@ impl<F: PoolFeed> QuoteService<F> {
             from: request.from,
             to: request.to,
             amount_in: request.amount.get(),
-            amount_out: path.amount_out(),
+            amount_out: path.amount_out,
             slot: now.clock().slot,
             cross_stream: Some(path.cross_stream()),
             search: Some(search),
+            slots: path
+                .slots
+                .iter()
+                .map(|&mint| *topology.mint(mint))
+                .collect(),
             legs,
         };
         Ok(Priced { routed, windows })
@@ -273,42 +519,69 @@ impl<F: PoolFeed> QuoteService<F> {
             });
         }
         let routed = &quote.routed;
-        let (Some(first), Some(last)) = (routed.legs.first(), routed.legs.last()) else {
-            return Err(ServiceError::QuoteMismatch("the route has no leg"));
-        };
-        if first.from != routed.from || last.to != routed.to {
-            return Err(ServiceError::QuoteMismatch(
-                "the legs do not join the route's mints",
-            ));
-        }
-        if first.amount_in != routed.amount_in || last.amount_out != routed.amount_out {
-            return Err(ServiceError::QuoteMismatch(
-                "the legs do not add up to the route's amounts",
-            ));
-        }
+        validate_flow_amounts(routed, self.settings.max_operations, self.settings.max_hops)?;
         if quote.min_out == 0 || quote.min_out > routed.amount_out {
             return Err(ServiceError::QuoteMismatch(
                 "otherAmountThreshold must be positive and at most toTokenAmount",
             ));
         }
-        if routed
-            .legs
-            .windows(2)
-            .any(|pair| pair[0].to != pair[1].from)
-        {
-            return Err(ServiceError::QuoteMismatch(
-                "a leg does not spend what the last one paid",
-            ));
-        }
-        let edges = routed
+        let operations = routed
             .legs
             .iter()
-            .map(|leg| quoted_edge(session.topology(), leg))
+            .map(|leg| {
+                Ok(route::Operation {
+                    allocation: leg.allocation,
+                    leg: route::Leg {
+                        edge: quoted_edge(session.topology(), leg)?,
+                        pool: leg.pool,
+                        amount_in: leg.amount_in,
+                        amount_out: leg.amount_out,
+                        arrays_used: 0,
+                        cross_stream: false,
+                    },
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        let windows = edges
-            .into_iter()
-            .map(|edge| window(&mut session, edge))
+        let flow = route::Flow {
+            slots: routed
+                .slots
+                .iter()
+                .map(|mint| {
+                    session
+                        .topology()
+                        .mint_id(mint)
+                        .ok_or(ServiceError::UnknownMint(*mint))
+                })
+                .collect::<Result<_, _>>()?,
+            operations,
+            amount_in: routed.amount_in,
+            amount_out: routed.amount_out,
+        };
+        let priced = session
+            .requote_flow(&flow, self.settings.max_arrays)
+            .map_err(|reason| ServiceError::RouteChanged(Changed::Requote(reason)))?;
+        let windows = priced
+            .operations
+            .iter()
+            .map(|op| {
+                window(
+                    &mut session,
+                    op.leg.edge,
+                    op.leg.arrays_used,
+                    self.settings.max_arrays,
+                )
+            })
             .collect::<Result<_, _>>()?;
+        match session.verify(priced.operations.iter().map(|op| op.leg.edge.pool())) {
+            Verdict::Current(_) => {}
+            Verdict::Stale(pools) => return Err(ServiceError::RouteChanged(Changed::Stale(pools))),
+            Verdict::Unusable { pool, reason } => {
+                return Err(ServiceError::RouteChanged(Changed::Unusable {
+                    pool,
+                    reason,
+                }));
+            }
+        }
         Ok(Priced {
             routed: routed.clone(),
             windows,
@@ -373,9 +646,92 @@ impl<F: PoolFeed> QuoteService<F> {
     }
 }
 
-fn window(session: &mut SearchSession, edge: graph::EdgeId) -> Result<SwapWindow, ServiceError> {
+fn validate_flow_amounts(
+    routed: &Routed,
+    max_operations: u8,
+    max_hops: u8,
+) -> Result<(), ServiceError> {
+    let invalid = || ServiceError::QuoteMismatch("invalid operation flow or amounts");
+    if routed.legs.is_empty()
+        || routed.legs.len() > usize::from(max_operations)
+        || routed.slots.len() < 2
+        || routed.slots.len() > usize::from(max_operations) + 2
+        || routed.slots[0] != routed.from
+        || routed.slots[1] != routed.to
+    {
+        return Err(invalid());
+    }
+    let mut credits = vec![0u64; routed.slots.len()];
+    let mut depth = vec![0u8; routed.slots.len()];
+    if routed.from == routed.to
+        && (routed
+            .legs
+            .iter()
+            .any(|leg| leg.allocation.numerator != leg.allocation.denominator)
+            || routed
+                .legs
+                .windows(2)
+                .any(|pair| pair[0].allocation.destination != pair[1].allocation.source))
+    {
+        return Err(ServiceError::QuoteMismatch(
+            "cyclic routes must be a single unsplit chain",
+        ));
+    }
+    credits[0] = routed.amount_in;
+    let mut consumed = vec![false; credits.len()];
+    for leg in &routed.legs {
+        let a = leg.allocation;
+        let source = usize::from(a.source);
+        let destination = usize::from(a.destination);
+        if a.denominator == 0
+            || a.numerator == 0
+            || a.numerator > a.denominator
+            || source == 1
+            || destination == 0
+            || source == destination
+            || routed.slots.get(source) != Some(&leg.from)
+            || routed.slots.get(destination) != Some(&leg.to)
+            || consumed.get(destination).copied().unwrap_or(true)
+        {
+            return Err(invalid());
+        }
+        let input = u64::try_from(
+            u128::from(credits[source]) * u128::from(a.numerator) / u128::from(a.denominator),
+        )
+        .map_err(|_| invalid())?;
+        depth[destination] =
+            depth[destination].max(depth[source].checked_add(1).ok_or_else(invalid)?);
+        if depth[destination] > max_hops {
+            return Err(ServiceError::QuoteMismatch("flow exceeds maxHops"));
+        }
+        if input == 0 || input != leg.amount_in || leg.amount_out == 0 {
+            return Err(invalid());
+        }
+        credits[source] = credits[source].checked_sub(input).ok_or_else(invalid)?;
+        credits[destination] = credits[destination]
+            .checked_add(leg.amount_out)
+            .ok_or_else(invalid)?;
+        consumed[source] = true;
+    }
+    if credits[1] != routed.amount_out
+        || credits
+            .iter()
+            .enumerate()
+            .any(|(slot, &amount)| slot != 1 && amount != 0)
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn window(
+    session: &mut SearchSession,
+    edge: graph::EdgeId,
+    arrays_used: u8,
+    max_arrays: u8,
+) -> Result<SwapWindow, ServiceError> {
     session
-        .swap_window(edge)
+        .swap_window(edge, arrays_used, max_arrays, true)
         .map_err(|reason| ServiceError::NoWindow {
             pool: session.topology().pool(edge.pool()).pubkey,
             reason,

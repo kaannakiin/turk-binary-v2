@@ -23,9 +23,14 @@ base64.workspace = true
 criterion.workspace = true
 flate2.workspace = true
 serde_json.workspace = true
+stats_alloc.workspace = true
 
 [[bench]]
 name = "search"
+harness = false
+
+[[bench]]
+name = "orca"
 harness = false
 
 [lints]

@@ -7,8 +7,10 @@ use tower::ServiceExt;
 mod api;
 mod executor;
 mod ops;
+mod performance;
 mod ready;
 mod serve;
+mod service;
 
 async fn call(router: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {
     let response = router.oneshot(request).await.expect("router is infallible");

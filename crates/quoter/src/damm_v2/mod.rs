@@ -5,7 +5,8 @@ use dex::{Role, Side};
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError};
 use crate::state::{QuoteInput, QuoteOut};
-use crate::token22::{Mint, TransferFee, decode_mint};
+use crate::token::any_token_account;
+use crate::token22::{Mint, TransferFee, check_transfer, decode_mint};
 
 // src: kaannakiin/damm-v2@0506639d8137024301829854d545533c2b9d1ea5 programs/cp-amm/src/state/pool.rs (#[account(zero_copy)] Pool; discriminator from the IDL account `Pool`)
 const POOL_DISCRIMINATOR: [u8; 8] = [241, 154, 109, 4, 17, 177, 109, 188];
@@ -16,6 +17,7 @@ const POOL_DISCRIMINATOR: [u8; 8] = [241, 154, 109, 4, 17, 177, 109, 188];
 pub(crate) struct DammV2 {
     pool: Option<Box<Pool>>,
     mints: [Option<Mint>; 2],
+    vaults_frozen: [Option<bool>; 2],
 }
 
 impl Clone for DammV2 {
@@ -23,6 +25,7 @@ impl Clone for DammV2 {
         Self {
             pool: self.pool.as_ref().map(|p| Box::new(**p)),
             mints: self.mints.clone(),
+            vaults_frozen: self.vaults_frozen,
         }
     }
 }
@@ -78,6 +81,15 @@ impl DammV2 {
                     None
                 };
             }
+            Role::Vault(side) => {
+                self.vaults_frozen[side_index(side)] = if exists {
+                    let held = any_token_account(&account.owner, account.data)
+                        .ok_or(DecodeError::Layout { role: account.role })?;
+                    Some(held.frozen)
+                } else {
+                    None
+                };
+            }
             _ => {}
         }
         Ok(())
@@ -96,8 +108,14 @@ impl DammV2 {
                 .ok_or(QuoteError::Incomplete(Role::Mint(side)))
         });
         let (mint_a, mint_b) = (mint_a?, mint_b?);
-        if mint_a.has_active_hook() || mint_b.has_active_hook() {
-            return Err(QuoteError::TransferHook);
+        let (sold, bought) = if input.a_to_b {
+            (mint_a, mint_b)
+        } else {
+            (mint_b, mint_a)
+        };
+        check_transfer(sold, bought)?;
+        if self.vaults_frozen.contains(&Some(true)) {
+            return Err(QuoteError::VaultFrozen);
         }
         if pool.liquidity == 0 || pool.sqrt_price == 0 {
             return Err(QuoteError::Liquidity);

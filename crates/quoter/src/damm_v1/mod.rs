@@ -9,7 +9,7 @@ use domain::Pubkey;
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError};
 use crate::state::{QuoteInput, QuoteOut};
-use crate::token::token_amount;
+use crate::token::{any_token_account, token_amount};
 
 use depeg::DepegType;
 use layout::{Curve, Pool};
@@ -25,6 +25,7 @@ pub(crate) struct DammV1 {
     pool_lp: [Option<u64>; 2],
     lp_supply: [Option<u64>; 2],
     reserve: [Option<u64>; 2],
+    reserve_frozen: [Option<bool>; 2],
     depeg_stake: Option<Vec<u8>>,
 }
 
@@ -74,6 +75,15 @@ impl DammV1 {
             Role::DammVaultLp(side) => self.pool_lp[side_index(side)] = decoded(token_balance)?,
             Role::DammVaultReserve(side) => {
                 self.reserve[side_index(side)] = decoded(token_balance)?;
+                self.reserve_frozen[side_index(side)] = if exists {
+                    Some(
+                        any_token_account(&account.owner, account.data)
+                            .ok_or_else(layout)?
+                            .frozen,
+                    )
+                } else {
+                    None
+                };
             }
             Role::DammVaultLpMint(side) => {
                 self.lp_supply[side_index(side)] = decoded(|a| mint_supply(a.data))?;
@@ -132,6 +142,9 @@ impl DammV1 {
             .ok_or(QuoteError::Incomplete(Role::Pool))?;
         if !pool.enabled {
             return Err(QuoteError::Disabled);
+        }
+        if self.reserve_frozen.contains(&Some(true)) {
+            return Err(QuoteError::VaultFrozen);
         }
         let now = u64::try_from(input.clock.unix_timestamp).map_err(|_| QuoteError::Math)?;
         let current_point = match pool.activation_type {

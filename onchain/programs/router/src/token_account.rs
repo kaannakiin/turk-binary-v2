@@ -27,6 +27,10 @@ pub fn wallet_owner(view: &AccountView) -> Result<[u8; 32], ProgramError> {
     read(view, router_core::token_account::wallet_owner)
 }
 
+pub fn mint(view: &AccountView) -> Result<[u8; 32], ProgramError> {
+    read(view, router_core::token_account::mint)
+}
+
 pub fn is_closed(view: &AccountView) -> bool {
     view.lamports() == 0 || view.is_data_empty()
 }

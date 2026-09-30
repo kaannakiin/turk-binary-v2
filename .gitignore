@@ -10,4 +10,6 @@ id.json
 /oracle/target
 /onchain/target
 /oracle/programs/*.so
-/oracle/snapshots
+/oracle/snapshots/*
+!/oracle/snapshots/amm-v4-routes.json.gz
+!/oracle/snapshots/amm-v4-token22.json.gz

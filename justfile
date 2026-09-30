@@ -40,14 +40,98 @@ build-onchain:
 test-onchain *args:
     cargo nextest run --manifest-path onchain/Cargo.toml {{args}}
 
-# LiteSVM: every swap the CPMM replay corpus paid, sent through the router as /swap-instructions
-# builds it, on the same accounts and mainnet bytecode. Writes crates/tx/src/tests/fixtures/router_replay.json.
-router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz" scenario_pools="crates/tx/src/tests/fixtures/scenario_pools.json.gz":
+# LiteSVM: every paid swap in the selected venue replay corpus, sent through the router
+# on the same accounts and mainnet bytecode. The default corpus is CPMM; pass the AMM v4
+# corpus and an output path to record its replay too.
+router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz" scenario_pools="crates/tx/src/tests/fixtures/scenario_pools.json.gz" out="crates/tx/src/tests/fixtures/router_replay.json":
     NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
     NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/short-venue/Cargo.toml
-    ROUTER_PLANS={{justfile_directory()}}/target/router-plans.json ROUTER_SCENARIO_PLANS={{justfile_directory()}}/target/router-scenario-plans.json cargo nextest run -p server --run-ignored only router_ --no-capture
-    cargo run --manifest-path oracle/Cargo.toml -- router {{corpus}} target/router-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_replay.json
+    ROUTER_CORPUS={{justfile_directory()}}/{{corpus}} ROUTER_PLANS={{justfile_directory()}}/target/router-plans.json cargo nextest run -p server --run-ignored only router_replay_plans --no-capture
+    ROUTER_SCENARIO_PLANS={{justfile_directory()}}/target/router-scenario-plans.json cargo nextest run -p server --run-ignored only router_scenario_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router {{corpus}} target/router-plans.json oracle/programs onchain/target/deploy/router.so {{out}}
     cargo run --manifest-path oracle/Cargo.toml -- router-scenarios {{scenario_pools}} target/router-scenario-plans.json oracle/programs onchain/target/deploy/router.so onchain/target/deploy/short_venue.so crates/tx/src/tests/fixtures/router_scenarios.json
+
+# Four-step split/merge with an intermediate Token-2022 transfer-fee branch.
+# Direct venue swaps and both router forms replay on the same captured bank.
+router-flow-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/short-venue/Cargo.toml
+    ROUTER_FLOW_PLANS={{justfile_directory()}}/target/router-flow-plans.json cargo nextest run -p server --run-ignored only router_flow_plans
+    cargo run --manifest-path oracle/Cargo.toml -- router crates/tx/src/tests/fixtures/scenario_pools.json.gz target/router-flow-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_flow_replay.json onchain/target/deploy/short_venue.so
+    cargo nextest run -p tx split_merge_and_reused_cpmm_flows_match_direct_venue_execution
+
+# LiteSVM: three-token AMM v4/CPMM routes, profitable cycles and a Token-2022 fee hop.
+router-matrix-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_AMM_V4_MATRIX_PLANS={{justfile_directory()}}/target/router-amm-v4-matrix-plans.json ROUTER_AMM_V4_TOKEN22_PLANS={{justfile_directory()}}/target/router-amm-v4-token22-plans.json cargo nextest run -p server --run-ignored only router_amm_v4_ --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix oracle/snapshots/amm-v4-routes.json.gz target/router-amm-v4-matrix-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_amm_v4_matrix.json
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix oracle/snapshots/amm-v4-token22.json.gz target/router-amm-v4-token22-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_amm_v4_token22.json
+
+# Same-slot CLMM/CPMM/AMM v4 paths, direct venue payouts, thresholds, and v1 budgets.
+router-clmm-cross-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_CLMM_CROSS_PLANS={{justfile_directory()}}/target/router-clmm-cross-plans.json cargo nextest run -p server --run-ignored only router_clmm_cross_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/clmm_cross_dex.json target/router-clmm-cross-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_clmm_cross.json
+
+# Orca paid swaps through the router, compared with direct Whirlpool execution.
+router-orca-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_CORPUS={{justfile_directory()}}/crates/quoter/src/tests/fixtures/svm/orca_whirlpool.json.gz ROUTER_PLANS={{justfile_directory()}}/target/router-orca-plans.json cargo nextest run -p server --run-ignored only router_replay_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router crates/quoter/src/tests/fixtures/svm/orca_whirlpool.json.gz target/router-orca-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_orca_replay.json
+
+# DLMM paid swaps through the router, compared with direct Meteora execution.
+router-dlmm-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_CORPUS={{justfile_directory()}}/crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz ROUTER_PLANS={{justfile_directory()}}/target/router-dlmm-plans.json cargo nextest run -p server --run-ignored only router_replay_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz target/router-dlmm-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_dlmm_replay.json
+
+# Real DLMM Token-2022 transfer-fee pool, both directions and exact thresholds.
+router-dlmm-fee-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_DLMM_FEE_PLANS={{justfile_directory()}}/target/router-dlmm-fee-plans.json cargo nextest run -p server --run-ignored only router_dlmm_fee_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/dlmm_fee_pools.json target/router-dlmm-fee-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_dlmm_fee.json
+
+# Live DLMM bitmap-extension pool, both directions against direct swap2.
+router-dlmm-extension-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_DLMM_EXTENSION_PLANS={{justfile_directory()}}/target/router-dlmm-extension-plans.json cargo nextest run -p server --run-ignored only router_dlmm_extension_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/dlmm_extension_pools.json target/router-dlmm-extension-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_dlmm_extension.json
+
+# Same-slot DLMM→CLMM route with direct payouts and per-hop thresholds.
+router-dlmm-cross-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_DLMM_CROSS_SNAPSHOT={{justfile_directory()}}/crates/tx/src/tests/fixtures/dlmm_cross_dex.json ROUTER_DLMM_CROSS_PLANS={{justfile_directory()}}/target/router-dlmm-cross-plans.json cargo nextest run -p server --run-ignored only router_dlmm_cross_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/dlmm_cross_dex.json target/router-dlmm-cross-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_dlmm_cross.json
+
+# Two consumed DLMM arrays; wrong, missing, and reversed CPI tails fail atomically.
+router-dlmm-two-array-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_DLMM_TWO_ARRAY_PLANS={{justfile_directory()}}/target/router-dlmm-two-array-plans.json cargo nextest run -p server --run-ignored only router_dlmm_two_array_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz target/router-dlmm-two-array-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_dlmm_two_array.json
+
+# Same-slot Orca/Raydium paths, direct venue payouts, thresholds, and v1 budgets.
+router-orca-cross-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_ORCA_CROSS_SNAPSHOT={{justfile_directory()}}/crates/tx/src/tests/fixtures/orca_cross_dex.json ROUTER_ORCA_CROSS_PLANS={{justfile_directory()}}/target/router-orca-cross-plans.json cargo nextest run -p server --run-ignored only router_orca_cross_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/orca_cross_dex.json target/router-orca-cross-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_orca_cross.json
+
+# Same-slot Orca/CLMM two-hop cycle, thresholds and atomic rollback.
+router-orca-cycle-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_ORCA_CYCLE_SNAPSHOT={{justfile_directory()}}/crates/tx/src/tests/fixtures/orca_cycle.json ROUTER_ORCA_CYCLE_PLANS={{justfile_directory()}}/target/router-orca-cycle-plans.json cargo nextest run -p server --run-ignored only router_orca_cycle_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/orca_cycle.json target/router-orca-cycle-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_orca_cycle.json
+
+# Real Whirlpool Token-2022 fee pools in both directions, direct program vs router.
+router-orca-fee-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_ORCA_FEE_SNAPSHOT={{justfile_directory()}}/crates/tx/src/tests/fixtures/orca_fee_pools.json ROUTER_ORCA_FEE_PLANS={{justfile_directory()}}/target/router-orca-fee-plans.json cargo nextest run -p server --run-ignored only router_orca_fee_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/orca_fee_pools.json target/router-orca-fee-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_orca_fee.json
+
+# Two Token-2022 mints on a live Whirlpool, both directions and exact thresholds.
+router-orca-pair-replay:
+    NO_DNA=1 cargo build-sbf --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_ORCA_PAIR_SNAPSHOT={{justfile_directory()}}/crates/tx/src/tests/fixtures/orca_token22_pair.json ROUTER_ORCA_PAIR_PLANS={{justfile_directory()}}/target/router-orca-pair-plans.json cargo nextest run -p server --run-ignored only router_orca_pair_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/orca_token22_pair.json target/router-orca-pair-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_orca_pair.json
 
 watch config="config.toml":
     cargo run -p turk-binary -- watch --config {{config}}

@@ -172,10 +172,14 @@ impl Machine {
                 .logs
                 .iter()
                 .rev()
-                .find(|l| l.contains("Error") || l.contains("failed"))
+                .take(12)
                 .cloned()
-                .unwrap_or_default();
-            format!("{:?} {last}", failed.err)
+                .collect::<Vec<_>>();
+            format!(
+                "{:?} {}",
+                failed.err,
+                last.into_iter().rev().collect::<Vec<_>>().join(" | ")
+            )
         })
     }
 
@@ -288,15 +292,13 @@ impl Machine {
             .send_transaction(signed)
             .map(sent)
             .map_err(|failed| {
-                let last = failed
-                    .meta
-                    .logs
-                    .iter()
-                    .rev()
-                    .find(|l| l.contains("Error") || l.contains("failed"))
-                    .cloned()
-                    .unwrap_or_default();
-                format!("{:?} {last}", failed.err)
+                let last: Vec<_> = failed.meta.logs.iter().rev().take(6).cloned().collect();
+                format!(
+                    "{:?} ({} CU): {}",
+                    failed.err,
+                    failed.meta.compute_units_consumed,
+                    last.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                )
             })
     }
 

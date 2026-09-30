@@ -6,11 +6,12 @@ use router_wire::RouterInstruction;
 use solana_instruction::AccountMeta;
 
 use crate::{
-    MAX_ACCOUNTS, MAX_TRANSACTION_BYTES, ROUTER_PROGRAM, SwapRequest, TxError, build,
-    router_config, unsigned_v1,
+    FlowAllocation, FlowSwapRequest, MAX_ACCOUNTS, MAX_TRANSACTION_BYTES, ROUTER_PROGRAM,
+    SwapRequest, TxError, build, build_flow, router_config, unsigned_v1,
 };
 
 const CPMM: Pubkey = Pubkey::from_str_const("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
+const HOP_MIN_OUTS: [u64; 5] = [1_917_139_225; 5];
 
 // src: mainnet tx 49Gr3dn1wF3QkLzACMVCnnZj9SXRKe3UgWAxdc7oL11fhncYR2Sn7fwqzgpWwRyL72CSSeU29x7cUCb9cnetC2PX
 // (slot 451386322): the swapper, its input account, and the pool's fixed swap_base_input accounts.
@@ -56,6 +57,9 @@ fn cpmm_window(source: TokenSide, destination: TokenSide) -> SwapWindow {
     SwapWindow {
         kind: DexKind::RaydiumCpmm,
         program_id: CPMM,
+        tail: 0,
+        optional_tail: 0,
+        arrays_used: 0,
         accounts: vec![
             WindowAccount::User,
             authority,
@@ -92,12 +96,71 @@ fn mainnet_hop() -> SwapWindow {
     )
 }
 
+fn clmm_budget_window(
+    seed: u8,
+    source: TokenSide,
+    destination: TokenSide,
+    arrays: u8,
+    guard: bool,
+) -> SwapWindow {
+    let key = |index: u8| {
+        let mut bytes = [seed; 32];
+        bytes[1] = index;
+        Pubkey::new_from_array(bytes)
+    };
+    let fixed = |index| WindowAccount::Fixed {
+        key: key(index),
+        writable: true,
+    };
+    let mut accounts = vec![
+        WindowAccount::User,
+        fixed(1),
+        fixed(2),
+        WindowAccount::UserSource,
+        WindowAccount::UserDestination,
+    ];
+    accounts.extend((5..13).map(fixed));
+    accounts.extend((0..arrays).map(|index| fixed(index + 13)));
+    SwapWindow {
+        kind: DexKind::RaydiumClmm,
+        // src: raydium-io/raydium-clmm@51fdba2 programs/amm/src/lib.rs.
+        program_id: Pubkey::from_str_const("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"),
+        accounts,
+        source,
+        destination,
+        tail: arrays,
+        optional_tail: u8::from(guard),
+        arrays_used: arrays,
+    }
+}
+
+#[test]
+fn two_many_array_clmm_hops_are_rejected_before_account_assembly() {
+    let side = |seed| TokenSide {
+        mint: Pubkey::new_from_array([seed; 32]),
+        token_program: TOKEN_PROGRAM,
+    };
+    let (input, middle, output) = (side(101), side(102), side(103));
+    let oversized = [
+        clmm_budget_window(81, input, middle, 4, false),
+        clmm_budget_window(82, middle, output, 4, false),
+    ];
+    assert!(matches!(
+        build(&request(&oversized)),
+        Err(TxError::TooMuchCompute {
+            units,
+            max
+        }) if units > max && max == 1_400_000
+    ));
+}
+
 fn request(hops: &[SwapWindow]) -> SwapRequest<'_> {
     SwapRequest {
         user: USER,
         hops,
         amount_in: 76_890_690_099,
         min_out: 1_917_139_225,
+        hop_min_outs: &HOP_MIN_OUTS[..hops.len().min(HOP_MIN_OUTS.len())],
         wrap_sol: true,
     }
 }
@@ -146,6 +209,197 @@ fn a_cpmm_hop_becomes_the_documented_route_instruction() {
     assert_eq!(
         (route.in_amount(), route.min_out(), route.hops()[0].kind),
         (76_890_690_099, 1_917_139_225, 2)
+    );
+}
+
+#[test]
+fn a_flow_builds_slot_accounts_and_flow_wire_steps() {
+    let input = TokenSide {
+        mint: INPUT_MINT,
+        token_program: TOKEN_2022_PROGRAM,
+    };
+    let output = TokenSide {
+        mint: OUTPUT_MINT,
+        token_program: TOKEN_PROGRAM,
+    };
+    let windows = [mainnet_hop()];
+    let slots = [input, output];
+    let allocations = [FlowAllocation {
+        source: 0,
+        destination: 1,
+        numerator: 1,
+        denominator: 1,
+    }];
+    let request = FlowSwapRequest {
+        user: USER,
+        slots: &slots,
+        windows: &windows,
+        allocations: &allocations,
+        step_min_outs: &[1_917_139_225],
+        amount_in: 76_890_690_099,
+        min_out: 1_917_139_225,
+        wrap_sol: false,
+    };
+    let built = build_flow(&request).unwrap();
+    let RouterInstruction::Flow(route) = RouterInstruction::decode(&built.swap.data).unwrap()
+    else {
+        panic!("flow request encoded as linear route");
+    };
+    assert_eq!(route.slot_count(), 2);
+    assert_eq!(route.steps().len(), 1);
+    assert_eq!(built.swap.accounts[1].pubkey, USER_INPUT);
+    assert_eq!(built.swap.accounts[2].pubkey, USER_OUTPUT_ATA);
+}
+
+#[test]
+fn a_flow_encodes_split_and_merge_dependencies() {
+    let input = TokenSide {
+        mint: INPUT_MINT,
+        token_program: TOKEN_2022_PROGRAM,
+    };
+    let middle = TokenSide {
+        mint: OUTPUT_MINT,
+        token_program: TOKEN_PROGRAM,
+    };
+    let output = TokenSide {
+        mint: Pubkey::new_from_array([44; 32]),
+        token_program: TOKEN_PROGRAM,
+    };
+    let windows = [
+        cpmm_window(input, middle),
+        cpmm_window(input, middle),
+        cpmm_window(middle, output),
+        cpmm_window(middle, output),
+    ];
+    let slots = [input, output, middle];
+    let allocations = [
+        FlowAllocation {
+            source: 0,
+            destination: 2,
+            numerator: 1,
+            denominator: 2,
+        },
+        FlowAllocation {
+            source: 0,
+            destination: 2,
+            numerator: 1,
+            denominator: 1,
+        },
+        FlowAllocation {
+            source: 2,
+            destination: 1,
+            numerator: 1,
+            denominator: 2,
+        },
+        FlowAllocation {
+            source: 2,
+            destination: 1,
+            numerator: 1,
+            denominator: 1,
+        },
+    ];
+    let request = FlowSwapRequest {
+        user: USER,
+        slots: &slots,
+        windows: &windows,
+        allocations: &allocations,
+        step_min_outs: &[1, 1, 1, 1],
+        amount_in: 76_890_690_099,
+        min_out: 1,
+        wrap_sol: false,
+    };
+    let built = build_flow(&request).unwrap();
+    let RouterInstruction::Flow(route) = RouterInstruction::decode(&built.swap.data).unwrap()
+    else {
+        panic!("split/merge request encoded as linear route");
+    };
+    assert_eq!(route.slot_count(), 3);
+    assert_eq!(route.steps().len(), 4);
+    assert_eq!(
+        route
+            .steps()
+            .iter()
+            .map(|step| (
+                step.source_slot,
+                step.destination_slot,
+                step.numerator,
+                step.denominator
+            ))
+            .collect::<Vec<_>>(),
+        vec![(0, 2, 1, 2), (0, 2, 1, 1), (2, 1, 1, 2), (2, 1, 1, 1)]
+    );
+    assert_eq!(
+        built.swap.accounts[4..7]
+            .iter()
+            .map(|account| account.pubkey)
+            .collect::<Vec<_>>(),
+        vec![
+            crate::associated_token_address(&USER, &input.mint, &input.token_program),
+            crate::associated_token_address(&USER, &output.mint, &output.token_program),
+            crate::associated_token_address(&USER, &middle.mint, &middle.token_program),
+        ]
+    );
+}
+
+#[test]
+fn a_non_dlmm_flow_over_compute_limit_is_refused() {
+    let side = |seed| TokenSide {
+        mint: Pubkey::new_from_array([seed; 32]),
+        token_program: TOKEN_PROGRAM,
+    };
+    let (input, middle, middle_two, output) = (side(10), side(11), side(12), side(13));
+    let window = |source, destination| SwapWindow {
+        kind: DexKind::RaydiumClmm,
+        program_id: Pubkey::from_str_const("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"),
+        accounts: Vec::new(),
+        source,
+        destination,
+        tail: 4,
+        optional_tail: 0,
+        arrays_used: 4,
+    };
+    let windows = [
+        window(input, middle),
+        window(middle, middle_two),
+        window(middle_two, output),
+    ];
+    let slots = [input, output, middle, middle_two];
+    let allocations = [
+        FlowAllocation {
+            source: 0,
+            destination: 2,
+            numerator: 1,
+            denominator: 1,
+        },
+        FlowAllocation {
+            source: 2,
+            destination: 3,
+            numerator: 1,
+            denominator: 1,
+        },
+        FlowAllocation {
+            source: 3,
+            destination: 1,
+            numerator: 1,
+            denominator: 1,
+        },
+    ];
+    let request = FlowSwapRequest {
+        user: USER,
+        slots: &slots,
+        windows: &windows,
+        allocations: &allocations,
+        step_min_outs: &[1, 1, 1],
+        amount_in: 1_000,
+        min_out: 1,
+        wrap_sol: false,
+    };
+    assert_eq!(
+        build_flow(&request),
+        Err(TxError::TooMuchCompute {
+            units: 3_900_000,
+            max: 1_400_000,
+        })
     );
 }
 
@@ -257,7 +511,7 @@ fn a_route_past_the_v1_account_limit_is_refused() {
 fn routes_the_router_cannot_run_are_refused() {
     let hop = mainnet_hop();
     let unsupported = SwapWindow {
-        kind: DexKind::OrcaWhirlpool,
+        kind: DexKind::MeteoraDammV2,
         ..mainnet_hop()
     };
     let cases: [(&str, Vec<SwapWindow>, TxError); 4] = [
@@ -275,7 +529,7 @@ fn routes_the_router_cannot_run_are_refused() {
         (
             "venue without an adapter",
             vec![unsupported],
-            TxError::Unsupported(DexKind::OrcaWhirlpool),
+            TxError::Unsupported(DexKind::MeteoraDammV2),
         ),
     ];
     for (name, hops, expected) in cases {
@@ -351,7 +605,8 @@ struct Replayed {
     v1_error: Option<String>,
 }
 
-// src: `just router-replay` (oracle/src/router.rs): every swap of the CPMM program replay corpus,
+// src: `just router-replay` (oracle/src/router.rs): every paid swap of the CPMM, AMM v4
+// and CLMM program replay corpora,
 // run through the router on the same accounts, Clock and mainnet bytecode twice: as the
 // instructions `/swap-instructions` returns, and as the v1 transaction `/swap` returns, only
 // signed.
@@ -359,24 +614,86 @@ fn replay() -> Replay {
     serde_json::from_str(include_str!("tests/fixtures/router_replay.json")).unwrap()
 }
 
+// Gate: the captured router result must match an independently executed sequence
+// of deployed venue instructions on the same LiteSVM bank. The quoted number is
+// checked against that program payout; it is not used as its own oracle.
+#[test]
+fn split_merge_and_reused_cpmm_flows_match_direct_venue_execution() {
+    let replay: serde_json::Value =
+        serde_json::from_str(include_str!("tests/fixtures/router_flow_replay.json"))
+            .expect("captured flow replay");
+    let cases = replay["cases"].as_array().expect("flow cases");
+    assert_eq!(cases.len(), 3);
+    let mut shapes = Vec::new();
+    for case in cases {
+        shapes.push((
+            case["flow"]["slot_count"].as_u64().expect("slot count"),
+            case["flow"]["step_count"].as_u64().expect("step count"),
+        ));
+        assert!(case.get("direct_error").is_none(), "{case}");
+        assert!(case.get("error").is_none(), "{case}");
+        assert!(case.get("v1_error").is_none(), "{case}");
+        let direct = case["direct_paid"].as_str().expect("direct program payout");
+        assert_eq!(case["expected_out"], direct);
+        assert_eq!(case["paid"], direct);
+        assert_eq!(case["v1_paid"], direct);
+        assert_eq!(case["over_threshold_rejected"], true);
+        assert_eq!(case["over_threshold_state_unchanged"], true);
+    }
+    shapes.sort_unstable();
+    assert_eq!(shapes, [(2, 2), (4, 4), (4, 4)]);
+    let prefunded = cases
+        .iter()
+        .find(|case| case.get("prefunded_intermediate").is_some())
+        .expect("pre-existing intermediate balance case");
+    assert_eq!(prefunded["prefunded_intermediate"]["slot"], 3);
+    assert_eq!(prefunded["prefunded_intermediate"]["amount"], 1_000_000);
+    let unprefunded = cases
+        .iter()
+        .find(|case| {
+            case["flow"]["step_count"] == 4 && case.get("prefunded_intermediate").is_none()
+        })
+        .expect("same flow without existing balance");
+    assert_eq!(prefunded["paid"], unprefunded["paid"]);
+    let partial = &replay["partial_input"];
+    assert!(
+        partial["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("Custom(6010)")),
+        "{partial}"
+    );
+    assert_eq!(partial["state_unchanged"], true);
+}
+
 #[test]
 fn the_router_pays_exactly_what_the_venue_paid_on_every_replayed_swap() {
-    let replay = replay();
-    assert!(!replay.cases.is_empty());
-    for case in replay.cases {
-        let name = format!("{} {}", case.pool, case.amount_in);
-        assert_eq!(case.error, None, "{name}");
-        assert_eq!(
-            case.paid.as_deref(),
-            Some(case.expected_out.as_str()),
-            "{name}"
-        );
-        assert_eq!(case.v1_error, None, "{name}");
-        assert_eq!(
-            case.v1_paid.as_deref(),
-            Some(case.expected_out.as_str()),
-            "{name}"
-        );
+    for (venue, replay) in [
+        ("CPMM", replay()),
+        (
+            "AMM v4",
+            serde_json::from_str(include_str!("tests/fixtures/router_replay_amm_v4.json")).unwrap(),
+        ),
+        (
+            "CLMM",
+            serde_json::from_str(include_str!("tests/fixtures/router_replay_clmm.json")).unwrap(),
+        ),
+    ] {
+        assert!(!replay.cases.is_empty(), "{venue}");
+        for case in replay.cases {
+            let name = format!("{venue} {} {}", case.pool, case.amount_in);
+            assert_eq!(case.error, None, "{name}");
+            assert_eq!(
+                case.paid.as_deref(),
+                Some(case.expected_out.as_str()),
+                "{name}"
+            );
+            assert_eq!(case.v1_error, None, "{name}");
+            assert_eq!(
+                case.v1_paid.as_deref(),
+                Some(case.expected_out.as_str()),
+                "{name}"
+            );
+        }
     }
 }
 
@@ -390,6 +707,26 @@ fn the_compute_budget_covers_every_replayed_route() {
         .max()
         .unwrap();
     let hops = [mainnet_hop()];
+    let limit = build(&request(&hops)).unwrap().limits.compute_units;
+    assert!(used < limit, "{used} of {limit}");
+}
+
+#[test]
+fn the_clmm_many_array_budget_covers_the_largest_measured_swap() {
+    let replay: Replay =
+        serde_json::from_str(include_str!("tests/fixtures/router_replay_clmm.json")).unwrap();
+    let used = replay
+        .cases
+        .iter()
+        .flat_map(|case| [case.compute_units, case.v1_compute_units])
+        .flatten()
+        .max()
+        .unwrap();
+    let side = |seed| TokenSide {
+        mint: Pubkey::new_from_array([seed; 32]),
+        token_program: TOKEN_PROGRAM,
+    };
+    let hops = [clmm_budget_window(81, side(101), side(102), 4, false)];
     let limit = build(&request(&hops)).unwrap().limits.compute_units;
     assert!(used < limit, "{used} of {limit}");
 }

@@ -1,0 +1,309 @@
+{
+  "provenance": {
+    "corpus_sha256": "ba135626e0975ddc6539975db400ebc35ce0e269b8d45c7e982bad3f110a7c32",
+    "router_sha256": "dd1f855362f7743bfcb9bde71e0629c8ec8a4357362a3b0b7db43a8db306890a",
+    "litesvm": "0.17.0"
+  },
+  "observations": [],
+  "synthetic": [],
+  "transfer_fees": [],
+  "swaps": [
+    {
+      "name": "three_token_route",
+      "plan": "orca_token22_pair_a_to_b",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000050,
+      "venue_out": [
+        1000050
+      ],
+      "compute_units": 94707,
+      "fee": 5000,
+      "tokens": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1000000,
+          "after": 0
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": null,
+          "after": 1000050
+        }
+      },
+      "account_lamports": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1600200,
+          "after": 1600200
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": null,
+          "after": 1600200
+        }
+      },
+      "lamports": {
+        "before": 999995179400,
+        "after": 999993574200
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "three_token_route",
+      "plan": "orca_token22_pair_b_to_a",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 999749,
+      "venue_out": [
+        999749
+      ],
+      "compute_units": 92869,
+      "fee": 5000,
+      "tokens": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": null,
+          "after": 999749
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 1000000,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": null,
+          "after": 1600200
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 1600200,
+          "after": 1600200
+        }
+      },
+      "lamports": {
+        "before": 999988753600,
+        "after": 999987148400
+      },
+      "venue_accounts_unchanged": false
+    }
+  ],
+  "cycles": [],
+  "thresholds": [
+    {
+      "name": "at_payout",
+      "plan": "orca_token22_pair_a_to_b",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000050,
+      "venue_out": [
+        1000050
+      ],
+      "compute_units": 70857,
+      "fee": 5000,
+      "tokens": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1000000,
+          "after": 0
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 0,
+          "after": 1000050
+        }
+      },
+      "account_lamports": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1600200,
+          "after": 1600200
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 1600200,
+          "after": 1600200
+        }
+      },
+      "lamports": {
+        "before": 999977507200,
+        "after": 999977502200
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "one_above_payout",
+      "plan": "orca_token22_pair_a_to_b",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000051,
+      "venue_out": [
+        1000050
+      ],
+      "error": "InstructionError(1, Custom(6013)) Program log: Memo (len 9): \"TFe: 0, 0\" | Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr consumed 4641 of 1344529 compute units | Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr success | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb invoke [3] | Program log: Instruction: TransferChecked | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb consumed 3850 of 1336223 compute units | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb success | Program data: 4cpJr5MroJbrw3LiFtow8/O3Ufv9QlytWKs2ndqQH0sY1eMOUO5ZcAGe6lP+fO4EAAEAAAAAAAAA9V1HKXzuBAABAAAAAAAAAEBCDwAAAAAAckIPAAAAAAAAAAAAAAAAAAAAAAAAAAAAVwAAAAAAAAANAAAAAAAAAA== | Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc consumed 61448 of 1390974 compute units | Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 70717 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "tokens": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1000000,
+          "after": 1000000
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1600200,
+          "after": 1600200
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 1600200,
+          "after": 1600200
+        }
+      },
+      "lamports": {
+        "before": 999971076400,
+        "after": 999971071400
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "at_payout",
+      "plan": "orca_token22_pair_b_to_a",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 999749,
+      "venue_out": [
+        999749
+      ],
+      "compute_units": 72019,
+      "fee": 5000,
+      "tokens": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 0,
+          "after": 999749
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 1000000,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1600200,
+          "after": 1600200
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 1600200,
+          "after": 1600200
+        }
+      },
+      "lamports": {
+        "before": 999961430200,
+        "after": 999961425200
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "one_above_payout",
+      "plan": "orca_token22_pair_b_to_a",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 999750,
+      "venue_out": [
+        999749
+      ],
+      "error": "InstructionError(1, Custom(6013)) Program log: Memo (len 9): \"TFe: 0, 0\" | Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr consumed 4641 of 1343357 compute units | Program MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr success | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb invoke [3] | Program log: Instruction: TransferChecked | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb consumed 3850 of 1335051 compute units | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb success | Program data: 4cpJr5MroJbrw3LiFtow8/O3Ufv9QlytWKs2ndqQH0sY1eMOUO5ZcACe6lP+fO4EAAEAAAAAAAAALUJY033uBAABAAAAAAAAAEBCDwAAAAAARUEPAAAAAAAAAAAAAAAAAAAAAAAAAAAAVwAAAAAAAAANAAAAAAAAAA== | Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc consumed 62606 of 1390970 compute units | Program whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 71879 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "tokens": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 0,
+          "after": 0
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1600200,
+          "after": 1600200
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": 1600200,
+          "after": 1600200
+        }
+      },
+      "lamports": {
+        "before": 999954999400,
+        "after": 999954994400
+      },
+      "venue_accounts_unchanged": true
+    }
+  ],
+  "budgets": [
+    {
+      "name": "compute_limit_one",
+      "plan": "orca_token22_pair_a_to_b",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000050,
+      "venue_out": [
+        1000050
+      ],
+      "error": "InstructionError(0, ProgramFailedToComplete) (1 CU): Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [1] | Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 1 of 1 compute units | Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL failed: exceeded CUs meter at BPF instruction",
+      "tokens": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1000000,
+          "after": 1000000
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1600200,
+          "after": 1600200
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999950173800,
+        "after": 999950168800
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "loaded_data_one",
+      "plan": "orca_token22_pair_a_to_b",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000050,
+      "venue_out": [
+        1000050
+      ],
+      "error": "MaxLoadedAccountsDataSizeExceeded (0 CU): ",
+      "tokens": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1000000,
+          "after": 1000000
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo": {
+          "before": 1600200,
+          "after": 1600200
+        },
+        "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999945348200,
+        "after": 999945348200
+      },
+      "venue_accounts_unchanged": true
+    }
+  ]
+}

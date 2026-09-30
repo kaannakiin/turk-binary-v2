@@ -20,5 +20,15 @@ pub use session::{Pinned, SearchSession, Verdict};
 pub use settings::RouteSettings;
 pub use stats::RouteStatsSnapshot;
 
+mod flow;
+mod layered;
+pub use flow::{Allocation, Flow, FlowOptions, FlowSearch, Operation};
+
+/// Resolves an on-chain program identity through the DEX registry.
+#[must_use]
+pub fn dex_kind(program: &domain::Pubkey) -> Option<domain::DexKind> {
+    dex::by_program(program).map(|spec| spec.kind)
+}
+
 #[cfg(test)]
 mod tests;

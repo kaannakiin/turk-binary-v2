@@ -32,6 +32,7 @@ const CPMM_HOP: Hop = Hop {
     hook_a: 0,
     hook_b: 0,
     tail: 0,
+    min_out: 0,
 };
 
 fn key(base58: &str) -> [u8; 32] {
@@ -103,7 +104,9 @@ impl Window {
         build(&HopInput {
             window: &views,
             amount_in: MAINNET_AMOUNT_IN,
+            min_out: 0,
             user: &key(MAINNET_ACCOUNTS[0].0),
+            source_ata: &self.keys[5],
         })
     }
 }

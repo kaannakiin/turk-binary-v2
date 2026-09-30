@@ -1,0 +1,541 @@
+{
+  "provenance": {
+    "corpus_sha256": "8c0baea81f1bbb4c8bab6466652f246dbf091149ebdc269d40c72685c3ee99e1",
+    "router_sha256": "dd1f855362f7743bfcb9bde71e0629c8ec8a4357362a3b0b7db43a8db306890a",
+    "litesvm": "0.17.0"
+  },
+  "observations": [
+    {
+      "key": "BeMRiScNtZrU1Ce4D6Kv5FYKLyhGTRbmMq2KPVxupuDv",
+      "owner": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+      "lamports": 29252880,
+      "data": "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"
+    },
+    {
+      "key": "DZFQBVZb9p28GuYAkT1bsjr952q6QN3dEmt3DGYzmry2",
+      "owner": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+      "lamports": 29252880,
+      "data": "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"
+    }
+  ],
+  "synthetic": [
+    {
+      "plan": "amm_v4_to_amm_v4_profit_synthetic",
+      "vault": "DQyrAcCrDXQ7NeoqGgDCZwBvWDcYmFCjSb9JtteuvPpz",
+      "original_balance": 160150072316590,
+      "adjusted_balance": 160848942771881,
+      "payout_before": 995656,
+      "payout_one_less": 1000000,
+      "payout_after": 1000001
+    }
+  ],
+  "transfer_fees": [],
+  "swaps": [
+    {
+      "name": "three_token_route",
+      "plan": "amm_v4_to_cpmm",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 2980,
+      "venue_out": [
+        3271837,
+        2995
+      ],
+      "compute_units": 84709,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 0
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": 2995
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999856159760,
+        "after": 999853177880
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "three_token_route",
+      "plan": "cpmm_to_amm_v4",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 8418856,
+      "venue_out": [
+        8489823,
+        8461162
+      ],
+      "compute_units": 84432,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 0
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": 8461162
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999847194120,
+        "after": 999844212240
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "three_token_route",
+      "plan": "amm_v4_to_amm_v4",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 3245028,
+      "venue_out": [
+        3271837,
+        3261335
+      ],
+      "compute_units": 74581,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 0
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": 3261335
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": 1488440
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999838228480,
+        "after": 999835246600
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "three_token_route",
+      "plan": "amm_v4_to_cpmm_profit",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000575,
+      "venue_out": [
+        118868,
+        1000575
+      ],
+      "compute_units": 76841,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 0
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000575
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2489015
+        }
+      },
+      "lamports": {
+        "before": 999830756280,
+        "after": 999829262840
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "three_token_route",
+      "plan": "amm_v4_to_amm_v4_profit_synthetic",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000001,
+      "venue_out": [
+        118863,
+        1000001
+      ],
+      "compute_units": 67204,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 0
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000001
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": 1488440
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488441
+        }
+      },
+      "lamports": {
+        "before": 999824772520,
+        "after": 999823279080
+      },
+      "venue_accounts_unchanged": false
+    }
+  ],
+  "cycles": [
+    {
+      "name": "at_payout",
+      "plan": "amm_v4_to_cpmm_profit",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000575,
+      "venue_out": [
+        118868,
+        1000575
+      ],
+      "compute_units": 51585,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000575
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2489015
+        }
+      },
+      "lamports": {
+        "before": 999814298440,
+        "after": 999814293440
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "one_above_payout",
+      "plan": "amm_v4_to_cpmm_profit",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000576,
+      "venue_out": [
+        118868,
+        1000575
+      ],
+      "error": "InstructionError(0, Custom(6013)) Program log: Instruction: SwapBaseInput | Program data: QMbN6CYIceIJxxMqZsfAMmyMzfirWODUaRqj/AvTK0+f06qqdLNU28edygEAAAAAiOEjDwAAAABU0AEAAAAAAH9EDwAAAAAAAAAAAAAAAAAAAAAAAAAAAAHG+nrzvtutOj1l82qryXQxsbvkwtL24OR8pgIDRS9dYQabiFf+q4GE+2h/Y0YYwDXaxDncGus7VZig8AAAAAABBgAAAAAAAAAAAAAAAAAAAAE= | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 105 of 152371 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 112 of 150203 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C consumed 24139 of 172941 compute units | Program CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 51595 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488440
+        }
+      },
+      "lamports": {
+        "before": 999808309680,
+        "after": 999808304680
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "at_payout",
+      "plan": "amm_v4_to_amm_v4_profit_synthetic",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000001,
+      "venue_out": [
+        118863,
+        1000001
+      ],
+      "compute_units": 41948,
+      "fee": 5000,
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000001
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488441
+        }
+      },
+      "lamports": {
+        "before": 999799324040,
+        "after": 999799319040
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "one_above_payout",
+      "plan": "amm_v4_to_amm_v4_profit_synthetic",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 1000002,
+      "venue_out": [
+        118863,
+        1000001
+      ],
+      "error": "InstructionError(0, Custom(6013)) Program log: Number of accounts: 8 | Program log: ray_log: A0/QAQAAAAAAQUIPAAAAAAABAAAAAAAAAE/QAQAAAAAA8KxXgkqSAAAFo61QWBEAAEFCDwAAAAAA | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 76 of 161186 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 83 of 159124 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8 consumed 15404 of 173843 compute units | Program 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 41958 of 200000 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 0,
+          "after": 0
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": 1488440,
+          "after": 1488440
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488440
+        }
+      },
+      "lamports": {
+        "before": 999793335280,
+        "after": 999793330280
+      },
+      "venue_accounts_unchanged": true
+    }
+  ],
+  "budgets": [
+    {
+      "name": "compute_limit_one",
+      "plan": "amm_v4_to_cpmm",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 2980,
+      "venue_out": [
+        3271837,
+        2995
+      ],
+      "error": "InstructionError(0, ProgramFailedToComplete) (1 CU): Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [1] | Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 1 of 1 compute units | Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL failed: exceeded CUs meter at BPF instruction",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 100000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 101488440
+        }
+      },
+      "lamports": {
+        "before": 999787346520,
+        "after": 999787341520
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "loaded_data_one",
+      "plan": "amm_v4_to_cpmm",
+      "epoch": 1045,
+      "amount_in": 100000000,
+      "min_out": 2980,
+      "venue_out": [
+        3271837,
+        2995
+      ],
+      "error": "MaxLoadedAccountsDataSizeExceeded (0 CU): ",
+      "tokens": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 100000000,
+          "after": 100000000
+        }
+      },
+      "account_lamports": {
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+          "before": null,
+          "after": null
+        },
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+          "before": null,
+          "after": null
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 101488440,
+          "after": 101488440
+        }
+      },
+      "lamports": {
+        "before": 999781357760,
+        "after": 999781357760
+      },
+      "venue_accounts_unchanged": true
+    }
+  ]
+}

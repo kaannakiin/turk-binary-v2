@@ -52,8 +52,8 @@ impl SearchPool {
     }
 
     /// A job holds its place until it returns, even after the caller stopped
-    /// waiting: a running search cannot be interrupted. One whose caller left
-    /// before it started is dropped unrun.
+    /// waiting: running work must observe its own cooperative cancellation.
+    /// One whose caller left before it started is dropped unrun.
     pub(crate) fn submit<T: Send + 'static>(
         &self,
         work: impl FnOnce() -> T + Send + 'static,

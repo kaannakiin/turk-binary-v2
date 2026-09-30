@@ -159,7 +159,7 @@ type Servers = (
 /// request is priced on state that stopped updating.
 pub async fn serve(path: &Path) -> anyhow::Result<()> {
     let config = config::load(path)?;
-    let settings = config.server;
+    let settings = config.server.clone();
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let threads = server::search_threads(config.threads.search, cores);
     let health = server::Health::new(settings.ready);

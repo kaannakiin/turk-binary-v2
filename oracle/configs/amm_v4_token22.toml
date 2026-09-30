@@ -1,0 +1,52 @@
+# Read-only capture for an AMM v4 SPL Token hop followed by a CPMM
+# Token-2022 transfer-fee hop. SOLADAO fee config is pinned in
+# crates/tx/src/tests/fixtures/scenario_pools.json.gz.
+stats_interval_secs = 10
+
+[universe]
+mints = [
+  "So11111111111111111111111111111111111111112",
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "AY2sSqL3wWTfuevCoRBqkvMoawArCunRfpnPzVmuxXoi",
+]
+pools = []
+allowed_dexes = ["raydium_amm_v4", "raydium_cpmm"]
+blocked_dexes = []
+
+[rpc]
+commitment = "processed"
+timeout_ms = 10000
+max_in_flight = 8
+max_rps = 8
+
+[rpc.retry]
+max_attempts = 5
+base_delay_ms = 100
+max_delay_ms = 5000
+
+[grpc]
+commitment = "processed"
+streams = 12
+slot_source = "auto"
+max_pubkeys_per_filter = 100
+compression = "gzip"
+recv_timeout_ms = 10000
+max_message_delay_ms = 10000
+connect_timeout_ms = 10000
+filter_flush_ms = 200
+
+[grpc.reconnect]
+max_attempts = 0
+base_delay_ms = 500
+max_delay_ms = 30000
+
+[sync]
+settle_slots = 4
+repair_concurrency = 2
+audit_interval_ms = 10000
+stream_swap_accounts = true
+
+[grpc.transport]
+http2_keep_alive_interval_ms = 15000
+keep_alive_timeout_ms = 5000
+tcp_nodelay = true

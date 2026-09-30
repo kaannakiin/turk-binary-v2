@@ -100,7 +100,7 @@ impl ApiServer {
         let api = Api {
             pool: Arc::clone(&pool),
             quotes,
-            settings: settings.quote,
+            settings: settings.quote.clone(),
             swap: settings.swap,
             blockhashes,
             max_clock_stall: settings.ready.max_clock_stall(),

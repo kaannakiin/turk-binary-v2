@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::error::ServerError;
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ServerSettings {
     pub api_addr: SocketAddr,
@@ -82,17 +82,20 @@ impl Default for ReadySettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct QuoteSettings {
     pub default_max_hops: u8,
     pub max_hops: u8,
+    pub max_operations: u8,
     pub max_quotes: u32,
     /// `0` quotes every pool of every pair.
     pub per_pair: u8,
     pub max_arrays: u8,
     pub timeout_ms: u64,
     pub max_queued: usize,
+    /// Program IDs which are unique by default in cyclic-arbitrage searches.
+    pub unique_dex_ids: Vec<String>,
 }
 
 impl QuoteSettings {
@@ -107,6 +110,11 @@ impl QuoteSettings {
                 "quote.default_max_hops must be between 1 and quote.max_hops",
             ));
         }
+        if !(1..=16).contains(&self.max_operations) {
+            return Err(ServerError::Settings(
+                "quote.max_operations must be between 1 and 16",
+            ));
+        }
         Ok(())
     }
 }
@@ -116,11 +124,13 @@ impl Default for QuoteSettings {
         Self {
             default_max_hops: 3,
             max_hops: 4,
+            max_operations: 16,
             max_quotes: 100_000,
             per_pair: 2,
             max_arrays: 8,
             timeout_ms: 2_000,
             max_queued: 32,
+            unique_dex_ids: Vec::new(),
         }
     }
 }

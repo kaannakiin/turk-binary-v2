@@ -20,6 +20,9 @@ pub enum RouterError {
     ZeroAdmin = 6016,
     NotUpgradeAuthority = 6017,
     BadProgramData = 6018,
+    BadFlow = 6019,
+    FlowSlotAccountMismatch = 6020,
+    FlowBalance = 6021,
 }
 
 impl From<RouterError> for u32 {

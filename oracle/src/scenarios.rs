@@ -12,18 +12,24 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+use arb_swap_ix::BootLayout;
+use arb_swap_ix::layout::whirlpool::decode_whirlpool;
+use arb_swap_ix::whirlpool_ticks::{WHIRLPOOL_TICK_ARRAY_SIZE, whirlpool_swap_tick_array_starts};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use router_wire::{CONFIG_SEED, Config, Route, RouterInstruction};
+use router_wire::{CONFIG_SEED, Config, FlowRoute, Route, RouterInstruction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
+use solana_message::VersionedMessage;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer as _;
+use solana_transaction::versioned::VersionedTransaction;
 
 use crate::Hop;
 use crate::router::{self, Corpus, InstructionBody, ROUTER};
+use crate::rpc;
 use crate::snapshot::{Clock, Stored};
 use crate::svm::{self, Machine, Sent};
 use crate::venue::Venue;
@@ -122,6 +128,7 @@ struct Swap {
     tokens: BTreeMap<String, Change>,
     account_lamports: BTreeMap<String, Change>,
     lamports: Change,
+    venue_accounts_unchanged: bool,
 }
 
 #[derive(Serialize)]
@@ -150,8 +157,48 @@ struct Scenarios {
     admin: Vec<Step>,
 }
 
+#[derive(Serialize)]
+struct Matrix {
+    provenance: Provenance,
+    observations: Vec<crate::snapshot::Account>,
+    synthetic: Vec<Synthetic>,
+    transfer_fees: Vec<TransferFee>,
+    swaps: Vec<Swap>,
+    cycles: Vec<Swap>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    thresholds: Vec<Swap>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    hop_thresholds: Vec<Swap>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    bad_windows: Vec<Swap>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    accepted_windows: Vec<Swap>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unguarded_moves: Vec<Swap>,
+    budgets: Vec<Swap>,
+}
+
+#[derive(Serialize)]
+struct TransferFee {
+    plan: String,
+    gross_out: u64,
+    net_out: u64,
+}
+
+#[derive(Serialize)]
+struct Synthetic {
+    plan: String,
+    vault: String,
+    original_balance: u64,
+    adjusted_balance: u64,
+    payout_before: u64,
+    payout_one_less: u64,
+    payout_after: u64,
+}
+
 enum Via {
     V1,
+    Unsigned(Vec<u8>),
     Legacy(Vec<Instruction>),
 }
 
@@ -201,7 +248,10 @@ impl World<'_> {
         self.reset(plan.epoch);
         self.open(&plan.input(), plan.amount_in())?;
         for leg in &plan.legs {
-            self.open(&leg.output_mint.parse().expect("mint"), 0)?;
+            let output: Pubkey = leg.output_mint.parse().expect("mint");
+            if output != plan.input() {
+                self.open(&output, 0)?;
+            }
         }
         let payer = self.machine.payer();
         let mut amount = plan.amount_in();
@@ -224,6 +274,97 @@ impl World<'_> {
             paid.push(amount);
         }
         Ok(paid)
+    }
+
+    fn current_accounts(&self) -> HashMap<Pubkey, Option<Stored>> {
+        self.accounts
+            .keys()
+            .map(|key| {
+                let now = self.machine.account(key).map(|account| Stored {
+                    owner: account.owner,
+                    lamports: account.lamports,
+                    data: account.data,
+                });
+                (*key, now)
+            })
+            .collect()
+    }
+
+    /// A swap on `pool` built from the venue's state as it is now, not as the corpus
+    /// captured it: what another trader, or the direct program after them, would run.
+    fn direct_swap(
+        &mut self,
+        dex: &str,
+        pool: Pubkey,
+        (input, output): (Pubkey, Pubkey),
+        amount: u64,
+    ) -> Result<u64, String> {
+        let accounts = self.current_accounts();
+        let venue = Venue::new(dex, &pool, &accounts)?;
+        let destination = self.user_account(&output);
+        let before = self.machine.balance(&destination);
+        let ix = Hop {
+            pool,
+            venue: &venue,
+            accounts: &accounts,
+            input,
+            output,
+        }
+        .build(self.machine.payer(), amount)?;
+        self.machine.swap(ix)?;
+        Ok(self.machine.balance(&destination) - before)
+    }
+
+    fn whirlpool_first_array(&self, pool: &Pubkey, input: &Pubkey) -> i32 {
+        let account = self.machine.account(pool).expect("the whirlpool exists");
+        let layout = decode_whirlpool(&account.data).expect("a whirlpool");
+        whirlpool_swap_tick_array_starts(
+            layout.tick_current,
+            layout.tick_spacing,
+            *input == layout.token_mint_a,
+        )[0]
+        .expect("a valid first array")
+    }
+
+    fn whirlpool_span(&self, pool: &Pubkey) -> i32 {
+        let account = self.machine.account(pool).expect("the whirlpool exists");
+        let layout = decode_whirlpool(&account.data).expect("a whirlpool");
+        WHIRLPOOL_TICK_ARRAY_SIZE * i32::from(layout.tick_spacing)
+    }
+
+    fn whirlpool_crossing_amount(
+        &mut self,
+        plan: &Plan,
+        pool: Pubkey,
+        against: (Pubkey, Pubkey),
+        route_input: Pubkey,
+    ) -> u64 {
+        let crosses = |w: &mut Self, amount: u64| {
+            w.reset(plan.epoch);
+            w.open(&against.0, amount).expect("funding the move");
+            w.open(&against.1, 0).expect("the move's destination");
+            let start = w.whirlpool_first_array(&pool, &route_input);
+            w.direct_swap("orca_whirlpool", pool, against, amount)
+                .is_ok()
+                && w.whirlpool_first_array(&pool, &route_input) != start
+        };
+        let mut high = 1_000u64;
+        while !crosses(self, high) {
+            high = high
+                .checked_mul(2)
+                .filter(|&h| h < 1 << 60)
+                .expect("no swap on the whirlpool reaches the next tick array");
+        }
+        let mut low = high / 2;
+        while high - low > 1 {
+            let mid = low + (high - low) / 2;
+            if crosses(self, mid) {
+                high = mid;
+            } else {
+                low = mid;
+            }
+        }
+        high
     }
 
     /// Per mint: the user's token balance and its account's lamports.
@@ -251,6 +392,18 @@ impl World<'_> {
         let user = self.machine.payer();
         let before = self.holdings();
         let lamports_before = self.machine.lamports(&user);
+        let venue_before: Vec<_> = self
+            .accounts
+            .keys()
+            .map(|key| {
+                (
+                    *key,
+                    self.machine
+                        .account(key)
+                        .map(|account| (account.lamports, account.data)),
+                )
+            })
+            .collect();
         let (sent, route) = match send {
             Via::V1 => {
                 let tx = STANDARD
@@ -261,6 +414,10 @@ impl World<'_> {
                     plan.swap_instruction.instruction(),
                 )
             }
+            Via::Unsigned(tx) => (
+                self.machine.send_unsigned(tx),
+                plan.swap_instruction.instruction(),
+            ),
             Via::Legacy(instructions) => (
                 self.machine.send_measured(instructions),
                 instructions
@@ -271,6 +428,12 @@ impl World<'_> {
             ),
         };
         let after = self.holdings();
+        let venue_accounts_unchanged = venue_before.iter().all(|(key, account)| {
+            self.machine
+                .account(key)
+                .map(|now| (now.lamports, now.data))
+                == *account
+        });
         let (error, compute_units, fee) = match sent {
             Ok(Sent { compute_units, fee }) => (None, Some(compute_units), Some(fee)),
             Err(error) => (Some(error), None, None),
@@ -315,28 +478,41 @@ impl World<'_> {
                 before: Some(lamports_before),
                 after: Some(self.machine.lamports(&user)),
             },
+            venue_accounts_unchanged,
         }
     }
 }
 
 fn min_out(route: &Instruction) -> u64 {
-    let RouterInstruction::Route(route) =
-        RouterInstruction::decode(&route.data).expect("a router instruction")
-    else {
-        panic!("not a route");
-    };
-    route.min_out()
+    match RouterInstruction::decode(&route.data).expect("a router instruction") {
+        RouterInstruction::Route(route) => route.min_out(),
+        RouterInstruction::Flow(route) => route.min_out(),
+        RouterInstruction::Initialize { .. }
+        | RouterInstruction::SetPaused { .. }
+        | RouterInstruction::SetAdmin { .. } => panic!("not a swap route"),
+    }
 }
 
 fn with_min_out(ix: &Instruction, min_out: u64) -> Instruction {
-    let RouterInstruction::Route(route) =
-        RouterInstruction::decode(&ix.data).expect("a router instruction")
-    else {
-        panic!("not a route");
+    let route = match RouterInstruction::decode(&ix.data).expect("a router instruction") {
+        RouterInstruction::Route(route) => RouterInstruction::Route(
+            Route::new(route.in_amount(), min_out, route.hops()).expect("a valid route"),
+        ),
+        RouterInstruction::Flow(route) => RouterInstruction::Flow(
+            FlowRoute::new(
+                route.in_amount(),
+                min_out,
+                route.slot_count(),
+                route.steps(),
+            )
+            .expect("a valid flow"),
+        ),
+        RouterInstruction::Initialize { .. }
+        | RouterInstruction::SetPaused { .. }
+        | RouterInstruction::SetAdmin { .. } => panic!("not a swap route"),
     };
-    let route = Route::new(route.in_amount(), min_out, route.hops()).expect("a valid route");
     Instruction {
-        data: RouterInstruction::Route(route).encode(),
+        data: route.encode(),
         ..ix.clone()
     }
 }
@@ -535,7 +711,7 @@ fn refusals(world: &mut World<'_>, single: &Plan, other_mint: &Pubkey) -> Vec<St
     let cases: Vec<(&'static str, Instruction)> = vec![
         ("zero_min_out", with_data(|d| d[MIN_OUT].fill(0))),
         ("zero_in_amount", with_data(|d| d[IN_AMOUNT].fill(0))),
-        ("wire_version_2", with_data(|d| d[VERSION] = 2)),
+        ("wire_version_1", with_data(|d| d[VERSION] = 1)),
         (
             "no_hops",
             with_data(|d| {
@@ -929,6 +1105,668 @@ pub fn main(args: &[PathBuf]) {
         admin,
     };
     write(out, &scenarios);
+}
+
+/// Replay three-token, two-hop plans against each venue program on its own,
+/// then sign and send the API's unsigned v1 transaction through the router.
+pub fn matrix_main(args: &[PathBuf]) {
+    let [corpus_path, plans_path, programs, router_so, out] = args else {
+        eprintln!("usage: oracle router-matrix SNAPSHOT PLANS PROGRAMS_DIR ROUTER_SO OUT");
+        std::process::exit(2);
+    };
+    let (corpus, corpus_raw) = Corpus::read(corpus_path);
+    let plans: Plans = serde_json::from_slice(&std::fs::read(plans_path).expect("reading plans"))
+        .expect("parsing plans");
+    let router = std::fs::read(router_so).expect("reading the router program");
+    let mut accounts = corpus.accounts();
+    let venues: HashMap<Pubkey, Venue> = corpus
+        .pools
+        .iter()
+        .map(|pool| {
+            let venue = Venue::new(&pool.dex, &pool.address(), &accounts).expect("a venue");
+            (pool.address(), venue)
+        })
+        .collect();
+    let needed: BTreeSet<Pubkey> = plans
+        .plans
+        .iter()
+        .flat_map(|plan| &plan.legs)
+        .filter_map(|leg| {
+            let pool: Pubkey = leg.pool.parse().expect("pool");
+            match &venues[&pool].layout {
+                BootLayout::RaydiumCpmm { layout } => Some(layout.observation_key),
+                BootLayout::RaydiumClmm { layout } => Some(layout.observation_key),
+                _ => None,
+            }
+        })
+        .filter(|key| !accounts.contains_key(key))
+        .collect();
+    let corpus_sha256 = format!("{:x}", Sha256::digest(&corpus_raw));
+    let cached_observations = std::fs::read(out)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .filter(|fixture| fixture["provenance"]["corpus_sha256"] == corpus_sha256)
+        .and_then(|fixture| {
+            serde_json::from_value::<Vec<crate::snapshot::Account>>(fixture["observations"].clone())
+                .ok()
+        })
+        .map(|stored| {
+            stored
+                .into_iter()
+                .map(|account| (account.key(), account.stored()))
+                .collect::<HashMap<_, _>>()
+        })
+        .filter(|stored| needed.iter().all(|key| stored.contains_key(key)));
+    let observations = cached_observations
+        .unwrap_or_else(|| rpc::fetch(&needed.iter().copied().collect::<Vec<_>>()));
+    let recorded_observations: Vec<_> = needed
+        .iter()
+        .map(|key| crate::snapshot::Account::from_stored(key, observations[key].as_ref()))
+        .collect();
+    accounts.extend(observations);
+    let mints = plans
+        .plans
+        .iter()
+        .flat_map(|plan| &plan.legs)
+        .flat_map(|leg| [&leg.input_mint, &leg.output_mint])
+        .map(|mint| mint.parse().expect("mint"))
+        .collect();
+    let mut world = World {
+        machine: router::machine(programs, &router),
+        clock: &corpus.clock,
+        accounts,
+        venues,
+        mints,
+    };
+    let synthetic: Vec<Synthetic> = plans
+        .plans
+        .iter()
+        .filter(|plan| plan.name == "amm_v4_to_amm_v4_profit_synthetic")
+        .map(|plan| synthetic_v4_profit(&mut world, plan))
+        .collect();
+    let transfer_fees: Vec<TransferFee> = plans
+        .plans
+        .iter()
+        .filter(|plan| plan.name == "amm_v4_to_cpmm_token22_fee")
+        .map(|plan| direct_transfer_fee(&mut world, plan))
+        .collect();
+    let swaps = plans
+        .plans
+        .iter()
+        .map(|plan| {
+            eprintln!("replaying {}", plan.name);
+            let swap = world.swap(
+                "three_token_route",
+                plan,
+                |w| w.open(&plan.input(), plan.amount_in()).map(drop),
+                &Via::V1,
+            );
+            eprintln!("{}: {}", plan.name, swap.error.as_deref().unwrap_or("ok"));
+            swap
+        })
+        .collect();
+    let mut cycles = Vec::new();
+    for plan in plans
+        .plans
+        .iter()
+        .filter(|plan| plan.input() == plan.output())
+    {
+        let payout = *world.venue_out(plan).expect("direct cycle").last().unwrap();
+        for (name, threshold) in [
+            ("at_payout", payout),
+            (
+                "one_above_payout",
+                payout.checked_add(1).expect("threshold"),
+            ),
+        ] {
+            let route = with_min_out(&plan.swap_instruction.instruction(), threshold);
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    w.open(&plan.legs[0].output_mint.parse().expect("intermediate"), 0)
+                        .map(drop)
+                },
+                &Via::Legacy(vec![route]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            cycles.push(result);
+        }
+    }
+    let mut thresholds = Vec::new();
+    for plan in plans.plans.iter().filter(|plan| {
+        plan.name.contains("clmm") || plan.name.contains("orca") || plan.name.contains("dlmm")
+    }) {
+        let payout = *world.venue_out(plan).expect("direct route").last().unwrap();
+        for (name, threshold) in [
+            ("at_payout", payout),
+            (
+                "one_above_payout",
+                payout.checked_add(1).expect("threshold"),
+            ),
+        ] {
+            let route = with_min_out(&plan.swap_instruction.instruction(), threshold);
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    for leg in &plan.legs {
+                        let mint: Pubkey = leg.output_mint.parse().expect("output mint");
+                        if mint != plan.input() {
+                            w.open(&mint, 0)?;
+                        }
+                    }
+                    Ok(())
+                },
+                &Via::Legacy(vec![svm::compute_limit(), route]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            thresholds.push(result);
+        }
+    }
+    let mut hop_thresholds = Vec::new();
+    for plan in plans.plans.iter().filter(|plan| {
+        plan.legs.len() == 2 && (plan.name.contains("clmm") || plan.name.contains("orca"))
+    }) {
+        let payouts = world.venue_out(plan).expect("direct route");
+        let base = plan.swap_instruction.instruction();
+        let RouterInstruction::Route(decoded) =
+            RouterInstruction::decode(&base.data).expect("route")
+        else {
+            panic!("the plan must contain a route");
+        };
+        for (index, name) in [
+            (0, "first_hop_one_above_payout"),
+            (1, "second_hop_one_above_payout"),
+        ] {
+            let mut hops = decoded.hops().to_vec();
+            hops[index].min_out = payouts[index].checked_add(1).expect("threshold");
+            let route = Route::new(decoded.in_amount(), decoded.min_out(), &hops).expect("route");
+            let ix = Instruction {
+                data: RouterInstruction::Route(route).encode(),
+                ..base.clone()
+            };
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    for leg in &plan.legs {
+                        let mint: Pubkey = leg.output_mint.parse().expect("output mint");
+                        if mint != plan.input() {
+                            w.open(&mint, 0)?;
+                        }
+                    }
+                    Ok(())
+                },
+                &Via::Legacy(vec![svm::compute_limit(), ix]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            hop_thresholds.push(result);
+        }
+    }
+    let mut bad_windows = Vec::new();
+    let mut accepted_windows = Vec::new();
+    let mut unguarded_moves = Vec::new();
+    if let Some(plan) = plans.plans.iter().find(|plan| plan.name == "clmm_to_cpmm") {
+        let route = plan.swap_instruction.instruction();
+        let RouterInstruction::Route(decoded) =
+            RouterInstruction::decode(&route.data).expect("a route")
+        else {
+            panic!("the plan must contain a route");
+        };
+        let arrays_start = 4 + 14 + usize::from(decoded.hops()[0].tail & 0x80 != 0);
+        assert!(decoded.hops()[0].tail & 0x7f >= 2);
+        let mut missing = route.clone();
+        missing.accounts.remove(arrays_start);
+        let mut wrong = route.clone();
+        wrong.accounts[arrays_start].pubkey = SYSTEM;
+        let mut reversed = route;
+        reversed.accounts.swap(arrays_start, arrays_start + 1);
+        for (name, ix) in [
+            ("missing_tick_array", missing),
+            ("wrong_tick_array", wrong),
+            ("reversed_tick_arrays", reversed),
+        ] {
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    for leg in &plan.legs {
+                        let mint: Pubkey = leg.output_mint.parse().expect("output mint");
+                        if mint != plan.input() {
+                            w.open(&mint, 0)?;
+                        }
+                    }
+                    Ok(())
+                },
+                &Via::Legacy(vec![svm::compute_limit(), ix]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            bad_windows.push(result);
+        }
+    }
+    if let Some(plan) = plans.plans.iter().find(|plan| plan.name == "orca_to_clmm") {
+        let route = plan.swap_instruction.instruction();
+        // Four router accounts precede the Orca window. swap_v2's three named
+        // arrays are window slots 12..15 and its oracle is slot 15.
+        let arrays_start = 4 + 12;
+        let mut variants = Vec::new();
+        for (name, index) in [
+            ("orca_wrong_program", 4),
+            ("orca_wrong_pool", 4 + 5),
+            ("orca_wrong_mint", 4 + 6),
+            ("orca_wrong_vault", 4 + 9),
+            ("orca_wrong_array", arrays_start),
+            ("orca_wrong_oracle", 4 + 15),
+        ] {
+            let mut ix = route.clone();
+            ix.accounts[index].pubkey = SYSTEM;
+            variants.push((name, ix));
+        }
+        let mut missing = route.clone();
+        missing.accounts.remove(arrays_start);
+        variants.push(("orca_missing_array", missing));
+        let mut readonly = route.clone();
+        readonly.accounts[arrays_start].is_writable = false;
+        variants.push(("orca_readonly_array", readonly));
+        for (name, ix) in variants {
+            let result = world.swap(
+                name,
+                plan,
+                |w| open_route(w, plan),
+                &Via::Legacy(vec![svm::compute_limit(), ix]),
+            );
+            eprintln!(
+                "{} {name}: {}",
+                plan.name,
+                result.error.as_deref().unwrap_or("ok")
+            );
+            bad_windows.push(result);
+        }
+        // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
+        // programs/whirlpool/src/util/sparse_swap.rs (tick arrays in any order; supplemental
+        // arrays are the fallback when the price moves before the swap lands).
+        let mut reversed = route;
+        reversed.accounts.swap(arrays_start, arrays_start + 1);
+        let result = world.swap(
+            "orca_reversed_arrays",
+            plan,
+            |w| open_route(w, plan),
+            &Via::Legacy(vec![svm::compute_limit(), reversed]),
+        );
+        eprintln!(
+            "{} orca_reversed_arrays: {}",
+            plan.name,
+            result.error.as_deref().unwrap_or("ok")
+        );
+        accepted_windows.push(result);
+        let [guarded, unguarded] = orca_price_crossed_array(&mut world, plan);
+        accepted_windows.push(guarded);
+        unguarded_moves.push(unguarded);
+    }
+    if let Some(plan) = plans
+        .plans
+        .iter()
+        .find(|plan| plan.name == "dlmm_fee_input" || plan.name == "dlmm_two_arrays")
+    {
+        let route = plan.swap_instruction.instruction();
+        let RouterInstruction::Route(decoded) =
+            RouterInstruction::decode(&route.data).expect("a route")
+        else {
+            panic!("the plan must contain a route");
+        };
+        let arrays_start = 4 + 17;
+        let mut variants = Vec::new();
+        for (name, index) in [
+            ("dlmm_wrong_program", 4),
+            ("dlmm_wrong_pool", 5),
+            ("dlmm_wrong_vault", 7),
+            ("dlmm_wrong_mint", 11),
+            ("dlmm_wrong_oracle", 13),
+            ("dlmm_wrong_array", arrays_start),
+        ] {
+            let mut ix = route.clone();
+            ix.accounts[index].pubkey = SYSTEM;
+            variants.push((name, ix));
+        }
+        let mut missing = route.clone();
+        missing.accounts.remove(arrays_start);
+        variants.push(("dlmm_missing_array", missing));
+        let mut readonly = route.clone();
+        readonly.accounts[arrays_start].is_writable = false;
+        variants.push(("dlmm_readonly_array", readonly));
+        if decoded.hops()[0].tail >= 2 {
+            let mut reversed = route;
+            reversed.accounts.swap(arrays_start, arrays_start + 1);
+            variants.push(("dlmm_reversed_arrays", reversed));
+        }
+        for (name, ix) in variants {
+            let result = world.swap(
+                name,
+                plan,
+                |w| {
+                    w.open(&plan.input(), plan.amount_in())?;
+                    w.open(&plan.output(), 0).map(drop)
+                },
+                &Via::Legacy(vec![svm::compute_limit(), ix]),
+            );
+            bad_windows.push(result);
+        }
+    }
+    let mut budgets = Vec::new();
+    if let Some(plan) = plans.plans.first() {
+        for (name, low_compute) in [("compute_limit_one", true), ("loaded_data_one", false)] {
+            let mut tx: VersionedTransaction =
+                wincode::deserialize(&STANDARD.decode(&plan.transaction).expect("v1 base64"))
+                    .expect("v1 transaction");
+            let VersionedMessage::V1(message) = &mut tx.message else {
+                panic!("the API must build v1");
+            };
+            if low_compute {
+                message.config.compute_unit_limit = Some(1);
+            } else {
+                message.config.loaded_accounts_data_size_limit = Some(1);
+            }
+            let unsigned = wincode::serialize(&tx).expect("v1 bytes");
+            let result = world.swap(
+                name,
+                plan,
+                |w| w.open(&plan.input(), plan.amount_in()).map(drop),
+                &Via::Unsigned(unsigned),
+            );
+            eprintln!("budget {name}: {}", result.error.as_deref().unwrap_or("ok"));
+            budgets.push(result);
+        }
+    }
+    let matrix = Matrix {
+        provenance: Provenance {
+            corpus_sha256,
+            router_sha256: format!("{:x}", Sha256::digest(&router)),
+            litesvm: "0.17.0",
+        },
+        observations: recorded_observations,
+        synthetic,
+        transfer_fees,
+        swaps,
+        cycles,
+        thresholds,
+        hop_thresholds,
+        bad_windows,
+        accepted_windows,
+        unguarded_moves,
+        budgets,
+    };
+    let mut file = std::fs::File::create(out).expect("creating the matrix fixture");
+    serde_json::to_writer_pretty(&mut file, &matrix).expect("writing the matrix fixture");
+    file.flush().expect("flush");
+}
+
+fn open_route(world: &mut World<'_>, plan: &Plan) -> Result<(), String> {
+    world.open(&plan.input(), plan.amount_in())?;
+    for leg in &plan.legs {
+        let mint: Pubkey = leg.output_mint.parse().expect("output mint");
+        if mint != plan.input() {
+            world.open(&mint, 0)?;
+        }
+    }
+    Ok(())
+}
+
+fn dex_of(layout: &BootLayout) -> &'static str {
+    match layout {
+        BootLayout::RaydiumAmmV4 { .. } => "raydium_amm_v4",
+        BootLayout::RaydiumCpmm { .. } => "raydium_cpmm",
+        BootLayout::RaydiumClmm { .. } => "raydium_clmm",
+        BootLayout::Whirlpool { .. } => "orca_whirlpool",
+        BootLayout::MeteoraDlmm { .. } => "meteora_dlmm",
+        BootLayout::MeteoraDammV2 { .. } => "meteora_damm_v2",
+        BootLayout::MeteoraDammV1 { .. } => "meteora_damm_v1",
+        BootLayout::PumpSwap { .. } => "pump_amm",
+    }
+}
+
+/// Another trader's swap moves the route's first whirlpool one tick array against the
+/// route's direction after the quote; the route's supplemental arrays must still let it
+/// land. The expectation is each leg run directly on the moved state.
+fn orca_price_crossed_array(world: &mut World<'_>, plan: &Plan) -> [Swap; 2] {
+    let leg = &plan.legs[0];
+    let pool: Pubkey = leg.pool.parse().expect("pool");
+    let against: (Pubkey, Pubkey) = (
+        leg.output_mint.parse().expect("mint"),
+        leg.input_mint.parse().expect("mint"),
+    );
+    let route_input: Pubkey = leg.input_mint.parse().expect("mint");
+    let amount = world.whirlpool_crossing_amount(plan, pool, against, route_input);
+    // The move inflates an adaptive-fee pool's volatility; once its reference is older than
+    // MAX_REFERENCE_AGE the program resets it, so the route pays the base fee again.
+    // src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052
+    // programs/whirlpool/src/state/oracle.rs (MAX_REFERENCE_AGE, Oracle::update_reference).
+    let later = Clock {
+        unix_timestamp: world.clock.unix_timestamp + 3_601,
+        ..world.clock.clone()
+    };
+    let moved = |w: &mut World<'_>| -> Result<(), String> {
+        open_route(w, plan)?;
+        w.open(&against.0, amount)?;
+        w.direct_swap("orca_whirlpool", pool, against, amount)?;
+        w.machine.set_clock(&later);
+        Ok(())
+    };
+    world.reset(plan.epoch);
+    let quoted = world.whirlpool_first_array(&pool, &route_input);
+    moved(world).expect("moving the price");
+    assert_eq!(
+        (world.whirlpool_first_array(&pool, &route_input) - quoted).abs(),
+        world.whirlpool_span(&pool),
+        "the move shifts the route's first tick array by exactly one"
+    );
+    let mut paid = Vec::new();
+    let mut amount_in = plan.amount_in();
+    for leg in &plan.legs {
+        let hop_pool: Pubkey = leg.pool.parse().expect("pool");
+        let dex = dex_of(&world.venues[&hop_pool].layout);
+        let out = world
+            .direct_swap(
+                dex,
+                hop_pool,
+                (
+                    leg.input_mint.parse().expect("mint"),
+                    leg.output_mint.parse().expect("mint"),
+                ),
+                amount_in,
+            )
+            .expect("the moved venues pay alone");
+        paid.push(out);
+        amount_in = out;
+    }
+    let mut guarded = world.swap("orca_price_crossed_array", plan, moved, &Via::V1);
+    eprintln!(
+        "{} orca_price_crossed_array ({amount} moves one array): {}",
+        plan.name,
+        guarded.error.as_deref().unwrap_or("ok")
+    );
+    guarded.venue_out.clone_from(&paid);
+    let mut unguarded = world.swap(
+        "orca_price_crossed_array_without_supplemental_arrays",
+        plan,
+        moved,
+        &Via::Legacy(vec![svm::compute_limit(), without_orca_supplementals(plan)]),
+    );
+    eprintln!(
+        "{} orca_price_crossed_array_without_supplemental_arrays: {}",
+        plan.name,
+        unguarded.error.as_deref().unwrap_or("ok")
+    );
+    unguarded.venue_out = paid;
+    [guarded, unguarded]
+}
+
+fn without_orca_supplementals(plan: &Plan) -> Instruction {
+    let mut route = plan.swap_instruction.instruction();
+    let RouterInstruction::Route(decoded) =
+        RouterInstruction::decode(&route.data).expect("a route")
+    else {
+        panic!("the plan must contain a route");
+    };
+    let mut hops = decoded.hops().to_vec();
+    let tail = usize::from(hops[0].tail);
+    assert!(tail > 0, "the plan carries supplemental arrays");
+    hops[0].tail = 0;
+    // Four router accounts precede the Orca window; its fixed part is sixteen accounts.
+    route.accounts.drain(4 + 16..4 + 16 + tail);
+    route.data = RouterInstruction::Route(
+        Route::new(decoded.in_amount(), decoded.min_out(), &hops).expect("a route"),
+    )
+    .encode();
+    route
+}
+
+fn direct_transfer_fee(world: &mut World<'_>, plan: &Plan) -> TransferFee {
+    let pool: Pubkey = plan.legs[1].pool.parse().expect("fee pool");
+    let BootLayout::RaydiumCpmm { layout } = &world.venues[&pool].layout else {
+        panic!("fee hop must be CPMM");
+    };
+    let vault = if layout.token0_mint == plan.output() {
+        layout.token0_vault
+    } else if layout.token1_mint == plan.output() {
+        layout.token1_vault
+    } else {
+        panic!("fee pool must pay the output mint");
+    };
+    let before = u64::from_le_bytes(
+        world.accounts[&vault].as_ref().expect("vault").data[64..72]
+            .try_into()
+            .expect("amount"),
+    );
+    let net_out = *world
+        .venue_out(plan)
+        .expect("direct fee route")
+        .last()
+        .unwrap();
+    let gross_out = before
+        .checked_sub(world.machine.balance(&vault))
+        .expect("gross output");
+    assert!(
+        gross_out > net_out,
+        "the Token-2022 transfer must charge a fee"
+    );
+    TransferFee {
+        plan: plan.name.clone(),
+        gross_out,
+        net_out,
+    }
+}
+
+/// Find the smallest second-pool WSOL vault balance that makes direct program
+/// execution pay one unit above the route's input. The snapshot stays intact.
+fn synthetic_v4_profit(world: &mut World<'_>, plan: &Plan) -> Synthetic {
+    let pool: Pubkey = plan.legs[1].pool.parse().expect("second pool");
+    let BootLayout::RaydiumAmmV4 { layout } = &world.venues[&pool].layout else {
+        panic!("synthetic route must end at AMM v4");
+    };
+    let vault = if layout.base_mint == plan.output() {
+        layout.base_vault
+    } else if layout.quote_mint == plan.output() {
+        layout.quote_vault
+    } else {
+        panic!("the second pool must pay the route's mint");
+    };
+    let stored = world.accounts[&vault].as_ref().expect("captured vault");
+    let original_balance = u64::from_le_bytes(stored.data[64..72].try_into().expect("amount"));
+    let original_lamports = stored.lamports;
+    let target = plan.amount_in().checked_add(1).expect("profit target");
+    let payout_before = *world
+        .venue_out(plan)
+        .expect("live direct swaps")
+        .last()
+        .unwrap();
+    assert!(
+        payout_before < target,
+        "synthetic adjustment must be needed"
+    );
+    let set_vault = |world: &mut World<'_>, amount: u64| {
+        let account = world.accounts.get_mut(&vault).unwrap().as_mut().unwrap();
+        account.data[64..72].copy_from_slice(&amount.to_le_bytes());
+        account.lamports = original_lamports
+            .checked_add(amount - original_balance)
+            .expect("vault lamports");
+    };
+    let mut low = original_balance;
+    let mut high = original_balance
+        .checked_add(original_balance / 1_000 + 1)
+        .expect("initial search bound");
+    loop {
+        set_vault(world, high);
+        let payout = *world
+            .venue_out(plan)
+            .expect("direct venue swaps")
+            .last()
+            .unwrap();
+        if payout >= target {
+            break;
+        }
+        low = high;
+        high = original_balance
+            .checked_add(
+                (high - original_balance)
+                    .checked_mul(2)
+                    .expect("search span"),
+            )
+            .expect("search bound");
+    }
+    while high - low > 1 {
+        let mid = low + (high - low) / 2;
+        set_vault(world, mid);
+        let payout = *world
+            .venue_out(plan)
+            .expect("direct venue swaps")
+            .last()
+            .unwrap();
+        if payout >= target {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    set_vault(world, high - 1);
+    let payout_one_less = *world.venue_out(plan).expect("one less").last().unwrap();
+    assert!(payout_one_less < target);
+    set_vault(world, high);
+    let payout_after = *world
+        .venue_out(plan)
+        .expect("minimal profitable amount")
+        .last()
+        .unwrap();
+    assert!(payout_after >= target);
+    Synthetic {
+        plan: plan.name.clone(),
+        vault: vault.to_string(),
+        original_balance,
+        adjusted_balance: high,
+        payout_before,
+        payout_one_less,
+        payout_after,
+    }
 }
 
 fn write(path: &Path, scenarios: &Scenarios) {

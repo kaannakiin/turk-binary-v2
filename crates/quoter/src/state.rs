@@ -48,6 +48,26 @@ enum Inner {
 }
 
 impl VenueState {
+    /// Whether sequential exact-in quotes can update this isolated pool state.
+    #[must_use]
+    pub fn supports_transition(&self) -> bool {
+        match &self.inner {
+            #[cfg(feature = "raydium-cpmm")]
+            Inner::RaydiumCpmm(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Prices and applies a swap on a private candidate state. Other venue
+    /// transitions require independent replay verification before enabling.
+    pub fn quote_and_apply(&mut self, input: &QuoteInput<'_>) -> Result<QuoteOut, QuoteError> {
+        match &mut self.inner {
+            #[cfg(feature = "raydium-cpmm")]
+            Inner::RaydiumCpmm(state) => state.quote_and_apply(input),
+            _ => Err(QuoteError::TransitionUnsupported),
+        }
+    }
+
     #[must_use]
     pub fn new(kind: DexKind) -> Self {
         let inner = match kind {
@@ -123,9 +143,29 @@ impl VenueState {
 
     /// The accounts of this pool's swap instruction; side A in when `a_to_b`.
     pub fn swap_window(&self, a_to_b: bool) -> Result<SwapWindow, WindowError> {
+        self.swap_window_for_quote(a_to_b, 0, 0, false)
+    }
+
+    pub fn swap_window_for_quote(
+        &self,
+        a_to_b: bool,
+        arrays_used: u8,
+        max_arrays: u8,
+        guard: bool,
+    ) -> Result<SwapWindow, WindowError> {
         match &self.inner {
+            #[cfg(feature = "raydium-amm-v4")]
+            Inner::RaydiumAmmV4(state) => state.swap_window(a_to_b),
             #[cfg(feature = "raydium-cpmm")]
             Inner::RaydiumCpmm(state) => state.swap_window(a_to_b),
+            #[cfg(feature = "raydium-clmm")]
+            Inner::RaydiumClmm(state) => state.swap_window(a_to_b, arrays_used, max_arrays, guard),
+            #[cfg(feature = "whirlpool")]
+            Inner::OrcaWhirlpool(state) => {
+                state.swap_window(a_to_b, arrays_used, max_arrays, guard)
+            }
+            #[cfg(feature = "dlmm")]
+            Inner::MeteoraDlmm(state) => state.swap_window(a_to_b, arrays_used, max_arrays),
             other => Err(WindowError::Unsupported(other.kind())),
         }
     }

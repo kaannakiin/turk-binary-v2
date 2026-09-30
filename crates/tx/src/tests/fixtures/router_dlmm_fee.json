@@ -1,0 +1,599 @@
+{
+  "provenance": {
+    "corpus_sha256": "84ff89c9c713b8d355c0a8f5fa41553b311a1d289aafb2c2fa1032c1b141ce3f",
+    "router_sha256": "dd1f855362f7743bfcb9bde71e0629c8ec8a4357362a3b0b7db43a8db306890a",
+    "litesvm": "0.17.0"
+  },
+  "observations": [],
+  "synthetic": [],
+  "transfer_fees": [],
+  "swaps": [
+    {
+      "name": "three_token_route",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "compute_units": 61488,
+      "fee": 5000,
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": 17
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": 1488457
+        }
+      },
+      "lamports": {
+        "before": 999995341960,
+        "after": 999993848520
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "three_token_route",
+      "plan": "dlmm_fee_output",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 430307518383,
+      "venue_out": [
+        430307518383
+      ],
+      "compute_units": 64666,
+      "fee": 5000,
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": null,
+          "after": 430307518383
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": null,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999989276840,
+        "after": 999987697040
+      },
+      "venue_accounts_unchanged": false
+    }
+  ],
+  "cycles": [],
+  "thresholds": [
+    {
+      "name": "at_payout",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "compute_units": 46725,
+      "fee": 5000,
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 17
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488457
+        }
+      },
+      "lamports": {
+        "before": 999978467320,
+        "after": 999978462320
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "one_above_payout",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 18,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(1, Custom(6013)) Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb consumed 3324 of 1363793 compute units | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb success | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [3] | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 112 of 1358264 compute units | Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo invoke [3] | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo consumed 772 of 1355441 compute units | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo success | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo consumed 37697 of 1391357 compute units | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 46585 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999972310840,
+        "after": 999972305840
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "at_payout",
+      "plan": "dlmm_fee_output",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 430307518383,
+      "venue_out": [
+        430307518383
+      ],
+      "compute_units": 47007,
+      "fee": 5000,
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 0,
+          "after": 430307518383
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999963076120,
+        "after": 999963071120
+      },
+      "venue_accounts_unchanged": false
+    },
+    {
+      "name": "one_above_payout",
+      "plan": "dlmm_fee_output",
+      "epoch": 1045,
+      "amount_in": 1000000,
+      "min_out": 430307518384,
+      "venue_out": [
+        430307518383
+      ],
+      "error": "InstructionError(1, Custom(6013)) Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb invoke [3] | Program log: Instruction: TransferChecked | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb consumed 3378 of 1361248 compute units | Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb success | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo invoke [3] | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo consumed 772 of 1355159 compute units | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo success | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo consumed 37939 of 1391317 compute units | Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 46867 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x177d",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 0,
+          "after": 0
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1000000,
+          "after": 1000000
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 2488440,
+          "after": 2488440
+        }
+      },
+      "lamports": {
+        "before": 999956919640,
+        "after": 999956914640
+      },
+      "venue_accounts_unchanged": true
+    }
+  ],
+  "bad_windows": [
+    {
+      "name": "dlmm_wrong_program",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(1, Custom(6007)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 4879 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999950763160,
+        "after": 999950758160
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "dlmm_wrong_pool",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(1, Custom(6007)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 4889 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999944606680,
+        "after": 999944601680
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "dlmm_wrong_vault",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(1, Custom(6007)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 4952 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999938450200,
+        "after": 999938445200
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "dlmm_wrong_mint",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(1, Custom(6007)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 5010 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999932293720,
+        "after": 999932288720
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "dlmm_wrong_oracle",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(1, Custom(6007)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 4956 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999926137240,
+        "after": 999926132240
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "dlmm_wrong_array",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(1, Custom(6007)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 5523 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999919980760,
+        "after": 999919975760
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "dlmm_missing_array",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(1, Custom(6005)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 2571 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1775",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999913824280,
+        "after": 999913819280
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "dlmm_readonly_array",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(1, Custom(6007)) Program ComputeBudget111111111111111111111111111111 invoke [1] | Program ComputeBudget111111111111111111111111111111 success | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 invoke [1] | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 consumed 5553 of 1399850 compute units | Program TURKAGEDZ6JgA9eSQydhARcWSc2hps5T8v1ouhi84L3 failed: custom program error: 0x1777",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 0,
+          "after": 0
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": 1488440,
+          "after": 1488440
+        }
+      },
+      "lamports": {
+        "before": 999907667800,
+        "after": 999907662800
+      },
+      "venue_accounts_unchanged": true
+    }
+  ],
+  "budgets": [
+    {
+      "name": "compute_limit_one",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "InstructionError(0, ProgramFailedToComplete) (1 CU): Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL invoke [1] | Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 1 of 1 compute units | Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL failed: exceeded CUs meter at BPF instruction",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999903004760,
+        "after": 999902999760
+      },
+      "venue_accounts_unchanged": true
+    },
+    {
+      "name": "loaded_data_one",
+      "plan": "dlmm_fee_input",
+      "epoch": 1045,
+      "amount_in": 10000000,
+      "min_out": 17,
+      "venue_out": [
+        17
+      ],
+      "error": "MaxLoadedAccountsDataSizeExceeded (0 CU): ",
+      "tokens": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 10000000,
+          "after": 10000000
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        }
+      },
+      "account_lamports": {
+        "SLRsYYQBECGRdq8S9c8juSq5Lx7J4BTTzkStzzeLDwg": {
+          "before": 1574800,
+          "after": 1574800
+        },
+        "So11111111111111111111111111111111111111112": {
+          "before": null,
+          "after": null
+        }
+      },
+      "lamports": {
+        "before": 999898341720,
+        "after": 999898341720
+      },
+      "venue_accounts_unchanged": true
+    }
+  ]
+}

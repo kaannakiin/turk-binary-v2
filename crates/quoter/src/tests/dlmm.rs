@@ -1,3 +1,5 @@
+use commons::dlmm::accounts::{BinArrayBitmapExtension, LbPair};
+use commons::{get_bin_array_indexes_for_swap, pod_read_unaligned_skip_disc};
 use dex::{Role, Side};
 use domain::{DexKind, Pubkey};
 
@@ -60,4 +62,23 @@ fn every_recorded_swap_pays_what_the_simulation_paid() {
     ] {
         run(file, DexKind::MeteoraDlmm, &[], accounts);
     }
+}
+
+// src: kaannakiin/dlmm-sdk@b4322cc2857a5f5955adb0a119164bbcda48a6d1
+// commons/tests/integration/test_swap_gapped_bin_array_tail.rs and its slot-442439533 fixture.
+#[test]
+fn gapped_bin_array_walk_keeps_the_reference_order_and_limit() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/dlmm_gapped_pair.json")).expect("fixture");
+    let pair_bytes = decode(&fixture["pair"]);
+    let extension_bytes = decode(&fixture["extension"]);
+    let pair: LbPair = pod_read_unaligned_skip_disc(&pair_bytes).expect("pool state");
+    let extension: BinArrayBitmapExtension =
+        pod_read_unaligned_skip_disc(&extension_bytes).expect("bitmap extension");
+    let walk = |max_arrays| {
+        get_bin_array_indexes_for_swap(&pair, Some(&extension), true, max_arrays)
+            .expect("bitmap walk")
+    };
+    assert_eq!(walk(6), [-38, -39, -40, -41, -42, -43]);
+    assert_eq!(walk(8), [-38, -39, -40, -41, -42, -43, -49, -50]);
 }

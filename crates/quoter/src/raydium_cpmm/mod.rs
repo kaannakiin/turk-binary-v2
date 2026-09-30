@@ -1,19 +1,29 @@
 use anchor_lang_032::{AccountDeserialize, Discriminator};
 use dex::{Role, Side};
 use domain::{DexKind, Pubkey, SwapWindow, TokenSide, WindowAccount};
-use raydium_cp_swap::curve::CurveCalculator;
+use raydium_cp_swap::curve::{CurveCalculator, TradeDirection};
 use raydium_cp_swap::states::{AmmConfig, PoolState, PoolStatusBitIndex};
 
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError, WindowError};
 use crate::state::{QuoteInput, QuoteOut};
-use crate::token::token_amount;
-use crate::token22::{Mint, TransferFee, decode_mint};
+use crate::token::token_account;
+use crate::token22::{Mint, TransferFee, check_transfer, decode_mint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Vault {
     mint: Pubkey,
     amount: u64,
+    frozen: bool,
+}
+
+struct Transition {
+    input: u64,
+    output: u64,
+    protocol_fee: u64,
+    fund_fee: u64,
+    creator_fee: u64,
+    direction: TradeDirection,
 }
 
 /// Side A is token 0, side B token 1.
@@ -71,9 +81,11 @@ fn decode_pool(data: &[u8]) -> Option<PoolState> {
 
 fn vault(account: &AccountRef<'_>) -> Option<Vault> {
     let mint = Pubkey::new_from_array(account.data.get(..32)?.try_into().ok()?);
+    let held = token_account(&account.owner, account.data, &mint)?;
     Some(Vault {
         mint,
-        amount: token_amount(&account.owner, account.data, &mint)?,
+        amount: held.amount,
+        frozen: held.frozen,
     })
 }
 
@@ -126,16 +138,11 @@ impl Cpmm {
         Ok(())
     }
 
-    // src: kaannakiin/raydium-cp-swap@8055493659a014b7b0d00ff8d1391edba6792779 programs/cp-swap/src/instructions/swap_base_input.rs (swap_base_input)
-    pub(crate) fn quote(&self, input: &QuoteInput<'_>) -> Result<QuoteOut, QuoteError> {
-        let pool = self
-            .pool
-            .as_deref()
-            .ok_or(QuoteError::Incomplete(Role::Pool))?;
-        let config = self
-            .config
-            .as_ref()
-            .ok_or(QuoteError::Incomplete(Role::AmmConfig))?;
+    fn checked_accounts(
+        &self,
+        pool: &PoolState,
+        a_to_b: bool,
+    ) -> Result<([Vault; 2], [&Mint; 2]), QuoteError> {
         let [vault_0, vault_1] = [Side::A, Side::B].map(|side| {
             self.vaults[side_index(side)].ok_or(QuoteError::Incomplete(Role::Vault(side)))
         });
@@ -152,9 +159,75 @@ impl Cpmm {
         if vault_1.mint != key(&pool.token_1_mint) {
             return Err(QuoteError::Inconsistent(Role::Vault(Side::B)));
         }
-        if mint_0.has_active_hook() || mint_1.has_active_hook() {
-            return Err(QuoteError::TransferHook);
+        let (sold, bought) = if a_to_b {
+            (mint_0, mint_1)
+        } else {
+            (mint_1, mint_0)
+        };
+        check_transfer(sold, bought)?;
+        if vault_0.frozen || vault_1.frozen {
+            return Err(QuoteError::VaultFrozen);
         }
+        Ok(([vault_0, vault_1], [mint_0, mint_1]))
+    }
+
+    // src: kaannakiin/raydium-cp-swap@8055493659a014b7b0d00ff8d1391edba6792779 programs/cp-swap/src/instructions/swap_base_input.rs (swap_base_input)
+    pub(crate) fn quote(&self, input: &QuoteInput<'_>) -> Result<QuoteOut, QuoteError> {
+        self.quote_transition(input).map(|(quote, _)| quote)
+    }
+
+    // src: raydium-io/raydium-cp-swap@59fb845a9e5bb569c8b2f3415f13b0c0ebcc6b92 programs/cp-swap/src/instructions/swap_base_input.rs
+    // SDK cross-check: raydium-io/raydium-sdk-V2@cc33ec28a8921a35609e83293e9e07ad830b0779 src/raydium/cpmm/curve/calculator.ts
+    pub(crate) fn quote_and_apply(
+        &mut self,
+        input: &QuoteInput<'_>,
+    ) -> Result<QuoteOut, QuoteError> {
+        let (quote, transition) = self.quote_transition(input)?;
+        let sold = usize::from(!input.a_to_b);
+        let bought = 1 - sold;
+        let mut vaults = self.vaults;
+        let source = vaults[sold].as_mut().ok_or(QuoteError::Math)?;
+        source.amount = source
+            .amount
+            .checked_add(transition.input)
+            .ok_or(QuoteError::Math)?;
+        let destination = vaults[bought].as_mut().ok_or(QuoteError::Math)?;
+        destination.amount = destination
+            .amount
+            .checked_sub(transition.output)
+            .ok_or(QuoteError::Math)?;
+        let mut pool = **self
+            .pool
+            .as_ref()
+            .ok_or(QuoteError::Incomplete(Role::Pool))?;
+        pool.update_fees(
+            transition.protocol_fee,
+            transition.fund_fee,
+            transition.creator_fee,
+            transition.direction,
+        )
+        .map_err(|_| QuoteError::Math)?;
+        **self
+            .pool
+            .as_mut()
+            .ok_or(QuoteError::Incomplete(Role::Pool))? = pool;
+        self.vaults = vaults;
+        Ok(quote)
+    }
+
+    fn quote_transition(
+        &self,
+        input: &QuoteInput<'_>,
+    ) -> Result<(QuoteOut, Transition), QuoteError> {
+        let pool = self
+            .pool
+            .as_deref()
+            .ok_or(QuoteError::Incomplete(Role::Pool))?;
+        let config = self
+            .config
+            .as_ref()
+            .ok_or(QuoteError::Incomplete(Role::AmmConfig))?;
+        let ([vault_0, vault_1], [mint_0, mint_1]) = self.checked_accounts(pool, input.a_to_b)?;
         let now = u64::try_from(input.clock.unix_timestamp).unwrap_or(0);
         if !pool.get_status_by_bit(PoolStatusBitIndex::Swap) || now < pool.open_time {
             return Err(QuoteError::Disabled);
@@ -212,7 +285,7 @@ impl Cpmm {
         let to_u64 = |v: u128| u64::try_from(v).map_err(|_| QuoteError::Math);
         let creator_fee = to_u64(result.creator_fee)?;
         let trade_fee = to_u64(result.trade_fee)?;
-        Ok(QuoteOut {
+        let quote = QuoteOut {
             amount_out: amount_received,
             fee_in: if params.is_creator_fee_on_input {
                 trade_fee.checked_add(creator_fee).ok_or(QuoteError::Math)?
@@ -225,7 +298,18 @@ impl Cpmm {
                 creator_fee
             },
             arrays_used: 0,
-        })
+        };
+        Ok((
+            quote,
+            Transition {
+                input: actual_amount_in,
+                output: amount_out,
+                protocol_fee: to_u64(result.protocol_fee)?,
+                fund_fee: to_u64(result.fund_fee)?,
+                creator_fee,
+                direction: params.trade_direction,
+            },
+        ))
     }
 
     // src: raydium-io/raydium-cp-swap@59fb845a9e5bb569c8b2f3415f13b0c0ebcc6b92
@@ -234,6 +318,14 @@ impl Cpmm {
         let (Some(address), Some(pool)) = (self.address, self.pool.as_deref()) else {
             return Err(WindowError::Incomplete(Role::Pool));
         };
+        for side in [Side::A, Side::B] {
+            let mint = self.mints[side_index(side)]
+                .as_ref()
+                .ok_or(WindowError::Incomplete(Role::Mint(side)))?;
+            if mint.has_active_hook() {
+                return Err(WindowError::TransferHook);
+            }
+        }
         let token_0 = (pool.token_0_vault, pool.token_0_mint, pool.token_0_program);
         let token_1 = (pool.token_1_vault, pool.token_1_mint, pool.token_1_program);
         let (source, destination) = if a_to_b {
@@ -252,6 +344,9 @@ impl Cpmm {
         Ok(SwapWindow {
             kind: DexKind::RaydiumCpmm,
             program_id: dex::spec(DexKind::RaydiumCpmm).program_id,
+            tail: 0,
+            optional_tail: 0,
+            arrays_used: 0,
             accounts: vec![
                 WindowAccount::User,
                 fixed(AUTHORITY, false),

@@ -1,9 +1,11 @@
 mod config;
+mod flow;
 mod hop_kind;
 mod instruction;
 mod route;
 
 pub use config::{CONFIG_LEN, CONFIG_SEED, Config};
+pub use flow::{FLOW_ROUTE_VERSION, FlowRoute, FlowStep, MAX_FLOW_SLOTS, MAX_FLOW_STEPS};
 pub use hop_kind::HopKind;
 pub use instruction::RouterInstruction;
 pub use route::{Hop, MAX_HOPS, ROUTE_VERSION, Route};
@@ -17,6 +19,10 @@ pub enum DecodeError {
     HopCount,
     Discriminator,
     UnknownHopKind,
+    FlowSlotCount,
+    FlowStepCount,
+    FlowAllocation,
+    FlowGraph,
 }
 
 fn read_u64(data: &[u8], at: usize) -> Result<u64, DecodeError> {

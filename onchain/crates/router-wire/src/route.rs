@@ -1,10 +1,10 @@
 use crate::{DecodeError, read_u64};
 
-pub const ROUTE_VERSION: u8 = 1;
+pub const ROUTE_VERSION: u8 = 2;
 pub const MAX_HOPS: usize = 4;
 
 pub(crate) const HEADER_LEN: usize = 19;
-const HOP_LEN: usize = 4;
+const HOP_LEN: usize = 12;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Hop {
@@ -12,6 +12,7 @@ pub struct Hop {
     pub hook_a: u8,
     pub hook_b: u8,
     pub tail: u8,
+    pub min_out: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +60,7 @@ impl Route {
         out.push(self.hop_count);
         for hop in self.hops() {
             out.extend_from_slice(&[hop.kind, hop.hook_a, hop.hook_b, hop.tail]);
+            out.extend_from_slice(&hop.min_out.to_le_bytes());
         }
     }
 
@@ -85,12 +87,15 @@ impl Route {
         }
         let mut hops = [Hop::default(); MAX_HOPS];
         let (encoded, _) = data[HEADER_LEN..].as_chunks::<HOP_LEN>();
-        for (hop, &[kind, hook_a, hook_b, tail]) in hops.iter_mut().zip(encoded) {
+        for (hop, bytes) in hops.iter_mut().zip(encoded) {
             *hop = Hop {
-                kind,
-                hook_a,
-                hook_b,
-                tail,
+                kind: bytes[0],
+                hook_a: bytes[1],
+                hook_b: bytes[2],
+                tail: bytes[3],
+                min_out: u64::from_le_bytes(
+                    bytes[4..12].try_into().map_err(|_| DecodeError::Length)?,
+                ),
             };
         }
         Self::new(in_amount, min_out, &hops[..hop_count])

@@ -1,0 +1,28 @@
+# Pro profile adapted for the installed Codex CLI.
+model = "gpt-6-astra"
+model_reasoning_effort = "medium"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[features]
+multi_agent = true
+
+[agents.explorer]
+description = "Read-only repository exploration"
+config_file = "agents/explorer.toml"
+
+[agents.worker]
+description = "Bounded implementation"
+config_file = "agents/worker.toml"
+
+[agents.tester]
+description = "Targeted verification and tests"
+config_file = "agents/tester.toml"
+
+[agents.researcher]
+description = "Read-only technical research"
+config_file = "agents/researcher.toml"
+
+[agents.reviewer]
+description = "Independent read-only review"
+config_file = "agents/reviewer.toml"

@@ -166,20 +166,22 @@ Used by `serve` only (see [architecture.md](architecture.md#http-api)). Both add
 | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `default_max_hops` | `3`      | Pools a route may pass when the request gives no `maxHops`.                                                                                              |
 | `max_hops`         | `4`      | Largest `maxHops` a request may ask for.                                                                                                                 |
+| `max_operations`   | `16`     | Maximum operations in a routed execution flow. Must be between 1 and 16.                                                                                 |
 | `max_quotes`       | `100000` | Quote budget of one search, all its widening attempts together. A work budget, not a deadline: filtering, pinning and ranking are not counted.           |
 | `per_pair`         | `2`      | Pools kept per pair while searching (see [architecture.md](architecture.md#algorithm)); `0` keeps every one.                                             |
 | `max_arrays`       | `8`      | Tick or bin arrays one quote may cross. The transaction that carries a route has to pass the same arrays ([dexes.md](dexes.md)).                         |
+| `unique_dex_ids`   | `[]`     | DEX program IDs which are unique by default in cyclic-arbitrage requests; a non-empty request `uniqueDexIds` replaces this list.                         |
 | `timeout_ms`       | `2000`   | How long a request waits for its search, queue time included, before it answers `TIMEOUT`. A search already running still finishes and keeps its thread. |
 | `max_queued`       | `32`     | Searches that may wait for a thread. Past `[threads] search` running plus this many waiting, a request answers `OVERLOADED` at once.                     |
 
 ### `[server.swap]`
 
-| Key                    | Default | Meaning                                                                                                               |
-| ---------------------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
-| `default_slippage_bps` | `50`    | Slippage of `otherAmountThreshold` when a request gives no `slippageBps`. At most 10000.                              |
-| `max_quote_age_slots`  | `32`    | A `quoteResponse` whose `contextSlot` is further behind the market's Clock answers `QUOTE_EXPIRED`.                   |
-| `blockhash_refresh_ms` | `2000`  | How often `serve` fetches the latest blockhash (`getLatestBlockhash`, `confirmed`) for `/swap`.                       |
-| `max_blockhash_age_ms` | `20000` | `/swap` answers `NO_BLOCKHASH` when the last fetched blockhash is older than this, for example while the RPC is down. |
+| Key                    | Default | Meaning                                                                                                                         |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `default_slippage_bps` | `50`    | Slippage of `otherAmountThreshold` when a request gives no `slippagePercent`; stored internally in basis points, at most 10000. |
+| `max_quote_age_slots`  | `32`    | A `quoteResponse` whose `contextSlot` is further behind the market's Clock answers `QUOTE_EXPIRED`.                             |
+| `blockhash_refresh_ms` | `2000`  | How often `serve` fetches the latest blockhash (`getLatestBlockhash`, `confirmed`) for `/swap`.                                 |
+| `max_blockhash_age_ms` | `20000` | `/swap` answers `NO_BLOCKHASH` when the last fetched blockhash is older than this, for example while the RPC is down.           |
 
 ## Top level
 

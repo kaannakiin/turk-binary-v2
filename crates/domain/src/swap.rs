@@ -21,4 +21,10 @@ pub struct SwapWindow {
     pub accounts: Vec<WindowAccount>,
     pub source: TokenSide,
     pub destination: TokenSide,
+    /// Venue-specific variable-account shape carried in the router wire.
+    pub tail: u8,
+    /// Trailing accounts that may be removed when a v1 transaction exceeds its budget.
+    pub optional_tail: u8,
+    /// Price-range arrays (ticks, bins) the quote walked: what a hop's compute is budgeted by.
+    pub arrays_used: u8,
 }

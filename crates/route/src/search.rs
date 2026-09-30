@@ -3,7 +3,7 @@ use std::num::NonZeroU8;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use domain::Pubkey;
+use domain::{DexKind, Pubkey};
 use graph::{EdgeId, MintId, PoolNode, Topology};
 
 use crate::error::RouteError;
@@ -33,6 +33,15 @@ pub struct Query {
 }
 
 pub trait Filter {
+    /// Full-plan resource admission, after pricing and before retaining a winner.
+    fn path(&self, _: &mut SearchSession, _: &Path) -> bool {
+        true
+    }
+
+    fn flow(&self, _: &mut SearchSession, _: &crate::Flow) -> bool {
+        true
+    }
+
     fn pool(&self, _: &PoolNode) -> bool {
         true
     }
@@ -40,6 +49,16 @@ pub trait Filter {
     /// Mints a path may pass through; the start and the goal are not asked.
     fn via(&self, _: MintId) -> bool {
         true
+    }
+
+    /// Protocols which may appear at most once in a cyclic route.
+    fn unique_dex(&self, _: DexKind) -> bool {
+        false
+    }
+
+    /// Cooperative cancellation checked before attempting another quote.
+    fn should_stop(&self) -> bool {
+        false
     }
 }
 
@@ -53,6 +72,7 @@ pub struct Leg {
     pub pool: Pubkey,
     pub amount_in: u64,
     pub amount_out: u64,
+    pub arrays_used: u8,
     pub cross_stream: bool,
 }
 
@@ -109,6 +129,7 @@ impl SearchSession {
                 let requoted = Leg {
                     amount_in: amount,
                     amount_out: quote.out.amount_out,
+                    arrays_used: quote.out.arrays_used,
                     cross_stream: quote.cross_stream,
                     ..*leg
                 };
@@ -244,10 +265,16 @@ impl<F: Filter> Walk<'_, F> {
         if self.path.iter().any(|leg| leg.edge.pool() == pool)
             || !self.filter.pool(node)
             || !session.active(pool)
+            || (self.query.goal == Goal::Cycle
+                && self.filter.unique_dex(node.dex)
+                && self
+                    .path
+                    .iter()
+                    .any(|leg| topology.pool(leg.edge.pool()).dex == node.dex))
         {
             return ControlFlow::Continue(None);
         }
-        if self.search.quotes == self.query.max_quotes {
+        if self.search.quotes == self.query.max_quotes || self.filter.should_stop() {
             self.search.exhausted = true;
             return ControlFlow::Break(());
         }
@@ -269,6 +296,7 @@ impl<F: Filter> Walk<'_, F> {
             pool: node.pubkey,
             amount_in: amount,
             amount_out,
+            arrays_used: quote.out.arrays_used,
             cross_stream: quote.cross_stream,
         }))
     }
@@ -283,7 +311,7 @@ impl<F: Filter> Walk<'_, F> {
     ) -> ControlFlow<()> {
         self.path.push(leg);
         let flow = if closes {
-            self.offer();
+            self.offer(session);
             ControlFlow::Continue(())
         } else {
             self.passed.push(peer);
@@ -295,7 +323,7 @@ impl<F: Filter> Walk<'_, F> {
         flow
     }
 
-    fn offer(&mut self) {
+    fn offer(&mut self, session: &mut SearchSession) {
         let amount_out = self.path.last().map_or(0, |leg| leg.amount_out);
         if self
             .search
@@ -303,9 +331,14 @@ impl<F: Filter> Walk<'_, F> {
             .as_ref()
             .is_none_or(|best| amount_out > best.amount_out())
         {
-            self.search.best = Some(Path {
+            let path = Path {
                 legs: self.path.clone(),
-            });
+            };
+            if self.filter.path(session, &path) {
+                self.search.best = Some(path);
+            } else {
+                self.search.refused = self.search.refused.saturating_add(1);
+            }
         }
     }
 }

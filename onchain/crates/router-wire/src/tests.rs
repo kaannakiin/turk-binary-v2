@@ -1,4 +1,4 @@
-use crate::{CONFIG_LEN, Config, DecodeError, Hop, Route, RouterInstruction};
+use crate::{CONFIG_LEN, Config, DecodeError, FlowRoute, FlowStep, Hop, Route, RouterInstruction};
 
 fn two_hop_route() -> RouterInstruction {
     let hops = [
@@ -7,25 +7,29 @@ fn two_hop_route() -> RouterInstruction {
             hook_a: 0,
             hook_b: 0,
             tail: 0,
+            min_out: 11,
         },
         Hop {
             kind: 1,
             hook_a: 2,
             hook_b: 0,
             tail: 3,
+            min_out: 22,
         },
     ];
     RouterInstruction::Route(Route::new(1_000, 0x0102_0304_0506_0708, &hops).unwrap())
 }
 
 #[rustfmt::skip]
-const TWO_HOP_ROUTE_BYTES: [u8; 27] = [
-    0, 1,
+const TWO_HOP_ROUTE_BYTES: [u8; 43] = [
+    0, 2,
     0xe8, 0x03, 0, 0, 0, 0, 0, 0,
     0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
     2,
     3, 0, 0, 0,
+    11, 0, 0, 0, 0, 0, 0, 0,
     1, 2, 0, 3,
+    22, 0, 0, 0, 0, 0, 0, 0,
 ];
 
 #[test]
@@ -51,9 +55,123 @@ fn every_instruction_matches_the_documented_bytes() {
 }
 
 #[test]
+fn flow_instruction_round_trips_with_bounded_slots_and_steps() {
+    let flow = FlowRoute::new(
+        1_000,
+        900,
+        3,
+        &[
+            FlowStep {
+                source_slot: 0,
+                destination_slot: 2,
+                numerator: 1,
+                denominator: 1,
+                hop: Hop {
+                    kind: 3,
+                    hook_a: 0,
+                    hook_b: 0,
+                    tail: 0,
+                    min_out: 900,
+                },
+            },
+            FlowStep {
+                source_slot: 2,
+                destination_slot: 1,
+                numerator: 1,
+                denominator: 1,
+                hop: Hop {
+                    kind: 3,
+                    hook_a: 0,
+                    hook_b: 0,
+                    tail: 0,
+                    min_out: 900,
+                },
+            },
+        ],
+    )
+    .unwrap();
+    let instruction = RouterInstruction::Flow(flow);
+    let encoded = instruction.encode();
+
+    assert_eq!(encoded[0], 4);
+    assert_eq!(RouterInstruction::decode(&encoded), Ok(instruction));
+}
+
+#[test]
+fn flow_rejects_invalid_allocation_and_non_dag_order() {
+    let hop = Hop {
+        kind: 3,
+        hook_a: 0,
+        hook_b: 0,
+        tail: 0,
+        min_out: 1,
+    };
+    assert_eq!(
+        FlowRoute::new(
+            100,
+            1,
+            3,
+            &[FlowStep {
+                source_slot: 0,
+                destination_slot: 2,
+                numerator: 2,
+                denominator: 1,
+                hop,
+            }],
+        ),
+        Err(DecodeError::FlowAllocation)
+    );
+    assert_eq!(
+        FlowRoute::new(
+            100,
+            1,
+            3,
+            &[FlowStep {
+                source_slot: 2,
+                destination_slot: 1,
+                numerator: 1,
+                denominator: 1,
+                hop,
+            }],
+        ),
+        Err(DecodeError::FlowGraph)
+    );
+    assert_eq!(
+        FlowRoute::new(
+            100,
+            1,
+            3,
+            &[FlowStep {
+                source_slot: 0,
+                destination_slot: 2,
+                numerator: 1,
+                denominator: 1,
+                hop,
+            }],
+        ),
+        Err(DecodeError::FlowGraph)
+    );
+    assert_eq!(
+        FlowRoute::new(
+            100,
+            1,
+            2,
+            &[FlowStep {
+                source_slot: 0,
+                destination_slot: 1,
+                numerator: 1,
+                denominator: 2,
+                hop,
+            }],
+        ),
+        Err(DecodeError::FlowGraph)
+    );
+}
+
+#[test]
 fn malformed_instruction_data_is_refused_with_its_reason() {
     let mut wrong_version = TWO_HOP_ROUTE_BYTES;
-    wrong_version[1] = 2;
+    wrong_version[1] = 1;
     let mut zero_hops = TWO_HOP_ROUTE_BYTES[..19].to_vec();
     zero_hops[18] = 0;
     let mut five_hops = TWO_HOP_ROUTE_BYTES.to_vec();
@@ -64,7 +182,7 @@ fn malformed_instruction_data_is_refused_with_its_reason() {
 
     let cases: [(&str, Vec<u8>, DecodeError); 10] = [
         ("empty", vec![], DecodeError::Length),
-        ("unknown tag", vec![4], DecodeError::UnknownInstruction),
+        ("unknown tag", vec![6], DecodeError::UnknownInstruction),
         (
             "route version",
             wrong_version.to_vec(),

@@ -14,6 +14,9 @@ use super::CLMM;
 const AMM_CONFIG: usize = 9;
 const TOKEN_VAULT_0: usize = 137;
 const TOKEN_VAULT_1: usize = 169;
+// src: raydium-io/raydium-clmm@ed7c84a54ced59c55981780546adb0b4583dcf85
+// programs/amm/src/states/pool.rs (observation_key in packed PoolState).
+const OBSERVATION: usize = 201;
 const TICK_SPACING: usize = 235;
 const TICK_ARRAY_BITMAP: usize = 904;
 // src: raydium-io/raydium-clmm@ed7c84a54ced59c55981780546adb0b4583dcf85 programs/amm/src/states/pool.rs (POOL_TICK_ARRAY_BITMAP_SEED)
@@ -31,6 +34,7 @@ const EXTENSION_NEGATIVE: usize = EXTENSION_POSITIVE + EXTENSION_BITMAPS * 64;
 pub(crate) const POOL_STRUCTURAL: &[Range<usize>] = &[
     AMM_CONFIG..41,
     73..TOKEN_VAULT_1 + 32,
+    OBSERVATION..OBSERVATION + 32,
     TICK_SPACING..TICK_SPACING + 2,
     TICK_ARRAY_BITMAP..TICK_ARRAY_BITMAP + 128,
 ];
@@ -60,6 +64,16 @@ pub(crate) fn closure(
         )?;
         b.push(vault.swap_only());
     }
+    b.push(
+        field(
+            pool.data,
+            OBSERVATION,
+            Role::Observation,
+            Scope::Pool,
+            OwnerRule::Program(program),
+        )?
+        .swap_only(),
+    );
     b.mints(&CLMM, pool.data)?;
 
     let spacing = read_u16(pool.data, TICK_SPACING).ok_or(ClosureError::Truncated {

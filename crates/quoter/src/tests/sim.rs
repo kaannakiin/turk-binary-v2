@@ -42,9 +42,9 @@ struct Case {
 }
 
 pub(super) struct Raw<'a> {
-    pool: &'a str,
-    accounts: &'a HashMap<String, Value>,
-    captured: &'a HashMap<Pubkey, (Pubkey, Vec<u8>)>,
+    pub(super) pool: &'a str,
+    pub(super) accounts: &'a HashMap<String, Value>,
+    pub(super) captured: &'a HashMap<Pubkey, (Pubkey, Vec<u8>)>,
 }
 
 impl Raw<'_> {

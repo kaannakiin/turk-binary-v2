@@ -37,6 +37,8 @@ pub(crate) struct ApiError {
 pub(crate) struct SearchBody {
     pub pruned: bool,
     pub exhausted: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub timed_out: bool,
     pub quotes: u32,
 }
 
