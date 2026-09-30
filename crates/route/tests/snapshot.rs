@@ -5,7 +5,7 @@
 use std::num::NonZeroU8;
 
 use domain::Pubkey;
-use route::{Everything, Query, Search};
+use route::{Everything, FlowOptions, Goal, Query, Search};
 
 #[path = "support/universe.rs"]
 mod universe;
@@ -103,4 +103,58 @@ fn pruning_by_max_hops_matches_the_exhaustive_search() {
         }
     }
     assert!(mismatches.is_empty(), "k = max_hops missed: {mismatches:?}");
+}
+
+#[test]
+#[ignore = "needs oracle/snapshots/universe.json.gz: just snapshot-universe"]
+fn split_plans_pay_exactly_what_a_fresh_session_requotes() {
+    const SOL: u64 = 1_000_000_000;
+    const MAX_QUOTES: u32 = 25_000;
+    let universe = universe::load();
+    let mut swaps: Vec<_> = universe
+        .queries()
+        .into_iter()
+        .filter(|(_, query)| matches!(query.goal, Goal::To(_)))
+        .collect();
+    let (_, template) = swaps.first().cloned().expect("a swap query");
+    swaps.push((
+        "sol_to_pump_h2".into(),
+        Query {
+            goal: Goal::To(universe.mint(universe::PUMP)),
+            max_hops: 2,
+            ..template
+        },
+    ));
+    for (name, base) in swaps {
+        for sol in [1, 100, 10_000] {
+            let query = Query {
+                amount_in: sol * SOL,
+                max_quotes: MAX_QUOTES,
+                max_arrays: 8,
+                ..base
+            };
+            for chunks in [None, NonZeroU8::new(8)] {
+                let at = format!("{name} at {sol} SOL, {chunks:?} chunks");
+                let found = universe.reader.session().expect("clock").search_flow(
+                    &query,
+                    &Everything,
+                    FlowOptions {
+                        chunks,
+                        ..FlowOptions::default()
+                    },
+                );
+                if chunks.is_some() {
+                    assert!(found.computed <= u64::from(MAX_QUOTES), "{at}");
+                }
+                let flow = found.best.unwrap_or_else(|| panic!("{at}: no flow"));
+                let requoted = universe
+                    .reader
+                    .session()
+                    .expect("clock")
+                    .requote_flow(&flow, query.max_arrays)
+                    .unwrap_or_else(|error| panic!("{at}: {error}"));
+                assert_eq!(requoted, flow, "{at}");
+            }
+        }
+    }
 }

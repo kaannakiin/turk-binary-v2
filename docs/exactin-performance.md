@@ -90,7 +90,7 @@ never reaches. `cargo bench -p route --bench split` runs each swap from 1 to
 the current split with the chunked split (`FlowOptions::chunks`, see
 [architecture.md](architecture.md)). Every flow of every engine was quoted
 again with `requote_flow` in a fresh session and paid exactly its planned
-output.
+output; `just test-universe` asserts this at 1, 100 and 10,000 SOL.
 
 Gain over the single route in millionths of its output, with quotes computed
 (memo answers excluded) in parentheses. `sol_to_usdc_h3` gave the same outputs
@@ -112,27 +112,47 @@ as `h2`.
 | 1,000 SOL        |  0 (9,561) |  26,244 (9,427) | 30,652 (10,094) | 31,307 (10,625) |
 | 10,000 SOL       |  0 (9,219) | 112,945 (8,875) | 112,945 (9,043) | 129,512 (9,462) |
 
-On the pump token the current split exhausts its 25,000 quote calls at every
-size: a single path search there makes about 8,000, and discovery runs several.
-The chunked split counts the budget in quotes computed and stays inside it.
-The allocation polish after the chunks matters most where the greedy choice
-is coarse: at 10,000 SOL with 8 chunks it lifts the pump gain from 102,712 to
-112,945 millionths.
+The two budgets are not the same: the current split counts quote calls and
+the chunked one quotes computed. On the pump token the current split exhausts
+its 25,000 calls at every size (a single path search there makes about 8,000,
+and discovery runs several). Given ten times the calls it computes about as
+many quotes as the chunked split, and most of the gap closes:
+
+| `sol_to_pump_h2` | split 25k calls | split 250k calls |        chunks 8 |
+| ---------------- | --------------: | ---------------: | --------------: |
+| 100 SOL          |      0 (10,206) |   1,022 (13,476) |  1,021 (10,303) |
+| 1,000 SOL        |       0 (9,561) |  26,244 (11,834) |  26,244 (9,427) |
+| 10,000 SOL       |       0 (9,219) |   7,993 (11,173) | 112,945 (8,875) |
+
+So at 100 and 1,000 SOL the chunked split's gain on the pump token came from
+its budget, not its method; at 10,000 SOL it is the method. On SOL→USDC the
+current split is not budget-bound (the wider budget changes nothing), and the
+chunked split's gain over it is its own: 0.48–0.49% more output at 10,000
+SOL. Under the same 5 ms deadline and no quote budget, neither splits the pump
+token at any size (both return the single route) and both finish SOL→USDC
+unchanged. The allocation polish after the chunks matters most where the
+greedy choice is coarse: at 10,000 SOL with 8 chunks it lifts the pump gain
+from 102,712 to 112,945 millionths.
 
 Timing medians (Criterion, 10 samples, 1 s):
 
-| Query                   | single route |   split | chunks 8 | chunks 16 | chunks 32 |
-| ----------------------- | -----------: | ------: | -------: | --------: | --------: |
-| `sol_to_usdc_h2` 1      |      0.37 ms | 1.63 ms |  1.63 ms |   2.41 ms |   2.83 ms |
-| `sol_to_usdc_h2` 1,000  |      0.78 ms | 2.21 ms |  2.01 ms |   2.49 ms |   3.57 ms |
-| `sol_to_usdc_h2` 10,000 |      0.79 ms | 3.06 ms |  3.34 ms |   3.35 ms |   4.45 ms |
-| `sol_to_pump_h2` 1      |      2.38 ms | 4.35 ms |  7.38 ms |  11.01 ms |  18.76 ms |
-| `sol_to_pump_h2` 1,000  |      2.72 ms | 5.37 ms |  7.08 ms |  11.42 ms |  18.15 ms |
-| `sol_to_pump_h2` 10,000 |      2.74 ms | 5.38 ms |  7.11 ms |   9.54 ms |  22.51 ms |
+| Query                   | single route |   split | split 250k | chunks 8 | chunks 16 | chunks 32 |
+| ----------------------- | -----------: | ------: | ---------: | -------: | --------: | --------: |
+| `sol_to_usdc_h2` 1      |      0.41 ms | 1.48 ms |    1.53 ms |  1.89 ms |   2.32 ms |   3.10 ms |
+| `sol_to_usdc_h2` 1,000  |      0.72 ms | 2.34 ms |    2.27 ms |  2.13 ms |   2.16 ms |   2.96 ms |
+| `sol_to_usdc_h2` 10,000 |      0.83 ms | 3.32 ms |    3.19 ms |  3.53 ms |   3.96 ms |   4.42 ms |
+| `sol_to_pump_h2` 1      |      2.91 ms | 5.06 ms |   11.50 ms |  7.32 ms |  10.80 ms |  16.37 ms |
+| `sol_to_pump_h2` 1,000  |      2.70 ms | 5.43 ms |    7.60 ms |  6.99 ms |  10.71 ms |  17.38 ms |
+| `sol_to_pump_h2` 10,000 |      2.72 ms | 5.83 ms |    8.01 ms |  7.25 ms |   9.56 ms |  24.00 ms |
 
 Each chunk walks the whole graph again; the memo makes that a lookup per edge
 an earlier chunk did not move, but on the pump token's wide graph those
-lookups (up to about 300,000 calls at 32 chunks) are what the time is.
+lookups (up to about 300,000 calls at 32 chunks) are what the time is. Chunks
+8 is the candidate to try in the server first; 32 costs about three times its
+time for about 1.5% more output on the largest pump order.
+
+These plans are quote plans under `Everything`: none has been through the
+server's transaction admission (`Swappable`) or executed in LiteSVM yet.
 
 ## Correctness and interpretation limits
 

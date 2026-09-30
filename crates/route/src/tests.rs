@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-struct FakeFeed;
+pub(crate) struct FakeFeed;
 
 impl PoolFeed for FakeFeed {
     fn clock(&self) -> Option<ChainClock> {
@@ -39,14 +39,14 @@ impl PoolFeed for FakeFeed {
     }
 }
 
-struct Recorded {
-    pool: Pubkey,
+pub(crate) struct Recorded {
+    pub(crate) pool: Pubkey,
     accounts: Vec<(Role, Pubkey, Vec<u8>)>,
 }
 
 /// One WSOL-quoted pump AMM state from the quoter's simulation corpus plus
 /// the captured WSOL mint.
-fn recorded() -> Recorded {
+pub(crate) fn recorded() -> Recorded {
     let dir =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../quoter/src/tests/fixtures");
     let compressed =
@@ -133,7 +133,7 @@ fn view(recorded: &Recorded, readiness: Readiness, order: u64) -> PoolView {
     }
 }
 
-const BASE_VAULT: usize = 1;
+pub(crate) const BASE_VAULT: usize = 1;
 const QUOTE_VAULT: usize = 2;
 
 fn vault_amount(recorded: &Recorded, vault: usize) -> u64 {
@@ -198,11 +198,11 @@ fn topology_of(pools: &[(Pubkey, DexKind)]) -> Arc<Topology> {
     )
 }
 
-struct Rig {
+pub(crate) struct Rig {
     feed: FakeFeed,
     decoder: Decoder,
-    reader: QuoteReader<FakeFeed>,
-    topology: Arc<Topology>,
+    pub(crate) reader: QuoteReader<FakeFeed>,
+    pub(crate) topology: Arc<Topology>,
 }
 
 fn rig(pools: &[(Pubkey, DexKind)]) -> Rig {
@@ -488,13 +488,13 @@ fn refused_and_excluded_pools_do_not_hide_the_best_one() {
 
 const AMOUNT: u64 = 1_000_000;
 
-struct Placed<'r> {
+pub(crate) struct Placed<'r> {
     recorded: &'r Recorded,
     mints: (Pubkey, Pubkey),
-    view: PoolView,
+    pub(crate) view: PoolView,
 }
 
-fn placed(recorded: &Recorded, a: Pubkey, b: Pubkey) -> Placed<'_> {
+pub(crate) fn placed(recorded: &Recorded, a: Pubkey, b: Pubkey) -> Placed<'_> {
     Placed {
         recorded,
         mints: (a, b),
@@ -502,7 +502,7 @@ fn placed(recorded: &Recorded, a: Pubkey, b: Pubkey) -> Placed<'_> {
     }
 }
 
-fn universe(pools: &[Placed<'_>]) -> Rig {
+pub(crate) fn universe(pools: &[Placed<'_>]) -> Rig {
     let topology = Arc::new(
         Topology::build(pools.iter().map(|p| PoolSeed {
             pubkey: p.recorded.pool,
@@ -779,7 +779,7 @@ fn flow_search_preserves_the_single_route_and_accounts_for_each_credit() {
     let query = query(from, Goal::To(to), 2, 10_000);
     let mut session = rig.reader.session().unwrap();
     let baseline = session.search(&query, &Everything).best.unwrap();
-    for chunks in [None, NonZeroU8::new(4)] {
+    for chunks in [None, NonZeroU8::new(3), NonZeroU8::new(4)] {
         let found = session.search_flow(
             &query,
             &Everything,
@@ -984,6 +984,49 @@ fn split_discovery_does_not_require_a_full_size_single_route() {
     }
 }
 
+// Gate: in chunked mode `max_quotes` bounds the quotes computed over the whole
+// flow search, and a search the budget stops returns a whole order or none.
+// The session's own counter and a fresh requote are the independent measures.
+#[test]
+fn a_chunked_split_stays_within_its_budget_and_returns_only_whole_orders() {
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let shallow = recorded();
+    let mut deep = recorded();
+    scale_vault(&mut deep, BASE_VAULT, 4, 1);
+    scale_vault(&mut deep, QUOTE_VAULT, 4, 1);
+    let rig = universe(&[placed(&shallow, y, x), placed(&deep, y, x)]);
+    let from = rig.topology.mint_id(&x).expect("placed mint");
+    let to = rig.topology.mint_id(&y).expect("placed mint");
+    for budget in 1..=12 {
+        let mut session = rig.reader.session().unwrap();
+        let found = session.search_flow(
+            &query(from, Goal::To(to), 1, budget),
+            &Everything,
+            crate::FlowOptions {
+                chunks: NonZeroU8::new(4),
+                ..Default::default()
+            },
+        );
+        assert!(
+            session.quotes_computed() <= u64::from(budget),
+            "budget {budget}: computed {}",
+            session.quotes_computed()
+        );
+        if let Some(flow) = found.best {
+            assert_eq!(flow.amount_in, AMOUNT, "budget {budget}");
+            assert_eq!(
+                rig.reader
+                    .session()
+                    .unwrap()
+                    .requote_flow(&flow, 0)
+                    .unwrap(),
+                flow,
+                "budget {budget}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_split_search_with_no_starting_path_at_any_probed_size_does_not_claim_no_route() {
     struct Capped;
@@ -1098,4 +1141,76 @@ fn pruning_that_drops_the_only_way_on_says_so_and_widening_finds_it() {
     );
     assert_eq!(pools_of(&widened), Some(vec![p3.pool, q.pool]));
     assert!(widened.quotes > pruned.quotes);
+}
+
+// Gate: the chunked split's greedy allocation must come close to the best
+// allocation over parallel pools. The expected value is a brute force over a
+// grid of allocations, each pool priced by a fresh `VenueState` apart from
+// any session, so it does not share code with the search under test.
+#[test]
+fn a_chunked_split_comes_within_a_basis_point_of_the_best_grid_allocation() {
+    const STEPS: u64 = 200;
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let states = [1, 2, 4].map(|depth| {
+        let mut state = recorded();
+        scale_vault(&mut state, BASE_VAULT, depth, 1);
+        scale_vault(&mut state, QUOTE_VAULT, depth, 1);
+        state
+    });
+    let amount_in = vault_amount(&states[0], QUOTE_VAULT) / 2;
+    let feed = FakeFeed;
+    let priced: Vec<Vec<u64>> = states
+        .iter()
+        .map(|state| {
+            (0..=STEPS)
+                .map(|step| {
+                    let amount = amount_in / STEPS * step;
+                    if amount == 0 {
+                        0
+                    } else {
+                        fresh_quote(state, &feed, amount, false).unwrap_or(0)
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let mut best = 0;
+    for first in 0..=STEPS {
+        for second in 0..=STEPS - first {
+            let third = STEPS - first - second;
+            let [first, second, third] =
+                [first, second, third].map(|steps| usize::try_from(steps).unwrap());
+            best = best.max(priced[0][first] + priced[1][second] + priced[2][third]);
+        }
+    }
+    let rig = universe(&states.each_ref().map(|state| placed(state, y, x)));
+    let from = rig.topology.mint_id(&x).expect("placed mint");
+    let to = rig.topology.mint_id(&y).expect("placed mint");
+    for chunks in [4, 8, 16, 32] {
+        let found = rig.reader.session().unwrap().search_flow(
+            &Query {
+                amount_in: amount_in / STEPS * STEPS,
+                ..query(from, Goal::To(to), 1, 100_000)
+            },
+            &Everything,
+            crate::FlowOptions {
+                chunks: NonZeroU8::new(chunks),
+                ..Default::default()
+            },
+        );
+        let flow = found.best.expect("a flow");
+        assert_eq!(
+            rig.reader
+                .session()
+                .unwrap()
+                .requote_flow(&flow, 0)
+                .unwrap(),
+            flow
+        );
+        let out = flow.amount_out;
+        assert!(
+            out >= best - best / 10_000,
+            "{chunks} chunks: {out} against the grid's best {best}"
+        );
+    }
 }

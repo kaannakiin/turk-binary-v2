@@ -111,6 +111,8 @@ pub struct FlowSearch {
     pub pruned: bool,
     pub exhausted: bool,
     pub timed_out: bool,
+    /// Quotes priced by this search; `quotes` also counts memo answers.
+    pub computed: u64,
 }
 
 struct Restricted<'a, F> {
@@ -178,6 +180,8 @@ impl<F: Filter> Filter for Excluding<'_, F> {
 impl SearchSession {
     /// Keeps the original single-path winner as an incumbent. Candidate and
     /// allocation pruning is explicit; this is not a global optimum claim.
+    /// With `options.chunks`, `max_quotes` bounds the quotes computed rather
+    /// than the quote calls.
     pub fn search_flow(
         &mut self,
         query: &Query,
@@ -185,6 +189,22 @@ impl SearchSession {
         options: FlowOptions,
     ) -> FlowSearch {
         let started = self.quotes_computed();
+        let ceiling = options
+            .chunks
+            .map(|_| started.saturating_add(u64::from(query.max_quotes)));
+        let outer = self.set_ceiling(ceiling);
+        let mut found = self.plan_flow(query, filter, options);
+        self.set_ceiling(outer);
+        found.computed = self.quotes_computed() - started;
+        found
+    }
+
+    fn plan_flow(
+        &mut self,
+        query: &Query,
+        filter: &impl Filter,
+        options: FlowOptions,
+    ) -> FlowSearch {
         let restricted = Restricted {
             filter,
             deadline: options.deadline,
@@ -211,15 +231,16 @@ impl SearchSession {
             pruned: found.pruned,
             exhausted: found.exhausted,
             timed_out: restricted.should_stop(),
+            computed: 0,
         };
         if options.single_route_only || query.goal == Goal::Cycle || result.exhausted {
             return result;
         }
         if let Some(chunks) = options.chunks {
-            self.split_in_chunks(&bounded, &restricted, options, chunks, started, &mut result);
+            self.split_in_chunks(&bounded, &restricted, options, chunks, &mut result);
             result.pruned = true;
             result.timed_out = restricted.should_stop();
-            result.exhausted |= result.timed_out;
+            result.exhausted |= result.timed_out || self.spent();
             return result;
         }
         let first = found.best.or_else(|| {
@@ -356,7 +377,10 @@ impl SearchSession {
                         if source == destination {
                             continue;
                         }
-                        if restricted.should_stop() || result.quotes >= query.max_quotes {
+                        if restricted.should_stop()
+                            || self.spent()
+                            || result.quotes >= query.max_quotes
+                        {
                             break 'pairs;
                         }
                         weights[source] -= quantum;
@@ -378,7 +402,11 @@ impl SearchSession {
                         }
                     }
                 }
-                if !improved || restricted.should_stop() || result.quotes >= query.max_quotes {
+                if !improved
+                    || restricted.should_stop()
+                    || self.spent()
+                    || result.quotes >= query.max_quotes
+                {
                     break;
                 }
             }
@@ -494,6 +522,7 @@ impl SearchSession {
                 .ok()?;
                 if amount == 0
                     || search.quotes >= query.max_quotes
+                    || self.spent()
                     || options.deadline.is_some_and(|at| Instant::now() >= at)
                 {
                     return None;

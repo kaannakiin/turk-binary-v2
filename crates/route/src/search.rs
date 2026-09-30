@@ -297,7 +297,10 @@ impl<F: Filter> Walk<'_, F> {
         {
             return ControlFlow::Continue(None);
         }
-        if self.search.quotes == self.query.max_quotes || self.filter.should_stop() {
+        if self.search.quotes == self.query.max_quotes
+            || session.spent()
+            || self.filter.should_stop()
+        {
             self.search.exhausted = true;
             return ControlFlow::Break(());
         }

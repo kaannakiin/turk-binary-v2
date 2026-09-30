@@ -3,11 +3,15 @@
 //! 1 SOL query never reaches, so each swap runs from 1 to 10,000 SOL.
 //!
 //! Quality lines print before Criterion starts timing; `gain_ppm` is the
-//! output over the single route's, in millionths. Budgets match `search`.
+//! output over the single route's, in millionths. The current split counts
+//! its budget in quote calls and the chunked one in quotes computed, so the
+//! current split also runs with ten times the calls, and both run under the
+//! same deadline with no quote budget. `tests/snapshot.rs` asserts what
+//! `requoted` prints.
 
 use std::hint::black_box;
 use std::num::NonZeroU8;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use route::{Everything, FlowOptions, FlowSearch, Goal, Query};
@@ -19,47 +23,105 @@ const SOL: u64 = 1_000_000_000;
 const SIZES: [u64; 5] = [1, 10, 100, 1_000, 10_000];
 const BENCH_MAX_QUOTES: u32 = 25_000;
 const BENCH_MAX_ARRAYS: u8 = 8;
+const DEADLINE: Duration = Duration::from_millis(5);
 
 #[derive(Clone, Copy, Debug)]
-enum Engine {
-    SingleRoute,
-    Split,
-    Chunks(u8),
+struct Engine {
+    single_route: bool,
+    chunks: Option<u8>,
+    max_quotes: u32,
+    deadline: Option<Duration>,
 }
 
 impl Engine {
-    const ALL: [Self; 5] = [
-        Self::SingleRoute,
-        Self::Split,
-        Self::Chunks(8),
-        Self::Chunks(16),
-        Self::Chunks(32),
+    const SINGLE_ROUTE: Self = Self::split(BENCH_MAX_QUOTES).single();
+
+    const ALL: [Self; 9] = [
+        Self::SINGLE_ROUTE,
+        Self::split(BENCH_MAX_QUOTES),
+        Self::split(10 * BENCH_MAX_QUOTES),
+        Self::chunks(8),
+        Self::chunks(16),
+        Self::chunks(32),
+        Self::split(u32::MAX).within(DEADLINE),
+        Self::chunks(8).unbounded().within(DEADLINE),
+        Self::chunks(16).unbounded().within(DEADLINE),
     ];
 
-    fn label(self) -> String {
-        match self {
-            Self::SingleRoute => "single-route".into(),
-            Self::Split => "split".into(),
-            Self::Chunks(n) => format!("chunks-{n}"),
+    const fn split(max_quotes: u32) -> Self {
+        Self {
+            single_route: false,
+            chunks: None,
+            max_quotes,
+            deadline: None,
         }
+    }
+
+    const fn chunks(n: u8) -> Self {
+        Self {
+            chunks: Some(n),
+            ..Self::split(BENCH_MAX_QUOTES)
+        }
+    }
+
+    const fn single(self) -> Self {
+        Self {
+            single_route: true,
+            ..self
+        }
+    }
+
+    const fn unbounded(self) -> Self {
+        Self {
+            max_quotes: u32::MAX,
+            ..self
+        }
+    }
+
+    const fn within(self, deadline: Duration) -> Self {
+        Self {
+            deadline: Some(deadline),
+            ..self
+        }
+    }
+
+    fn label(self) -> String {
+        let mut label = match (self.single_route, self.chunks) {
+            (true, _) => "single-route".to_owned(),
+            (false, None) => "split".to_owned(),
+            (false, Some(n)) => format!("chunks-{n}"),
+        };
+        if self.max_quotes == u32::MAX {
+            label.push_str("-unbounded");
+        } else if self.max_quotes != BENCH_MAX_QUOTES {
+            label = format!("{label}-{}k", self.max_quotes / 1_000);
+        }
+        if let Some(deadline) = self.deadline {
+            label = format!("{label}-{}ms", deadline.as_millis());
+        }
+        label
     }
 
     fn options(self) -> FlowOptions {
         FlowOptions {
-            single_route_only: matches!(self, Self::SingleRoute),
-            chunks: match self {
-                Self::Chunks(n) => NonZeroU8::new(n),
-                _ => None,
-            },
+            single_route_only: self.single_route,
+            chunks: self.chunks.and_then(NonZeroU8::new),
+            deadline: self.deadline.map(|deadline| Instant::now() + deadline),
             ..FlowOptions::default()
         }
     }
 }
 
-fn run(universe: &universe::Universe, query: &Query, engine: Engine) -> (FlowSearch, u64) {
+fn run(universe: &universe::Universe, query: &Query, engine: Engine) -> FlowSearch {
     let mut session = universe.reader.session().expect("clock");
-    let found = session.search_flow(query, &Everything, engine.options());
-    (found, session.quotes_computed())
+    session.search_flow(
+        &Query {
+            max_quotes: engine.max_quotes,
+            ..*query
+        },
+        &Everything,
+        engine.options(),
+    )
 }
 
 fn swaps(universe: &universe::Universe) -> Vec<(String, Query)> {
@@ -92,16 +154,14 @@ fn split(c: &mut Criterion) {
         for sol in SIZES {
             let query = Query {
                 amount_in: sol * SOL,
-                max_quotes: BENCH_MAX_QUOTES,
                 max_arrays: BENCH_MAX_ARRAYS,
                 ..base
             };
-            let single = run(&universe, &query, Engine::SingleRoute)
-                .0
+            let single = run(&universe, &query, Engine::SINGLE_ROUTE)
                 .best
                 .map_or(0, |flow| flow.amount_out);
             for engine in Engine::ALL {
-                let (found, computed) = run(&universe, &query, engine);
+                let found = run(&universe, &query, engine);
                 let flow = found.best.as_ref();
                 let out = flow.map_or(0, |flow| flow.amount_out);
                 let gain_ppm =
@@ -119,10 +179,11 @@ fn split(c: &mut Criterion) {
                 });
                 eprintln!(
                     "quality {name}/{sol}sol {}: out {out}, gain_ppm {gain_ppm}, requoted {:?}, \
-                     quotes {}, computed {computed}, legs {}, pools {}, exhausted {}, timed_out {}",
+                     quotes {}, computed {}, legs {}, pools {}, exhausted {}, timed_out {}",
                     engine.label(),
                     requoted.map(|requoted| i128::from(requoted) - i128::from(out)),
                     found.quotes,
+                    found.computed,
                     flow.map_or(0, |flow| flow.operations.len()),
                     pools.len(),
                     found.exhausted,

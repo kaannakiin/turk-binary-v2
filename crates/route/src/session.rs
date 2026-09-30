@@ -21,6 +21,7 @@ pub struct SearchSession {
     pins: Pins,
     memo: Option<HashMap<MemoKey, Result<Quote, RouteError>, ahash::RandomState>>,
     computed: u64,
+    ceiling: Option<u64>,
 }
 
 type Pins = HashMap<PoolId, Arc<Decoded>, ahash::RandomState>;
@@ -73,6 +74,7 @@ impl<F: PoolFeed> QuoteReader<F> {
             pins: HashMap::default(),
             memo: None,
             computed: 0,
+            ceiling: None,
         })
     }
 }
@@ -171,6 +173,16 @@ impl SearchSession {
     #[must_use]
     pub fn quotes_computed(&self) -> u64 {
         self.computed
+    }
+
+    pub(crate) fn set_ceiling(&mut self, ceiling: Option<u64>) -> Option<u64> {
+        std::mem::replace(&mut self.ceiling, ceiling)
+    }
+
+    /// Checked before every quote that may be priced, so the ceiling is never
+    /// passed: one quote prices at most one.
+    pub(crate) fn spent(&self) -> bool {
+        self.ceiling.is_some_and(|ceiling| self.computed >= ceiling)
     }
 
     /// The swap accounts of `edge`'s pool as pinned, so they belong to the
