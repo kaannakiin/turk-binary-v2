@@ -42,6 +42,11 @@ fn cases(universe: &universe::Universe) -> Vec<(EdgeId, u64)> {
 fn clmm(c: &mut Criterion) {
     let universe = universe::load();
     let cases = cases(&universe);
+    eprintln!(
+        "slot {}: {} CLMM cases, max_arrays {MAX_ARRAYS}",
+        universe.slot,
+        cases.len()
+    );
     let mut session = universe.reader.session().expect("clock");
     let (mut paid, mut arrays) = (0usize, 0usize);
     let mut outputs = DefaultHasher::new();
@@ -74,9 +79,6 @@ fn clmm(c: &mut Criterion) {
     );
 
     let mut group = c.benchmark_group("clmm");
-    group
-        .sample_size(10)
-        .measurement_time(Duration::from_secs(3));
     group.bench_function("quote_all", |b| {
         b.iter(|| {
             for &(edge, amount) in &cases {
@@ -87,5 +89,13 @@ fn clmm(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, clmm);
+// Set here, not on the group: a group setting overrides `--sample-size` and
+// `--measurement-time`, which `scripts/bench_ab.py` raises.
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(10)
+        .measurement_time(Duration::from_secs(3));
+    targets = clmm
+}
 criterion_main!(benches);

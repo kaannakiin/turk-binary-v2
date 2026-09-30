@@ -14,11 +14,16 @@ cannot share the main one: cargo hashes workspace members independently of
 their path, so one side's build would pass for the other's and both sides
 would run the same binary. Criterion writes its output under the temporary
 directory for both sides: written into the repo, it wakes editor and indexer
-file watchers during one side's runs only. Quality lines the bench prints to stderr are
-compared on the fields both sides print.
+file watchers during one side's runs only.
+
+The run fails, exit status 1, unless every round of both sides prints the
+same `slot ` workload line (snapshot and query limits) and the same quality
+lines with the same fields and values; `--ignore-field` exempts a work
+counter such as `computed`, which an optimisation is meant to change.
 
 Usage: bench_ab.py [--base REF] [--bench NAME] [--rounds N] [--sample-size N]
-                   [--measurement-time SECS] [--base-patch FILE] [FILTER]
+                   [--measurement-time SECS] [--base-patch FILE]
+                   [--ignore-field NAME]... [FILTER]
 """
 
 import argparse
@@ -80,21 +85,40 @@ def run(exe, src, env, args):
     times = {
         m[1]: float(m[2]) * UNIT_US[m[3]] for m in TIME.finditer(done.stdout)
     }
+    workload = [line for line in done.stderr.splitlines() if line.startswith("slot ")]
     quality = {}
     for line in done.stderr.splitlines():
         if line.startswith("quality "):
             name, _, fields = line[len("quality "):].partition(": ")
             quality[name] = dict(f.split(" ", 1) for f in fields.split(", "))
-    return times, quality
+    return times, (workload, quality)
 
 
-def compare_quality(base, head):
-    differ = []
-    for name in sorted(base.keys() & head.keys()):
-        shared = base[name].keys() & head[name].keys()
-        if any(base[name][k] != head[name][k] for k in shared):
-            differ.append(name)
-    return differ
+def compare_outputs(outputs, ignored):
+    """Every round of both sides against the base's first: same workload, the
+    same quality lines and, outside `ignored`, the same fields and values."""
+    problems = []
+    workload, reference = outputs["base"][0]
+    if not reference:
+        return ["base round 1 printed no quality lines"]
+    for side in ("base", "head"):
+        for i, (seen_workload, quality) in enumerate(outputs[side]):
+            at = f"{side} round {i + 1}"
+            if seen_workload != workload:
+                problems.append(f"{at}: workload {seen_workload} differs from {workload}")
+            for name in sorted(reference.keys() - quality.keys()):
+                problems.append(f"{at}: no quality line for {name}")
+            for name in sorted(quality.keys() - reference.keys()):
+                problems.append(f"{at}: quality line {name} the base does not print")
+            for name in sorted(reference.keys() & quality.keys()):
+                want = {k: v for k, v in reference[name].items() if k not in ignored}
+                got = {k: v for k, v in quality[name].items() if k not in ignored}
+                for field in sorted(want.keys() | got.keys()):
+                    if want.get(field) != got.get(field):
+                        problems.append(
+                            f"{at}: {name} {field} {got.get(field)} vs {want.get(field)}"
+                        )
+    return problems
 
 
 def fmt(us):
@@ -133,6 +157,12 @@ def main():
         "--base-patch",
         help="applied to the base worktree, e.g. a bench change the ref predates",
     )
+    parser.add_argument(
+        "--ignore-field",
+        action="append",
+        default=["computed"],
+        help="a quality field allowed to differ, such as a work counter (default: computed)",
+    )
     parser.add_argument("filter", nargs="?")
     args = parser.parse_args()
 
@@ -158,21 +188,28 @@ def main():
             if filecmp.cmp(exe["base"], exe["head"], shallow=False):
                 sys.exit("base and head built the same binary: nothing to compare")
             samples = {"base": [], "head": []}
-            quality = {}
+            outputs = {"base": [], "head": []}
             for i in range(args.rounds):
                 order = ("base", "head") if i % 2 == 0 else ("head", "base")
                 for side in order:
                     print(f"round {i + 1}/{args.rounds}: {side}", file=sys.stderr)
                     home = dict(env, CRITERION_HOME=os.path.join(tmp, f"criterion-{side}"))
-                    times, quality[side] = run(exe[side], src[side], home, args)
+                    times, output = run(exe[side], src[side], home, args)
                     samples[side].append(times)
+                    outputs[side].append(output)
         finally:
             git("worktree", "remove", "--force", base_dir, cwd=root)
     report(samples, args.bench)
-    differ = compare_quality(quality["base"], quality["head"])
+    ignored = set(args.ignore_field)
+    problems = compare_outputs(outputs, ignored)
+    if problems:
+        print(f"quality: {len(problems)} problems", file=sys.stderr)
+        for problem in problems[:40]:
+            print(f"  {problem}", file=sys.stderr)
+        sys.exit(1)
     print(
-        f"quality: {len(quality['head'])} lines, "
-        + (f"DIFFER: {', '.join(differ)}" if differ else "identical on shared fields")
+        f"quality: {len(outputs['base'][0][1])} lines identical in all {args.rounds} rounds "
+        f"of both sides (ignoring {', '.join(sorted(ignored))})"
     )
 
 
