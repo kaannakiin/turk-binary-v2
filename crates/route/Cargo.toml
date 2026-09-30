@@ -37,5 +37,9 @@ harness = false
 name = "clmm"
 harness = false
 
+[[bench]]
+name = "split"
+harness = false
+
 [lints]
 workspace = true

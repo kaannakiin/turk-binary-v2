@@ -78,6 +78,62 @@ roughly 13–15 ms under this candidate strategy. `singleRouteOnly` is close to
 DFS. `singlePoolPerHop` preserves the single-pool output while paying for
 candidate evaluation.
 
+The 13–15 ms above predate the memo and the write-set and copy changes
+recorded in [architecture.md](architecture.md); on the same capture the flow
+split now takes 1.1–1.3 ms at 1 SOL (`just bench-ab`, 2026-09-30).
+
+## Split across trade sizes
+
+A split pays only once one pool's liquidity runs thin, which a 1 SOL order
+never reaches. `cargo bench -p route --bench split` runs each swap from 1 to
+10,000 SOL, with the same 25,000-quote cap and `max_arrays` 8, and compares
+the current split with the chunked split (`FlowOptions::chunks`, see
+[architecture.md](architecture.md)). Every flow of every engine was quoted
+again with `requote_flow` in a fresh session and paid exactly its planned
+output.
+
+Gain over the single route in millionths of its output, with quotes computed
+(memo answers excluded) in parentheses. `sol_to_usdc_h3` gave the same outputs
+as `h2`.
+
+| `sol_to_usdc_h2` |          split |       chunks 8 |      chunks 16 |      chunks 32 |
+| ---------------- | -------------: | -------------: | -------------: | -------------: |
+| 1 SOL            |     33 (2,977) |     37 (2,064) |     37 (2,071) |     37 (2,103) |
+| 10 SOL           |      1 (2,817) |      1 (1,953) |      5 (1,985) |      6 (2,030) |
+| 100 SOL          |     32 (2,644) |     32 (1,837) |     38 (1,892) |     40 (1,915) |
+| 1,000 SOL        |  1,099 (2,574) |  1,358 (1,783) |  1,358 (1,810) |  1,373 (1,840) |
+| 10,000 SOL       | 51,500 (2,507) | 56,520 (1,777) | 56,520 (1,767) | 56,649 (1,794) |
+
+| `sol_to_pump_h2` |      split |        chunks 8 |       chunks 16 |       chunks 32 |
+| ---------------- | ---------: | --------------: | --------------: | --------------: |
+| 1 SOL            | 0 (10,835) |      0 (12,038) |      0 (12,118) |      0 (12,332) |
+| 10 SOL           | 0 (10,569) |      0 (11,192) |      0 (11,344) |      0 (11,468) |
+| 100 SOL          | 0 (10,206) |  1,021 (10,303) |  1,360 (10,894) |  1,360 (11,080) |
+| 1,000 SOL        |  0 (9,561) |  26,244 (9,427) | 30,652 (10,094) | 31,307 (10,625) |
+| 10,000 SOL       |  0 (9,219) | 112,945 (8,875) | 112,945 (9,043) | 129,512 (9,462) |
+
+On the pump token the current split exhausts its 25,000 quote calls at every
+size: a single path search there makes about 8,000, and discovery runs several.
+The chunked split counts the budget in quotes computed and stays inside it.
+The allocation polish after the chunks matters most where the greedy choice
+is coarse: at 10,000 SOL with 8 chunks it lifts the pump gain from 102,712 to
+112,945 millionths.
+
+Timing medians (Criterion, 10 samples, 1 s):
+
+| Query                   | single route |   split | chunks 8 | chunks 16 | chunks 32 |
+| ----------------------- | -----------: | ------: | -------: | --------: | --------: |
+| `sol_to_usdc_h2` 1      |      0.37 ms | 1.63 ms |  1.63 ms |   2.41 ms |   2.83 ms |
+| `sol_to_usdc_h2` 1,000  |      0.78 ms | 2.21 ms |  2.01 ms |   2.49 ms |   3.57 ms |
+| `sol_to_usdc_h2` 10,000 |      0.79 ms | 3.06 ms |  3.34 ms |   3.35 ms |   4.45 ms |
+| `sol_to_pump_h2` 1      |      2.38 ms | 4.35 ms |  7.38 ms |  11.01 ms |  18.76 ms |
+| `sol_to_pump_h2` 1,000  |      2.72 ms | 5.37 ms |  7.08 ms |  11.42 ms |  18.15 ms |
+| `sol_to_pump_h2` 10,000 |      2.74 ms | 5.38 ms |  7.11 ms |   9.54 ms |  22.51 ms |
+
+Each chunk walks the whole graph again; the memo makes that a lookup per edge
+an earlier chunk did not move, but on the pump token's wide graph those
+lookups (up to about 300,000 calls at 32 chunks) are what the time is.
+
 ## Correctness and interpretation limits
 
 - All methods used the same snapshot, amount, goal, hop limit, pair cap, and

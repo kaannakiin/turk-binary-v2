@@ -779,40 +779,57 @@ fn flow_search_preserves_the_single_route_and_accounts_for_each_credit() {
     let query = query(from, Goal::To(to), 2, 10_000);
     let mut session = rig.reader.session().unwrap();
     let baseline = session.search(&query, &Everything).best.unwrap();
-    let found = session.search_flow(&query, &Everything, crate::FlowOptions::default());
-    assert!(found.quotes <= query.max_quotes);
-    let flow = found.best.unwrap();
-    assert!(flow.amount_out >= baseline.amount_out());
-    assert_eq!(
-        flow.operations.len(),
-        3,
-        "two parallel pools followed by their shared suffix"
-    );
-    let mut credits = vec![0u64; flow.slots.len()];
-    credits[0] = query.amount_in;
-    for operation in &flow.operations {
-        let source = usize::from(operation.allocation.source);
-        let destination = usize::from(operation.allocation.destination);
-        credits[source] = credits[source]
-            .checked_sub(operation.leg.amount_in)
-            .expect("no double spending");
-        credits[destination] += operation.leg.amount_out;
+    for chunks in [None, NonZeroU8::new(4)] {
+        let found = session.search_flow(
+            &query,
+            &Everything,
+            crate::FlowOptions {
+                chunks,
+                ..Default::default()
+            },
+        );
+        let flow = found.best.unwrap();
+        assert!(flow.amount_out >= baseline.amount_out());
+        assert_eq!(
+            flow.operations.len(),
+            3,
+            "two parallel pools followed by their shared suffix, {chunks:?} chunks"
+        );
+        let mut credits = vec![0u64; flow.slots.len()];
+        credits[0] = query.amount_in;
+        for operation in &flow.operations {
+            let source = usize::from(operation.allocation.source);
+            let destination = usize::from(operation.allocation.destination);
+            credits[source] = credits[source]
+                .checked_sub(operation.leg.amount_in)
+                .expect("no double spending");
+            credits[destination] += operation.leg.amount_out;
+        }
+        assert_eq!(credits[1], flow.amount_out);
+        assert!(
+            credits
+                .iter()
+                .enumerate()
+                .all(|(slot, &amount)| slot == 1 || amount == 0)
+        );
+        assert_eq!(
+            flow.operations
+                .iter()
+                .filter(|op| op.leg.pool == last.pool)
+                .count(),
+            1,
+            "shared suffix executes once on the merged amount"
+        );
+        assert_eq!(
+            rig.reader
+                .session()
+                .unwrap()
+                .requote_flow(&flow, 0)
+                .unwrap(),
+            flow,
+            "the plan pays what quoting it again in order pays, {chunks:?} chunks"
+        );
     }
-    assert_eq!(credits[1], flow.amount_out);
-    assert!(
-        credits
-            .iter()
-            .enumerate()
-            .all(|(slot, &amount)| slot == 1 || amount == 0)
-    );
-    assert_eq!(
-        flow.operations
-            .iter()
-            .filter(|op| op.leg.pool == last.pool)
-            .count(),
-        1,
-        "shared suffix executes once on the merged amount"
-    );
     for options in [
         crate::FlowOptions {
             single_route_only: true,
@@ -932,26 +949,39 @@ fn split_discovery_does_not_require_a_full_size_single_route() {
         }
     }
     let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
-    let first = recorded();
-    let second = recorded();
-    let rig = universe(&[placed(&first, y, x), placed(&second, y, x)]);
+    let shallow = recorded();
+    // Deep enough that chunks priced on top of each other keep choosing it,
+    // so only admission of the merged plan keeps it under the cap.
+    let mut deep = recorded();
+    scale_vault(&mut deep, BASE_VAULT, 4, 1);
+    scale_vault(&mut deep, QUOTE_VAULT, 4, 1);
+    let rig = universe(&[placed(&shallow, y, x), placed(&deep, y, x)]);
     let from = rig.topology.mint_id(&x).expect("placed mint");
     let to = rig.topology.mint_id(&y).expect("placed mint");
     let query = query(from, Goal::To(to), 1, 10_000);
     let mut session = rig.reader.session().unwrap();
     assert!(session.search(&query, &Capped).best.is_none());
-    let flow = session
-        .search_flow(&query, &Capped, crate::FlowOptions::default())
-        .best
-        .expect("two partial pools fill the order");
-    assert_eq!(flow.operations.len(), 2);
-    assert_eq!(
-        flow.operations
-            .iter()
-            .map(|op| op.leg.amount_in)
-            .sum::<u64>(),
-        AMOUNT
-    );
+    for chunks in [None, NonZeroU8::new(4)] {
+        let flow = session
+            .search_flow(
+                &query,
+                &Capped,
+                crate::FlowOptions {
+                    chunks,
+                    ..Default::default()
+                },
+            )
+            .best
+            .expect("two partial pools fill the order");
+        assert_eq!(flow.operations.len(), 2);
+        assert_eq!(
+            flow.operations
+                .iter()
+                .map(|op| op.leg.amount_in)
+                .sum::<u64>(),
+            AMOUNT
+        );
+    }
 }
 
 #[test]

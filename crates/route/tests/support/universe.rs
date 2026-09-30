@@ -28,7 +28,7 @@ const DEFAULT: &str = concat!(
 const WSOL: &str = "So11111111111111111111111111111111111111112";
 const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 /// The pump token with the most SOL in its pool, per `config.toml`.
-const PUMP: &str = "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump";
+pub const PUMP: &str = "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump";
 
 #[derive(Deserialize)]
 struct Snapshot {
