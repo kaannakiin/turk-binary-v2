@@ -58,4 +58,8 @@ So our program is already stricter than both, and the mint check lives where the
 
 ## CI
 
-The `onchain` job runs host tests only. `cargo build-sbf` and `just router-replay` do not run in CI, and the workflow runs only on pushes to `main` and on pull requests, so a pushed branch alone is not checked.
+The `replay` job runs `just replay-check` ([router.md](router.md) → Replay check): seven router fixtures rebuilt from the tree and executed on mainnet's bytecode. The large single-venue corpora (`just router-replay`, `router-orca-replay`, `router-dlmm-replay` and the other per-venue recipes) still run by hand only. The workflow runs only on pushes to `main` and on pull requests, so a pushed branch alone is not checked.
+
+The replay job needs the release `just publish-oracle-programs` uploads for the current `programs.tsv`; after `just oracle` dumps changed bytecode, the fixtures are regenerated and a human publishes the new release, or the job fails at the download step.
+
+`oracle router*` replays at a pinned 5,080 lamports per byte, mainnet's rate since SIMD-0437's second step. A later step changes the lamports of every account a replay creates: the constant in `oracle/src/router.rs` and all router fixtures move together, in one change.
