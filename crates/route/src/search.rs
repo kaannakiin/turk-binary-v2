@@ -9,6 +9,7 @@ use graph::{EdgeId, MintId, PoolNode, Topology};
 use crate::chunked::Carried;
 use crate::error::RouteError;
 use crate::feed::PoolFeed;
+use crate::pricer::Pricer;
 use crate::reader::QuoteReader;
 use crate::session::SearchSession;
 
@@ -159,22 +160,15 @@ impl SearchSession {
         let topology = Arc::clone(&self.topology);
         let hops = usize::from(query.max_hops);
         let mut walk = Walk {
-            query,
-            filter,
-            used,
-            target: match query.goal {
-                Goal::To(mint) => mint,
-                Goal::Cycle => query.from,
-            },
+            pricer: Pricer::new(query, filter, used),
             path: Vec::with_capacity(hops),
             passed: Vec::with_capacity(hops),
             ranked: vec![Vec::new(); hops],
-            search: Search::default(),
         };
         if hops > 0 && query.amount_in > 0 {
             let _ = walk.walk(self, &topology, query.from, query.amount_in);
         }
-        walk.search
+        walk.pricer.search
     }
 
     /// Searches with `query.per_pair`; while pruning dropped candidates and
@@ -212,14 +206,10 @@ impl SearchSession {
 }
 
 struct Walk<'q, F> {
-    query: &'q Query,
-    filter: &'q F,
-    used: &'q [Carried],
-    target: MintId,
+    pricer: Pricer<'q, F>,
     path: Vec<Leg>,
     passed: Vec<MintId>,
     ranked: Vec<Vec<Leg>>,
-    search: Search,
 }
 
 impl<F: Filter> Walk<'_, F> {
@@ -231,20 +221,21 @@ impl<F: Filter> Walk<'_, F> {
         amount: u64,
     ) -> ControlFlow<()> {
         let depth = self.path.len();
-        let last = depth + 1 == usize::from(self.query.max_hops);
+        let last = depth + 1 == usize::from(self.pricer.query.max_hops);
         for (peer, edges) in topology.out_pairs(at) {
-            let closes = peer == self.target;
-            if !closes
-                && (last
-                    || peer == self.query.from
-                    || self.passed.contains(&peer)
-                    || !self.filter.via(peer))
+            if !self
+                .pricer
+                .steps_to(peer, last, || self.passed.contains(&peer))
             {
                 continue;
             }
-            let Some(keep) = self.query.per_pair else {
+            let closes = peer == self.pricer.target;
+            let Some(keep) = self.pricer.query.per_pair else {
                 for &edge in edges {
-                    if let Some(leg) = self.quote(session, topology, edge, amount)? {
+                    if let Some(leg) =
+                        self.pricer
+                            .leg(session, topology, self.path.iter(), edge, amount)?
+                    {
                         self.advance(session, topology, leg, peer, closes)?;
                     }
                 }
@@ -254,7 +245,10 @@ impl<F: Filter> Walk<'_, F> {
             ranked.clear();
             let mut spent = ControlFlow::Continue(());
             for &edge in edges {
-                match self.quote(session, topology, edge, amount) {
+                match self
+                    .pricer
+                    .leg(session, topology, self.path.iter(), edge, amount)
+                {
                     ControlFlow::Continue(leg) => ranked.extend(leg),
                     ControlFlow::Break(()) => {
                         spent = ControlFlow::Break(());
@@ -267,7 +261,7 @@ impl<F: Filter> Walk<'_, F> {
             // writes with, every one kept.
             ranked.sort_by_key(|leg| Reverse(leg.amount_out));
             let keep = usize::from(keep.get());
-            self.search.pruned |= ranked.len() > keep;
+            self.pricer.search.pruned |= ranked.len() > keep;
             for &leg in ranked.iter().take(keep) {
                 self.advance(session, topology, leg, peer, closes)?;
             }
@@ -275,67 +269,6 @@ impl<F: Filter> Walk<'_, F> {
             spent?;
         }
         ControlFlow::Continue(())
-    }
-
-    /// `None` when the pool is not admitted here or refuses the quote.
-    fn quote(
-        &mut self,
-        session: &mut SearchSession,
-        topology: &Topology,
-        edge: EdgeId,
-        amount: u64,
-    ) -> ControlFlow<(), Option<Leg>> {
-        let pool = edge.pool();
-        let node = topology.pool(pool);
-        if self.path.iter().any(|leg| leg.edge.pool() == pool)
-            || !self.filter.pool(node)
-            || !session.active(pool)
-            || (self.query.goal == Goal::Cycle
-                && self.filter.unique_dex(node.dex)
-                && self
-                    .path
-                    .iter()
-                    .any(|leg| topology.pool(leg.edge.pool()).dex == node.dex))
-        {
-            return ControlFlow::Continue(None);
-        }
-        if self.search.quotes == self.query.max_quotes
-            || session.spent()
-            || self.filter.should_stop()
-        {
-            self.search.exhausted = true;
-            return ControlFlow::Break(());
-        }
-        if session.pin(pool).is_err() {
-            self.search.refused = self.search.refused.saturating_add(1);
-            return ControlFlow::Continue(None);
-        }
-        if session.shares_writes(pool, self.path.iter().map(|leg| leg.edge.pool())) {
-            return ControlFlow::Continue(None);
-        }
-        let (sent, paid) = self
-            .used
-            .iter()
-            .find(|used| used.edge == edge)
-            .map_or((0, 0), |used| (used.amount_in, used.amount_out));
-        let Some(total) = sent.checked_add(amount) else {
-            return ControlFlow::Continue(None);
-        };
-        self.search.quotes += 1;
-        let Ok(quote) = session.quote(edge, total, self.query.max_arrays) else {
-            self.search.refused = self.search.refused.saturating_add(1);
-            return ControlFlow::Continue(None);
-        };
-        let amount_out = quote.out.amount_out.saturating_sub(paid);
-        ControlFlow::Continue((amount_out > 0).then_some(Leg {
-            edge,
-            pool: node.pubkey,
-            amount_in: amount,
-            amount_out,
-            arrays_used: quote.out.arrays_used,
-            walk: quote.out.walk,
-            cross_stream: quote.cross_stream,
-        }))
     }
 
     fn advance(
@@ -348,7 +281,8 @@ impl<F: Filter> Walk<'_, F> {
     ) -> ControlFlow<()> {
         self.path.push(leg);
         let flow = if closes {
-            self.offer(session);
+            self.pricer
+                .offer(session, leg.amount_out, || self.path.clone());
             ControlFlow::Continue(())
         } else {
             self.passed.push(peer);
@@ -358,24 +292,5 @@ impl<F: Filter> Walk<'_, F> {
         };
         self.path.pop();
         flow
-    }
-
-    fn offer(&mut self, session: &mut SearchSession) {
-        let amount_out = self.path.last().map_or(0, |leg| leg.amount_out);
-        if self
-            .search
-            .best
-            .as_ref()
-            .is_none_or(|best| amount_out > best.amount_out())
-        {
-            let path = Path {
-                legs: self.path.clone(),
-            };
-            if self.filter.path(session, &path) {
-                self.search.best = Some(path);
-            } else {
-                self.search.refused = self.search.refused.saturating_add(1);
-            }
-        }
     }
 }
