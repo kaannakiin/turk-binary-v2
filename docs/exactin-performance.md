@@ -154,6 +154,79 @@ time for about 1.5% more output on the largest pump order.
 These plans are quote plans under `Everything`: none has been through the
 server's transaction admission (`Swappable`) or executed in LiteSVM yet.
 
+## Chunked split under admission
+
+The figures above were taken with `Everything`: no transaction was built. The
+same orders were quoted through the server's `/quote`, which admits every
+candidate as a v1 transaction for a stand-in wallet (2026-10-01, the slot
+451,259,947 capture, `per_pair` 2, `max_arrays` 8, `maxHops` 2). Output in base
+units of the output mint; in parentheses the p50 in µs of nine requests, one
+run, so a guide rather than a result:
+
+| SOL → USDC | single route |              split |           chunks 8 |
+| ---------- | -----------: | -----------------: | -----------------: |
+| 1          |  118,348,564 | 118,351,590 (1055) | 118,350,425 (1001) |
+| 1,000      |      118.08B |     118.21B (2195) |     118.23B (1890) |
+| 10,000     |    1,110.38B |   1,154.53B (2889) |   1,171.08B (3044) |
+
+| SOL → pump | single route |            split |           chunks 8 |
+| ---------- | -----------: | ---------------: | -----------------: |
+| 10         |       15.97B |    15.99B (1394) |      16.00B (1308) |
+| 100        |      158.60B |   158.84B (1863) |     158.84B (1488) |
+| 1,000      |    1,392.42B | 1,392.42B (2242) |   1,392.42B (3177) |
+| 10,000     |       18.43B |    32.62B (6462) | 2,029.65B (15,525) |
+
+Chunks 16 gained nothing over 8 and cost up to three times as long. A polish
+step of 1 in 10,000 closed all but one loss to the current split (SOL→USDC at
+1 SOL, 10 ppm). At 1,000 SOL to the pump token every split is refused: of the
+plans admission saw, 1,956 per six requests exceeded the 1,400,000 compute
+units of a v1 transaction; the per-hop budgets of `crates/tx/src/budget.rs`
+allow two heavy hops at most. Admission now prices compute from the windows
+before building anything, which took that query from about 4.6 to 3 ms.
+
+**Execution.** `just router-split-replay` sends the orders the server splits
+through the router in `LiteSVM`, on a capture's accounts and mainnet bytecode.
+On a capture of slot 452,267,679, the current split's three plans paid exactly
+what they quoted (SOL→USDC 10,000 SOL in 406,975 compute units, SOL→pump 10 SOL
+in 124,563, 10,000 SOL in 524,586). Of the chunked plans for the same orders,
+SOL→pump 10 SOL paid exactly, in 249,584 units; SOL→USDC 10,000 SOL and SOL→pump
+10,000 SOL ran out of compute at the 1,320,000 and 1,400,000 units their
+budgets requested. Both send thousands of SOL into a thin pool once the deep
+ones are spent at the margin (3,080 SOL into CLMM `3ucNos…`, 1,490 SOL into DLMM
+`qhJ7kL…`), and a swap that large crosses many ticks or bins inside the arrays
+its budget counts. That was the budget, which counted arrays. Budgeted by the walk each quote
+reports (initialized ticks or bins crossed and fee-loop steps,
+`crates/tx/src/budget.rs`), with DLMM pools whose oracle the router refuses left
+out, the same capture's plans all paid exactly what they quoted in their v1
+transaction:
+
+| Order               |        current split |             chunks 8 |
+| ------------------- | -------------------: | -------------------: |
+| SOL→USDC 10,000 SOL | 1,162.56B (1.04M CU) | 1,164.08B (1.05M CU) |
+| SOL→pump 10 SOL     |    19.06B (0.12M CU) |    19.06B (0.25M CU) |
+| SOL→pump 10,000 SOL |    37.24B (0.52M CU) | 1,742.96B (1.09M CU) |
+
+The server now splits in chunks. With the router taking grown DLMM oracles and
+each hop budgeted for its Token-2022 and transfer-fee sides and fee loop as well (`budget.rs`), the
+same capture's chunked plans paid exactly what they quoted, in `LiteSVM` and,
+sent through `sendTransaction` with preflight, on Surfpool 1.6.0 started from
+the accounts `LiteSVM` prepared (`just router-surfpool-replay`), in the same
+compute units on both:
+
+| Order               |             chunks 8 |
+| ------------------- | -------------------: |
+| SOL→USDC 10,000 SOL | 1,166.82B (1.04M CU) |
+| SOL→pump 10 SOL     |    19.06B (0.25M CU) |
+| SOL→pump 10,000 SOL | 1,727.39B (1.07M CU) |
+
+On the earlier capture, whose CLMM pools lack the
+observation account a swap now names, only the plans without CLMM ran; the
+chunked SOL→pump 10,000 SOL plan there paid exactly, in 1,251,596 units.
+
+The replay also swaps each plan's pools one by one outside the router; for
+DLMM pools other than `5rCf1D…` that direct swap fails with `InvalidBinArray`,
+a limit of the direct swap the oracle builds, not of the router.
+
 ## Correctness and interpretation limits
 
 - All methods used the same snapshot, amount, goal, hop limit, pair cap, and

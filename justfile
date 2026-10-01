@@ -79,6 +79,33 @@ router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz"
 
 # Four-step split/merge with an intermediate Token-2022 transfer-fee branch.
 # Direct venue swaps and both router forms replay on the same captured bank.
+# LiteSVM: the orders the server splits on a universe capture (`just snapshot-universe`), sent
+# through the router on its accounts and mainnet bytecode; each must pay what it quoted.
+router-split-replay capture="oracle/snapshots/universe.json.gz":
+    NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
+    ROUTE_UNIVERSE={{justfile_directory()}}/{{capture}} ROUTER_SPLIT_PLANS={{justfile_directory()}}/target/router-split-plans.json cargo nextest run -p server --run-ignored only router_split_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router {{capture}} target/router-split-plans.json oracle/programs onchain/target/deploy/router.so target/router-split-replay.json
+
+# LiteSVM: the chunked SOL to pump 10,000 SOL split on the three pools it took at slot 452267679.
+router-large-split-replay:
+    NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_LARGE_SPLIT_PLANS={{justfile_directory()}}/target/router-large-split-plans.json cargo nextest run -p server --run-ignored only router_large_split_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router crates/tx/src/tests/fixtures/large_split_pools.json.gz target/router-large-split-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_large_split.json
+
+# Surfpool: the split plans `router-split-replay` writes, each on an offline Surfnet started from
+# the accounts LiteSVM prepared for it, sent through its JSON-RPC; each must pay what it quoted.
+router-surfpool-replay capture="oracle/snapshots/universe.json.gz":
+    just router-split-replay {{capture}}
+    cargo run --manifest-path oracle/Cargo.toml -- surfpool {{capture}} target/router-split-plans.json oracle/programs onchain/target/deploy/router.so target/surfpool
+    python3 scripts/surfpool_replay.py target/surfpool/manifest.json target/surfpool-replay.json
+
+# LiteSVM: one-hop swaps of a universe capture from tiny to the largest each pool quotes, sent
+# through the router; records what each spent against the steps and arrays its quote walked.
+router-compute-replay capture="oracle/snapshots/universe.json.gz":
+    NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
+    ROUTE_UNIVERSE={{justfile_directory()}}/{{capture}} ROUTER_COMPUTE_PLANS={{justfile_directory()}}/target/router-compute-plans.json cargo nextest run -p server --run-ignored only router_compute_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router {{capture}} target/router-compute-plans.json oracle/programs onchain/target/deploy/router.so target/router-compute-replay.json
+
 router-flow-replay:
     NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
     NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/short-venue/Cargo.toml
@@ -122,6 +149,12 @@ router-dlmm-extension-replay:
     NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
     ROUTER_DLMM_EXTENSION_PLANS={{justfile_directory()}}/target/router-dlmm-extension-plans.json cargo nextest run -p server --run-ignored only router_dlmm_extension_plans --no-capture
     cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/dlmm_extension_pools.json target/router-dlmm-extension-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_dlmm_extension.json
+
+# Live DLMM pool whose oracle was grown to 206 samples, both directions against direct swap2.
+router-dlmm-grown-oracle-replay:
+    NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_DLMM_GROWN_ORACLE_PLANS={{justfile_directory()}}/target/router-dlmm-grown-oracle-plans.json cargo nextest run -p server --run-ignored only router_dlmm_grown_oracle_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/dlmm_grown_oracle_pools.json.gz target/router-dlmm-grown-oracle-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_dlmm_grown_oracle.json
 
 # Same-slot DLMM→CLMM route with direct payouts and per-hop thresholds.
 router-dlmm-cross-replay:

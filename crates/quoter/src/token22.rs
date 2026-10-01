@@ -1,5 +1,5 @@
-use domain::Pubkey;
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
+use domain::{Pubkey, TokenSide};
 
 use crate::error::{MintDecodeError, QuoteError};
 
@@ -131,6 +131,18 @@ pub(crate) struct Restrictions {
 }
 
 impl Mint {
+    pub(crate) fn token_side(&self, mint: Pubkey) -> TokenSide {
+        TokenSide {
+            mint,
+            token_program: if self.token_2022 {
+                TOKEN_2022_PROGRAM
+            } else {
+                TOKEN_PROGRAM
+            },
+            has_transfer_fee: self.transfer_fee.is_some(),
+        }
+    }
+
     pub(crate) fn fee_at(&self, epoch: u64) -> Option<TransferFee> {
         self.transfer_fee.map(|s| s.at_epoch(epoch))
     }

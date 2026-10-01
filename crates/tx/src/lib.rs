@@ -6,7 +6,7 @@ mod slippage;
 mod token;
 mod transaction;
 
-pub use budget::Limits;
+pub use budget::{Limits, compute_units};
 pub use error::TxError;
 pub use plan::{
     AccountLimit, FlowAllocation, FlowSwapRequest, MAX_ACCOUNTS, SwapInstructions, SwapRequest,

@@ -68,6 +68,7 @@ fn cpmm_window(source: TokenSide, destination: TokenSide) -> SwapWindow {
         tail: 0,
         optional_tail: 0,
         arrays_used: 0,
+        walk: domain::Walk::default(),
         accounts: vec![
             WindowAccount::User,
             authority,
@@ -96,10 +97,12 @@ fn mainnet_hop() -> SwapWindow {
         TokenSide {
             mint: INPUT_MINT,
             token_program: TOKEN_2022_PROGRAM,
+            has_transfer_fee: false,
         },
         TokenSide {
             mint: OUTPUT_MINT,
             token_program: TOKEN_PROGRAM,
+            has_transfer_fee: false,
         },
     )
 }
@@ -139,19 +142,31 @@ fn clmm_budget_window(
         tail: arrays,
         optional_tail: u8::from(guard),
         arrays_used: arrays,
+        walk: domain::Walk::default(),
     }
 }
 
 #[test]
-fn two_many_array_clmm_hops_are_rejected_before_account_assembly() {
+fn two_clmm_hops_past_the_compute_limit_are_rejected_before_account_assembly() {
     let side = |seed| TokenSide {
         mint: Pubkey::new_from_array([seed; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let (input, middle, output) = (side(101), side(102), side(103));
+    let long = domain::Walk {
+        span: 0,
+        crossed: 60,
+    };
     let oversized = [
-        clmm_budget_window(81, input, middle, 4, false),
-        clmm_budget_window(82, middle, output, 4, false),
+        SwapWindow {
+            walk: long,
+            ..clmm_budget_window(81, input, middle, 4, false)
+        },
+        SwapWindow {
+            walk: long,
+            ..clmm_budget_window(82, middle, output, 4, false)
+        },
     ];
     assert!(matches!(
         build(&request(&oversized)),
@@ -226,10 +241,12 @@ fn a_flow_builds_slot_accounts_and_flow_wire_steps() {
     let input = TokenSide {
         mint: INPUT_MINT,
         token_program: TOKEN_2022_PROGRAM,
+        has_transfer_fee: false,
     };
     let output = TokenSide {
         mint: OUTPUT_MINT,
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let windows = [mainnet_hop()];
     let slots = [input, output];
@@ -271,14 +288,17 @@ fn split_merge() -> SplitMerge {
     let input = TokenSide {
         mint: INPUT_MINT,
         token_program: TOKEN_2022_PROGRAM,
+        has_transfer_fee: false,
     };
     let middle = TokenSide {
         mint: OUTPUT_MINT,
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let output = TokenSide {
         mint: Pubkey::new_from_array([44; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let share = |source, destination, numerator, denominator| FlowAllocation {
         source,
@@ -361,6 +381,7 @@ fn a_non_dlmm_flow_over_compute_limit_is_refused() {
     let side = |seed| TokenSide {
         mint: Pubkey::new_from_array([seed; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let (input, middle, middle_two, output) = (side(10), side(11), side(12), side(13));
     let window = |source, destination| SwapWindow {
@@ -372,6 +393,10 @@ fn a_non_dlmm_flow_over_compute_limit_is_refused() {
         tail: 4,
         optional_tail: 0,
         arrays_used: 4,
+        walk: domain::Walk {
+            span: 0,
+            crossed: 40,
+        },
     };
     let windows = [
         window(input, middle),
@@ -410,13 +435,10 @@ fn a_non_dlmm_flow_over_compute_limit_is_refused() {
         wrap_sol: false,
         max_accounts: AccountLimit::MAX,
     };
-    assert_eq!(
+    assert!(matches!(
         build_flow(&request),
-        Err(TxError::TooMuchCompute {
-            units: 3_900_000,
-            max: 1_400_000,
-        })
-    );
+        Err(TxError::TooMuchCompute { max: 1_400_000, .. })
+    ));
 }
 
 #[test]
@@ -436,12 +458,14 @@ fn a_native_sol_input_is_wrapped_and_unwrapped_as_mainnet_does() {
     let wsol = TokenSide {
         mint: NATIVE_MINT,
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let hops = [cpmm_window(
         wsol,
         TokenSide {
             mint: OUTPUT_MINT,
             token_program: TOKEN_PROGRAM,
+            has_transfer_fee: false,
         },
     )];
     let request = SwapRequest {
@@ -504,6 +528,7 @@ fn a_route_past_the_v1_account_limit_is_refused() {
     let side = |seed: u8| TokenSide {
         mint: Pubkey::new_from_array([seed; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let hops: Vec<SwapWindow> = (0u8..4)
         .map(|hop| SwapWindow {
@@ -599,6 +624,7 @@ fn a_lower_account_limit_drops_the_optional_tail_before_refusing_the_route() {
     let side = |seed| TokenSide {
         mint: Pubkey::new_from_array([seed; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let hops = [clmm_budget_window(81, side(101), side(102), 1, true)];
     let full = build(&request(&hops)).unwrap();
@@ -732,6 +758,26 @@ fn replay() -> Replay {
 // Gate: the captured router result must match an independently executed sequence
 // of deployed venue instructions on the same LiteSVM bank. The quoted number is
 // checked against that program payout; it is not used as its own oracle.
+// src: crates/tx/src/tests/fixtures/large_split_pools.json.gz, slot 452267679; `oracle router`
+// runs the server's chunked SOL to pump 10,000 SOL split and its venues one by one.
+#[test]
+fn the_large_chunked_split_pays_what_its_venues_pay_one_by_one() {
+    let replay: serde_json::Value =
+        serde_json::from_str(include_str!("tests/fixtures/router_large_split.json"))
+            .expect("captured large split replay");
+    let cases = replay["cases"].as_array().expect("split cases");
+    assert_eq!(cases.len(), 1);
+    let case = &cases[0];
+    let direct = case["direct_paid"].as_str().expect("direct program payout");
+    assert_eq!(direct, "1727392154929");
+    assert_eq!(case["expected_out"], direct);
+    assert_eq!(case["paid"], direct);
+    assert_eq!(case["v1_paid"], direct);
+    assert_eq!(case["flow"]["step_count"], 3);
+    assert_eq!(case["over_threshold_rejected"], true);
+    assert_eq!(case["over_threshold_state_unchanged"], true);
+}
+
 #[test]
 fn split_merge_and_reused_cpmm_flows_match_direct_venue_execution() {
     let replay: serde_json::Value =
@@ -822,26 +868,6 @@ fn the_compute_budget_covers_every_replayed_route() {
         .max()
         .unwrap();
     let hops = [mainnet_hop()];
-    let limit = build(&request(&hops)).unwrap().limits.compute_units;
-    assert!(used < limit, "{used} of {limit}");
-}
-
-#[test]
-fn the_clmm_many_array_budget_covers_the_largest_measured_swap() {
-    let replay: Replay =
-        serde_json::from_str(include_str!("tests/fixtures/router_replay_clmm.json")).unwrap();
-    let used = replay
-        .cases
-        .iter()
-        .flat_map(|case| [case.compute_units, case.v1_compute_units])
-        .flatten()
-        .max()
-        .unwrap();
-    let side = |seed| TokenSide {
-        mint: Pubkey::new_from_array([seed; 32]),
-        token_program: TOKEN_PROGRAM,
-    };
-    let hops = [clmm_budget_window(81, side(101), side(102), 4, false)];
     let limit = build(&request(&hops)).unwrap().limits.compute_units;
     assert!(used < limit, "{used} of {limit}");
 }

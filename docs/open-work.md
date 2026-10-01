@@ -12,7 +12,7 @@ The budget should come from a structure fed continuously instead, as Pallas serv
 - take every other account's data length from the market's own views, which already hold them;
 - compute the limit exactly per SIMD-0186 (data length plus 64 bytes per account, programdata of LoaderV3 programs), with headroom for the accounts the setup creates, rounded up to 32 KiB pages (SIMD-0553).
 
-The compute unit limit has the same shape: per-venue budgets from `just router-replay` today, better measured per route (simulation, or a replay-fed table per venue and hop shape).
+The compute unit limit is a per-hop model fitted to replayed swaps (`just router-compute-replay`); it covers only what the replays reached. DLMM windows of four to eight bin arrays are refused because no measured swap took more than three; a swap starting at the edge of its array reaches a fourth in 142 bins, which the budget would admit, so that is the first to measure, and a swap whose estimate alone passes 1.4 million is refused unmeasured. Simulating the route before sending would replace the estimate with what it spends.
 
 The AMM v4/CPMM matrix snapshots contain market closure accounts at one slot, but CPMM observation accounts are fetched when `oracle router-matrix` first runs and cached with their bytes in the replay fixture. Later replay runs are deterministic from that fixture. A future capture should fetch observation accounts alongside pool state at the same slot; the current cached observation bytes may come from a later slot.
 
@@ -58,7 +58,7 @@ So our program is already stricter than both, and the mint check lives where the
 
 ## CI
 
-The `replay` job runs `just replay-check` ([router.md](router.md) → Replay check): seven router fixtures rebuilt from the tree and executed on mainnet's bytecode. The large single-venue corpora (`just router-replay`, `router-orca-replay`, `router-dlmm-replay` and the other per-venue recipes) still run by hand only. The workflow runs only on pushes to `main` and on pull requests, so a pushed branch alone is not checked.
+The `replay` job runs `just replay-check` ([router.md](router.md) → Replay check): nine router fixtures rebuilt from the tree and executed on mainnet's bytecode. The large single-venue corpora (`just router-replay`, `router-orca-replay`, `router-dlmm-replay` and the other per-venue recipes) still run by hand only. The workflow runs only on pushes to `main` and on pull requests, so a pushed branch alone is not checked.
 
 The replay job needs the release `just publish-oracle-programs` uploads for the current `programs.tsv`; after `just oracle` dumps changed bytecode, the fixtures are regenerated and a human publishes the new release, or the job fails at the download step.
 

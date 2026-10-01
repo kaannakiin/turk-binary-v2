@@ -55,6 +55,17 @@ const DLMM_EXTENSION: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../tx/src/tests/fixtures/dlmm_extension_pools.json"
 );
+const LARGE_SPLIT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tx/src/tests/fixtures/large_split_pools.json.gz"
+);
+const DLMM_GROWN_ORACLE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tx/src/tests/fixtures/dlmm_grown_oracle_pools.json.gz"
+);
+// src: crates/tx/src/tests/fixtures/dlmm_grown_oracle_pools.json.gz, slot 452267679; its
+// oracle ETc6tqgL… holds 206 observations, 6,624 bytes.
+const DLMM_GROWN_ORACLE_POOL: &str = "BGm1tav58oGcsQJehL9WXBFXF7D27vZsKefj4xJKD5Y";
 // src: crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz (LiteSVM payout).
 const DLMM_SOL_USDC: &str = "1jw5fDodwGEGBVqNXsx2eqiLgNmgMDEeXWSbrTreLCM";
 // src: crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz (direct LiteSVM payout).
@@ -238,6 +249,44 @@ async fn router_dlmm_extension_plans() {
     let file = std::fs::File::create(&out).expect("creating DLMM extension plans");
     serde_json::to_writer(file, &json!({ "corpus": DLMM_EXTENSION, "plans": plans }))
         .expect("writing DLMM extension plans");
+}
+
+#[tokio::test]
+#[ignore = "writes plans through a DLMM pool with a grown oracle for LiteSVM replay"]
+async fn router_dlmm_grown_oracle_plans() {
+    let out = std::env::var("ROUTER_DLMM_GROWN_ORACLE_PLANS").expect("names grown oracle plans");
+    let captured = universe::load_selected_from(DLMM_GROWN_ORACLE, &[DLMM_GROWN_ORACLE_POOL]);
+    assert!(captured.skipped.is_empty(), "{:?}", captured.skipped);
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let mut plans = Vec::new();
+    for (name, from, to, amount) in [
+        ("dlmm_grown_oracle_input", WSOL, USDC, "1000000000"),
+        ("dlmm_grown_oracle_output", USDC, WSOL, "100000000"),
+    ] {
+        let request = json!({
+            "fromTokenAddress": from,
+            "toTokenAddress": to,
+            "amount": amount,
+            "maxHops": 1,
+            "slippagePercent": "0",
+            "dexIds": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        });
+        let (status, _, quote) = call(fixture.router(), post(&request)).await;
+        assert_eq!(status, StatusCode::OK, "{name}: {quote}");
+        let plan = scenario_plan(&fixture, name, &quote, false, None).await;
+        assert_hop_minimums(&plan, &quote, name);
+        plans.push(plan);
+    }
+    let file = std::fs::File::create(&out).expect("creating grown oracle plans");
+    serde_json::to_writer(
+        file,
+        &json!({ "corpus": DLMM_GROWN_ORACLE, "plans": plans }),
+    )
+    .expect("writing grown oracle plans");
 }
 
 #[tokio::test]
@@ -1336,6 +1385,258 @@ async fn router_flow_plans() {
     .expect("write plans");
 }
 
+/// Split orders of a universe capture as `/swap-instructions` builds them;
+/// `just router-split-replay` runs them through the router in `LiteSVM`.
+fn splits(quote: &Value) -> bool {
+    let ops = quote["operations"].as_array().expect("operations");
+    ops.iter().any(|op| {
+        ops.iter()
+            .filter(|other| other["sourceSlot"] == op["sourceSlot"])
+            .count()
+            > 1
+    })
+}
+
+/// SOL to pump at 10,000 SOL over the three pools the server split it across
+/// on the slot-452267679 capture, for `just replay-check`.
+#[tokio::test]
+#[ignore = "writes the large chunked split plan for LiteSVM replay"]
+async fn router_large_split_plans() {
+    let output = std::env::var("ROUTER_LARGE_SPLIT_PLANS").expect("output path");
+    let captured = universe::load_from(LARGE_SPLIT);
+    assert!(captured.skipped.is_empty(), "{:?}", captured.skipped);
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": WSOL,
+        "toTokenAddress": universe::PUMP,
+        "amount": "10000000000000",
+        "maxHops": 2,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{quote}");
+    assert!(
+        splits(&quote),
+        "spends one slot through more than one pool: {quote}"
+    );
+    let plan = scenario_plan(&fixture, "large_split_sol_pump_10000", &quote, false, None).await;
+    let file = std::fs::File::create(output).expect("plans file");
+    serde_json::to_writer(file, &json!({ "corpus": LARGE_SPLIT, "plans": [plan] }))
+        .expect("write plans");
+}
+
+#[tokio::test]
+#[ignore = "writes split plans of a universe capture for `just router-split-replay`"]
+async fn router_split_plans() {
+    let output = std::env::var("ROUTER_SPLIT_PLANS").expect("output path");
+    let fixture = Fixture::from_universe(universe::load(), 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let mut plans = Vec::new();
+    for (name, to, sol) in [
+        ("split_sol_usdc_10000", USDC, 10_000_u64),
+        ("split_sol_pump_10", universe::PUMP, 10),
+        ("split_sol_pump_10000", universe::PUMP, 10_000),
+    ] {
+        let request = json!({
+            "fromTokenAddress": WSOL,
+            "toTokenAddress": to,
+            "amount": (sol * 1_000_000_000).to_string(),
+            "maxHops": 2,
+        });
+        let (status, _, quote) = call(fixture.router(), post(&request)).await;
+        assert_eq!(status, StatusCode::OK, "{name}: {quote}");
+        assert!(
+            splits(&quote),
+            "{name} spends one slot through more than one pool: {quote}"
+        );
+        plans.push(scenario_plan(&fixture, name, &quote, false, None).await);
+    }
+    let file = std::fs::File::create(output).expect("plans file");
+    serde_json::to_writer(file, &json!({ "plans": plans })).expect("write plans");
+}
+
+/// One-hop swaps of a universe capture from tiny to the largest each pool
+/// quotes, on the first pools of each DEX and on those whose walks reach the
+/// most arrays, with the steps and arrays their quote walked; `just
+/// router-compute-replay` records what each spent in the router.
+#[tokio::test]
+#[ignore = "writes one-hop compute plans of a universe capture for `just router-compute-replay`"]
+async fn router_compute_plans() {
+    let output = std::env::var("ROUTER_COMPUTE_PLANS").expect("output path");
+    let pricing = universe::load();
+    let fixture = Fixture::from_universe(universe::load(), 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let topology = Arc::clone(&pricing.topology);
+    let selected = compute_pools(&pricing);
+    let (mut plans, mut unquoted) = (Vec::new(), Vec::new());
+    for node in topology
+        .pools()
+        .iter()
+        .filter(|node| selected.contains(&node.pubkey))
+    {
+        let pool = topology.pool_id(&node.pubkey).expect("pool");
+        for (from, to) in [(node.mint_a, node.mint_b), (node.mint_b, node.mint_a)] {
+            let edge = topology.edge(pool, from).expect("edge");
+            let mut session = pricing.reader.session().expect("session");
+            let amounts = ladder(&mut session, edge);
+            if amounts.is_empty() {
+                let refused = session.quote(edge, 1_000, 8).err();
+                unquoted.push(json!({
+                    "pool": node.pubkey.to_string(),
+                    "inputMint": topology.mint(from).to_string(),
+                    "error": format!("{refused:?}"),
+                }));
+            }
+            for amount in amounts {
+                let quote = session.quote(edge, amount, 8).expect("quoted above");
+                let request = json!({
+                    "fromTokenAddress": topology.mint(from).to_string(),
+                    "toTokenAddress": topology.mint(to).to_string(),
+                    "amount": amount.to_string(),
+                    "maxHops": 1,
+                    "allowedPools": [node.pubkey.to_string()],
+                });
+                let (status, _, quoted) = call(fixture.router(), post(&request)).await;
+                if status == StatusCode::OK {
+                    let name = format!("compute_{}_{}_{amount}", node.dex.as_str(), node.pubkey);
+                    let mut plan = scenario_plan(&fixture, &name, &quoted, false, None).await;
+                    plan["dex"] = json!(node.dex.as_str());
+                    plan["span"] = json!(quote.out.walk.span);
+                    plan["crossed"] = json!(quote.out.walk.crossed);
+                    plan["arraysUsed"] = json!(quote.out.arrays_used);
+                    let window = session
+                        .swap_window(edge, quote.out.arrays_used, 8, true)
+                        .expect("the quoted pool's window");
+                    plan["tail"] = json!(window.tail);
+                    let sides = [window.source, window.destination];
+                    plan["token2022"] = json!(
+                        sides
+                            .iter()
+                            .filter(|side| side.token_program == domain::chain::TOKEN_2022_PROGRAM)
+                            .count()
+                    );
+                    plan["transferFee"] =
+                        json!(sides.iter().filter(|side| side.has_transfer_fee).count());
+                    plans.push(plan);
+                }
+            }
+        }
+    }
+    let file = std::fs::File::create(output).expect("plans file");
+    let root = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .expect("workspace root");
+    let corpus = std::env::var("ROUTE_UNIVERSE").expect("names the capture");
+    let corpus = std::fs::canonicalize(corpus).expect("the capture exists");
+    let corpus = corpus
+        .strip_prefix(&root)
+        .expect("a capture inside the workspace")
+        .display()
+        .to_string();
+    serde_json::to_writer(
+        file,
+        &json!({ "corpus": corpus, "plans": plans, "unquoted": unquoted }),
+    )
+    .expect("write plans");
+}
+
+fn compute_pools(pricing: &universe::Universe) -> std::collections::HashSet<domain::Pubkey> {
+    const POOLS_PER_DEX: usize = 20;
+    const WIDE_POOLS_PER_DEX: usize = 8;
+    const WIDE: u8 = 4;
+    let topology = &pricing.topology;
+    let reach = |pool, from| {
+        let edge = topology.edge(pool, from).expect("edge");
+        let mut session = pricing.reader.session().expect("session");
+        ladder(&mut session, edge)
+            .into_iter()
+            .map(|amount| {
+                session
+                    .quote(edge, amount, 8)
+                    .expect("laddered")
+                    .out
+                    .arrays_used
+            })
+            .max()
+            .unwrap_or(0)
+    };
+    let mut first = std::collections::HashMap::<domain::DexKind, usize>::new();
+    let mut wide = std::collections::HashMap::<domain::DexKind, Vec<_>>::new();
+    let mut selected = std::collections::HashSet::new();
+    for node in topology
+        .pools()
+        .iter()
+        .filter(|node| tx::supports(node.dex))
+    {
+        let taken = first.entry(node.dex).or_default();
+        if *taken < POOLS_PER_DEX {
+            *taken += 1;
+            selected.insert(node.pubkey);
+            continue;
+        }
+        let pool = topology.pool_id(&node.pubkey).expect("pool");
+        let widest = reach(pool, node.mint_a).max(reach(pool, node.mint_b));
+        if widest >= WIDE {
+            wide.entry(node.dex)
+                .or_default()
+                .push((widest, node.pubkey));
+        }
+    }
+    for mut pools in wide.into_values() {
+        pools.sort_by_key(|&(widest, _)| std::cmp::Reverse(widest));
+        selected.extend(
+            pools
+                .into_iter()
+                .take(WIDE_POOLS_PER_DEX)
+                .map(|(_, pool)| pool),
+        );
+    }
+    selected
+}
+
+// A small amount may quote nothing once integer rounding takes the output to zero, so the
+// ladder starts at the first amount that quotes.
+fn ladder(session: &mut route::SearchSession, edge: graph::EdgeId) -> Vec<u64> {
+    let mut amounts = Vec::new();
+    let mut amount: u64 = 1_000;
+    while session.quote(edge, amount, 8).is_err() {
+        let Some(next) = amount.checked_mul(4) else {
+            return amounts;
+        };
+        amount = next;
+    }
+    while session.quote(edge, amount, 8).is_ok() {
+        amounts.push(amount);
+        let Some(next) = amount.checked_mul(4) else {
+            break;
+        };
+        amount = next;
+    }
+    if let Some(&quoted) = amounts.last() {
+        let (mut low, mut high) = (quoted, amount);
+        while high - low > low / 100 + 1 {
+            let middle = low + (high - low) / 2;
+            if session.quote(edge, middle, 8).is_ok() {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        if low != quoted {
+            amounts.push(low);
+        }
+    }
+    amounts
+}
+
 async fn sequential_cpmm_plan(fixture: &Fixture, direct: &Value) -> Value {
     let captured = universe::load_from(SCENARIO_POOLS);
     let mut session = captured.reader.session().expect("captured quote session");
@@ -1366,6 +1667,7 @@ async fn sequential_cpmm_plan(fixture: &Fixture, direct: &Value) -> Value {
             amount_in: 0,
             amount_out: 0,
             arrays_used: 0,
+            walk: domain::Walk::default(),
             cross_stream: false,
         },
     };
@@ -1746,7 +2048,6 @@ fn orca_cross_matrix() -> [CrossRoute; 6] {
 
 // The route's summed per-hop compute budget exceeds the v1 limit although its replay
 // used far less: the builder refuses it by policy, not because it cannot run.
-const ORCA_CROSS_OVER_BUDGET: [&str; 1] = ["clmm_to_orca"];
 
 async fn orca_cross_quote(snapshot: &str, route: CrossRoute) -> (Fixture, Value) {
     let (name, pools, dexes, from, to, amount) = route;
@@ -1827,9 +2128,7 @@ async fn router_orca_cross_plans() {
     let out = std::env::var("ROUTER_ORCA_CROSS_PLANS").expect("names plans file");
     let mut plans = Vec::new();
     for route in orca_cross_matrix() {
-        if !ORCA_CROSS_OVER_BUDGET.contains(&route.0) {
-            plans.push(orca_cross_plan(&snapshot, route).await);
-        }
+        plans.push(orca_cross_plan(&snapshot, route).await);
     }
     if std::env::var_os("ROUTER_ORCA_THREE_HOP_SNAPSHOT").is_some() {
         orca_three_hop_cycle_rejected(&snapshot).await;
@@ -1854,38 +2153,6 @@ async fn recorded_orca_cross_dex_routes_build_and_quote_what_the_programs_paid_w
     .expect("replay fixture");
     for route in orca_cross_matrix() {
         let name = route.0;
-        if ORCA_CROSS_OVER_BUDGET.contains(&name) {
-            let (_, pools, _, from, to, amount) = route;
-            let fixture =
-                Fixture::from_universe(universe::load_selected_from(snapshot, &pools), 1, 4);
-            let request = json!({
-                "fromTokenAddress": from,
-                "toTokenAddress": to,
-                "amount": amount,
-                "maxHops": 2,
-            });
-            let (status, _, refused) = call(fixture.router(), post(&request)).await;
-            assert_eq!(
-                (status, &refused["error"]["code"]),
-                (StatusCode::UNPROCESSABLE_ENTITY, &json!("NO_ROUTE")),
-                "{name}"
-            );
-            let (fixture, quote) =
-                orca_cross_quote(snapshot, (name, pools, route.2, from, to, "1000")).await;
-            let body = json!({
-                "userWalletAddress": ORACLE_PAYER,
-                "wrapAndUnwrapSol": false,
-                "quoteResponse": spending(quote, amount),
-            });
-            let (status, _, refused) =
-                call(fixture.router(), post_to("/swap-instructions", &body)).await;
-            assert_eq!(
-                (status, &refused["error"]["code"]),
-                (StatusCode::UNPROCESSABLE_ENTITY, &json!("TOO_MUCH_COMPUTE")),
-                "{name}"
-            );
-            continue;
-        }
         let paid = replay["swaps"]
             .as_array()
             .expect("swaps")

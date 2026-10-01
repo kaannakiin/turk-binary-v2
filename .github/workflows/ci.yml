@@ -97,6 +97,7 @@ jobs:
           tag="oracle-programs-$(sha256sum oracle/programs/programs.tsv | cut -c1-12)"
           gh release download "$tag" --pattern '*.so' --dir oracle/programs
       - run: python3 -m unittest discover -s scripts -p 'test_replay_check.py'
+      - run: python3 -m unittest discover -s scripts -p 'test_surfpool_replay.py'
       - run: just replay-check
       - if: always()
         run: cat target/replay-check/run-*/summary.md >> "$GITHUB_STEP_SUMMARY" || true

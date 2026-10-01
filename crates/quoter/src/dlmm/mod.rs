@@ -8,8 +8,7 @@ use commons::{
     pod_read_unaligned_skip_disc, quote_exact_in,
 };
 use dex::{Role, Side};
-use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
-use domain::{DexKind, Pubkey, SwapWindow, TokenSide, WindowAccount};
+use domain::{DexKind, Pubkey, SwapWindow, TokenSide, Walk, WindowAccount};
 use solana_sdk_2::clock::Clock;
 use solana_sdk_2::pubkey::Pubkey as SdkPubkey;
 
@@ -286,6 +285,17 @@ impl Dlmm {
             fee_in: if fee_on_input { quote.fee } else { 0 },
             fee_out: if fee_on_input { 0 } else { quote.fee },
             arrays_used: u8::try_from(arrays_used).unwrap_or(u8::MAX),
+            walk: {
+                let bins = bins_walked(
+                    lb_pair.active_id,
+                    quote.terminal_active_id,
+                    &window.touched.borrow(),
+                );
+                Walk {
+                    span: bins,
+                    crossed: bins,
+                }
+            },
         })
     }
 
@@ -303,21 +313,8 @@ impl Dlmm {
             return Err(WindowError::TransferHook);
         }
         let key = |value: SdkPubkey| Pubkey::new_from_array(value.to_bytes());
-        let token_program = |mint: &Mint| {
-            if mint.token_2022 {
-                TOKEN_2022_PROGRAM
-            } else {
-                TOKEN_PROGRAM
-            }
-        };
-        let side_x = TokenSide {
-            mint: key(pair.token_x_mint),
-            token_program: token_program(mint_x),
-        };
-        let side_y = TokenSide {
-            mint: key(pair.token_y_mint),
-            token_program: token_program(mint_y),
-        };
+        let side_x = mint_x.token_side(key(pair.token_x_mint));
+        let side_y = mint_y.token_side(key(pair.token_y_mint));
         let [vault_x, vault_y] = [Side::A, Side::B].map(|side| {
             self.vaults[side_index(side)].ok_or(WindowError::Incomplete(Role::Vault(side)))
         });
@@ -425,8 +422,25 @@ impl Dlmm {
             tail: arrays_used,
             optional_tail: 0,
             arrays_used,
+            walk: Walk::default(),
         })
     }
+}
+
+// A swap leaving an array for the next one that holds liquidity moves its active bin to that
+// array's edge, so only bins inside the arrays it drew are stepped through.
+// src: kaannakiin/dlmm-sdk@28e1f83f053aa64a80e33b5a0c71d5f509e2384d commons/src/quote.rs
+// (shift_active_bin_if_empty_gap)
+fn bins_walked(from: i32, to: i32, arrays: &[i32]) -> u32 {
+    let (low, high) = (from.min(to), from.max(to));
+    arrays
+        .iter()
+        .filter_map(|&index| {
+            let (lower, upper) = BinArray::get_bin_array_lower_upper_bin_id(index).ok()?;
+            let (start, end) = (low.max(lower), high.min(upper));
+            (start <= end).then(|| end.abs_diff(start) + 1)
+        })
+        .sum()
 }
 
 #[cfg(test)]
@@ -435,6 +449,8 @@ mod tests {
     use bytemuck::Zeroable as _;
 
     use super::*;
+    use domain::chain::TOKEN_PROGRAM;
+
     use crate::token22::Restrictions;
 
     // src: kaannakiin/dlmm-sdk@b4322cc2857a5f5955adb0a119164bbcda48a6d1

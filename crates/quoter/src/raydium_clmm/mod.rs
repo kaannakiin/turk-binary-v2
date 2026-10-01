@@ -6,7 +6,7 @@ use anchor_lang_032::prelude::{AccountInfo, Pubkey as AnchorPubkey};
 use anchor_lang_032::{AccountDeserialize, Discriminator};
 use dex::{Role, Side};
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
-use domain::{DexKind, Pubkey, SwapWindow, TokenSide, WindowAccount};
+use domain::{DexKind, Pubkey, SwapWindow, TokenSide, Walk, WindowAccount};
 use raydium_clmm::error::ErrorCode;
 use raydium_clmm::instructions::{SwapInternalResult, TickArrayFeed, swap_internal_with_key};
 use raydium_clmm::libraries::tick_math;
@@ -16,7 +16,7 @@ use raydium_clmm::states::{
 
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError, WindowError};
-use crate::state::{QuoteInput, QuoteOut};
+use crate::state::{QuoteInput, QuoteOut, fee_loop_steps, tick_steps};
 use crate::token::any_token_account;
 use crate::token22::{Mint, TransferFee, check_transfer, decode_mint};
 
@@ -165,6 +165,38 @@ impl Clmm {
             _ => {}
         }
         Ok(())
+    }
+
+    // On the way up, a limit order's tick leaves the pool's tick one below it
+    // (swap.rs `state.tick`) and the price at it, so the walk ends at the price.
+    fn walked(&self, pool: &PoolState, result: &SwapInternalResult, zero_for_one: bool) -> Walk {
+        let (from, spacing) = (pool.tick_current, pool.tick_spacing);
+        let at_price =
+            tick_math::get_tick_at_sqrt_price(result.sqrt_price_x64).unwrap_or(result.tick);
+        let to = if zero_for_one {
+            result.tick.min(at_price)
+        } else {
+            result.tick.max(at_price)
+        };
+        let (low, high) = (from.min(to), from.max(to));
+        let width = i32::from(spacing) * raydium_clmm::states::TICK_ARRAY_SIZE;
+        let crossed = self
+            .arrays
+            .range(low.saturating_sub(width)..=high)
+            .flat_map(|(_, array)| array.ticks.iter())
+            .filter(|tick| {
+                let index = tick.tick;
+                tick.is_initialized() && (low..=high).contains(&index)
+            })
+            .count();
+        let span = pool.get_dynamic_fee_info().map_or(0, |info| {
+            let max = info.max_volatility_accumulator;
+            tick_steps(from, to, spacing).min(fee_loop_steps(max))
+        });
+        Walk {
+            span,
+            crossed: u32::try_from(crossed).unwrap_or(u32::MAX),
+        }
     }
 
     /// The arrays the swap walks, in the program's own order, as far as they
@@ -342,6 +374,7 @@ impl Clmm {
             fee_in: if fee_on_input { venue_fee } else { 0 },
             fee_out: if fee_on_input { 0 } else { venue_fee },
             arrays_used,
+            walk: self.walked(pool, &result, zero_for_one),
         })
     }
 
@@ -437,13 +470,20 @@ impl Clmm {
                 TOKEN_PROGRAM
             }
         };
+        let has_transfer_fee = |state: &Option<Mint>| {
+            state
+                .as_ref()
+                .is_some_and(|mint| mint.transfer_fee.is_some())
+        };
         let source = TokenSide {
             mint: key(source_mint),
             token_program: token_program(source_state),
+            has_transfer_fee: has_transfer_fee(source_state),
         };
         let destination = TokenSide {
             mint: key(destination_mint),
             token_program: token_program(destination_state),
+            has_transfer_fee: has_transfer_fee(destination_state),
         };
         let accounts = vec![
             WindowAccount::User,
@@ -519,6 +559,7 @@ impl Clmm {
             tail: count | if needs_extension { 0x80 } else { 0 },
             optional_tail,
             arrays_used,
+            walk: Walk::default(),
         })
     }
 }

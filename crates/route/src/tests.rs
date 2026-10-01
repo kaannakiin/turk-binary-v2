@@ -1143,6 +1143,68 @@ fn pruning_that_drops_the_only_way_on_says_so_and_widening_finds_it() {
     assert!(widened.quotes > pruned.quotes);
 }
 
+// Gate: refinement must never take more share from a candidate than it holds.
+// A move it kept left the source short, and the next move from the same source
+// underflowed its weight (panicked in debug, wrapped in release). The expected
+// payout is the deepest pool priced by a fresh `VenueState` apart from any session.
+#[test]
+fn refinement_moves_the_whole_share_to_the_best_pool_without_overdrawing_a_candidate() {
+    let [x, y] = [(); 2].map(|()| Pubkey::new_unique());
+    let states = [1, 2, 4].map(|depth| {
+        let mut state = recorded();
+        scale_vault(&mut state, BASE_VAULT, depth, 1);
+        scale_vault(&mut state, QUOTE_VAULT, depth, 1);
+        state
+    });
+    let amount_in = vault_amount(&states[0], QUOTE_VAULT) / 2;
+    let rig = universe(&states.each_ref().map(|state| placed(state, y, x)));
+    let from = rig.topology.mint_id(&x).expect("placed mint");
+    let to = rig.topology.mint_id(&y).expect("placed mint");
+    let candidates: Vec<crate::Path> = states
+        .iter()
+        .map(|state| {
+            let pool = rig.topology.pool_id(&state.pool).expect("placed pool");
+            crate::Path {
+                legs: vec![crate::Leg {
+                    edge: rig.topology.edge(pool, from).expect("edge"),
+                    pool: state.pool,
+                    amount_in: 1,
+                    amount_out: 1,
+                    arrays_used: 0,
+                    walk: domain::Walk::default(),
+                    cross_stream: false,
+                }],
+            }
+        })
+        .collect();
+    let query = Query {
+        amount_in,
+        ..query(from, Goal::To(to), 1, 100_000)
+    };
+    let options = crate::FlowOptions::default();
+    let mut session = rig.reader.session().unwrap();
+    let mut weights = vec![crate::flow::SCALE, 0, 0];
+    let mut result = crate::FlowSearch::default();
+    result.best =
+        session.allocated_flow(&query, &candidates, &weights, options, &mut result.clone());
+
+    session.refine_allocations(
+        &query,
+        &candidates,
+        &mut weights,
+        &[crate::flow::SCALE],
+        options,
+        &Everything,
+        &mut result,
+    );
+
+    assert_eq!(weights, [0, 0, crate::flow::SCALE]);
+    assert_eq!(
+        result.best.map(|flow| flow.amount_out),
+        fresh_quote(&states[2], &FakeFeed, amount_in, false)
+    );
+}
+
 // Gate: the chunked split's greedy allocation must come close to the best
 // allocation over parallel pools. The expected value is a brute force over a
 // grid of allocations, each pool priced by a fresh `VenueState` apart from

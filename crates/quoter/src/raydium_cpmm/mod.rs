@@ -298,6 +298,7 @@ impl Cpmm {
                 creator_fee
             },
             arrays_used: 0,
+            walk: domain::Walk::default(),
         };
         Ok((
             quote,
@@ -318,6 +319,7 @@ impl Cpmm {
         let (Some(address), Some(pool)) = (self.address, self.pool.as_deref()) else {
             return Err(WindowError::Incomplete(Role::Pool));
         };
+        let mut has_transfer_fee = [false; 2];
         for side in [Side::A, Side::B] {
             let mint = self.mints[side_index(side)]
                 .as_ref()
@@ -325,9 +327,20 @@ impl Cpmm {
             if mint.has_active_hook() {
                 return Err(WindowError::TransferHook);
             }
+            has_transfer_fee[side_index(side)] = mint.transfer_fee.is_some();
         }
-        let token_0 = (pool.token_0_vault, pool.token_0_mint, pool.token_0_program);
-        let token_1 = (pool.token_1_vault, pool.token_1_mint, pool.token_1_program);
+        let token_0 = (
+            pool.token_0_vault,
+            pool.token_0_mint,
+            pool.token_0_program,
+            has_transfer_fee[0],
+        );
+        let token_1 = (
+            pool.token_1_vault,
+            pool.token_1_mint,
+            pool.token_1_program,
+            has_transfer_fee[1],
+        );
         let (source, destination) = if a_to_b {
             (token_0, token_1)
         } else {
@@ -337,9 +350,10 @@ impl Cpmm {
             key: address,
             writable,
         };
-        let side = |(_, mint, program)| TokenSide {
+        let side = |(_, mint, program, has_transfer_fee)| TokenSide {
             mint: key(&mint),
             token_program: key(&program),
+            has_transfer_fee,
         };
         Ok(SwapWindow {
             kind: DexKind::RaydiumCpmm,
@@ -347,6 +361,7 @@ impl Cpmm {
             tail: 0,
             optional_tail: 0,
             arrays_used: 0,
+            walk: domain::Walk::default(),
             accounts: vec![
                 WindowAccount::User,
                 fixed(AUTHORITY, false),

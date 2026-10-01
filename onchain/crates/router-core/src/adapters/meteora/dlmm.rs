@@ -36,7 +36,13 @@ const ORACLE_DISC: [u8; 8] = [139, 194, 131, 179, 140, 179, 229, 244];
 const POOL_LEN: usize = 904;
 const ARRAY_LEN: usize = 10_136;
 const EXTENSION_LEN: usize = 1_576;
-const ORACLE_LEN: usize = 3_232;
+// src: MeteoraAg/dlmm-sdk@576919e3e4368e542c402f000b4264724f7f23ec idls/dlmm.json (Oracle
+// idx, active_size, length: u64; increase_oracle_length) and ts-client/src/dlmm/helpers/oracle/
+// wrapper.ts (ORACLE_METADATA_SIZE 8 + 24, OBSERVATION_SIZE 32); mainnet oracles at slot
+// 452267679 hold 100 or 206 observations, each 32 + 32 * length bytes.
+const ORACLE_HEADER_LEN: usize = 32;
+const ORACLE_LENGTH: core::ops::Range<usize> = 24..32;
+const OBSERVATION_LEN: usize = 32;
 // src: MeteoraAg/dlmm-sdk@576919e3e4368e542c402f000b4264724f7f23ec idls/dlmm.json (memo_program address).
 const MEMO_ID: [u8; 32] = [
     5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124, 124, 53, 181, 221, 188, 146,
@@ -82,6 +88,14 @@ fn validate_arrays(input: &HopInput, x_to_y: bool) -> Result<(), RouterError> {
     Ok(())
 }
 
+fn oracle_len(oracle: &[u8]) -> Option<usize> {
+    let length = u64::from_le_bytes(oracle.get(ORACLE_LENGTH)?.try_into().ok()?);
+    usize::try_from(length)
+        .ok()?
+        .checked_mul(OBSERVATION_LEN)?
+        .checked_add(ORACLE_HEADER_LEN)
+}
+
 fn validate(hop: Hop, input: &HopInput) -> Result<(), RouterError> {
     let w = input.window;
     if w.len() != window_len(hop)?
@@ -125,8 +139,8 @@ fn validate(hop: Hop, input: &HopInput) -> Result<(), RouterError> {
         return Err(RouterError::BadWindow);
     }
     if *w[ORACLE].owner != PROGRAM_ID
-        || w[ORACLE].data.len() != ORACLE_LEN
         || w[ORACLE].data.get(..8) != Some(ORACLE_DISC.as_slice())
+        || oracle_len(w[ORACLE].data) != Some(w[ORACLE].data.len())
     {
         return Err(RouterError::BadWindow);
     }

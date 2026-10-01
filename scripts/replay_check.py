@@ -39,7 +39,8 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "crates/tx/src/tests/fixtures"
 SCENARIO_POOLS = FIXTURES / "scenario_pools.json.gz"
 
-UNCOMPARED = {"compute_units", "v1_compute_units", "router_sha256"}
+UNCOMPARED = {"compute_units", "router_compute_units", "v1_compute_units", "v1_router_compute_units",
+              "router_sha256"}
 ERROR_KIND = re.compile(r"^[A-Za-z]+\(\d+, [A-Za-z]+(?:\(\d+\))?\)")
 SHOWN_DIFFERENCES = 20
 
@@ -72,6 +73,11 @@ CASES = [
          extra_env={"ROUTER_ORCA_CROSS_SNAPSHOT": str(FIXTURES / "orca_cross_dex.json")}),
     case("router_dlmm_two_array.json", "router_dlmm_two_array_plans", "ROUTER_DLMM_TWO_ARRAY_PLANS",
          "router-matrix", ROOT / "crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz"),
+    case("router_large_split.json", "router_large_split_plans", "ROUTER_LARGE_SPLIT_PLANS",
+         "router", FIXTURES / "large_split_pools.json.gz"),
+    case("router_dlmm_grown_oracle.json", "router_dlmm_grown_oracle_plans",
+         "ROUTER_DLMM_GROWN_ORACLE_PLANS", "router-matrix",
+         FIXTURES / "dlmm_grown_oracle_pools.json.gz"),
 ]
 
 
@@ -155,8 +161,9 @@ def compare(recorded, now, path, key, differences, units):
     if isinstance(recorded, dict) and isinstance(now, dict):
         for name in sorted(recorded.keys() | now.keys()):
             if name not in now or name not in recorded:
-                differences.append({"path": f"{path}.{name}", "recorded": recorded.get(name),
-                                    "now": now.get(name)})
+                found = units if name in UNCOMPARED else differences
+                found.append({"path": f"{path}.{name}", "recorded": recorded.get(name),
+                              "now": now.get(name)})
             else:
                 compare(recorded[name], now[name], f"{path}.{name}", name, differences, units)
     elif isinstance(recorded, list) and isinstance(now, list):

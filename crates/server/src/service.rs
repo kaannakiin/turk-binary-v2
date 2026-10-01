@@ -188,8 +188,11 @@ fn admissible_flow(
     let windows: Vec<_> = flow
         .operations
         .iter()
-        .map(|op| window(session, op.leg.edge, op.leg.arrays_used, filter.max_arrays).ok())
+        .map(|op| window(session, &op.leg, filter.max_arrays).ok())
         .collect::<Option<_>>()?;
+    // The build refuses a plan past the compute budget before anything else
+    // it checks; the windows alone decide that, without building instructions.
+    tx::compute_units(&windows).ok()?;
     let mut slots = vec![None; flow.slots.len()];
     for (op, window) in flow.operations.iter().zip(&windows) {
         for (index, side) in [
@@ -466,7 +469,7 @@ impl<F: PoolFeed> QuoteService<F> {
                 single_pool_per_hop: request.single_pool_per_hop,
                 max_operations: self.settings.max_operations,
                 deadline: self.deadline,
-                chunks: None,
+                chunks: Some(route::SPLIT_CHUNKS),
             },
         );
         let search = SearchQuality {
@@ -483,15 +486,7 @@ impl<F: PoolFeed> QuoteService<F> {
         let windows = if windows {
             path.operations
                 .iter()
-                .map(|op| {
-                    let leg = &op.leg;
-                    window(
-                        &mut now,
-                        leg.edge,
-                        leg.arrays_used,
-                        self.settings.max_arrays,
-                    )
-                })
+                .map(|op| window(&mut now, &op.leg, self.settings.max_arrays))
                 .collect::<Result<_, _>>()?
         } else {
             Vec::new()
@@ -571,6 +566,7 @@ impl<F: PoolFeed> QuoteService<F> {
                         amount_in: leg.amount_in,
                         amount_out: leg.amount_out,
                         arrays_used: 0,
+                        walk: domain::Walk::default(),
                         cross_stream: false,
                     },
                 })
@@ -597,14 +593,7 @@ impl<F: PoolFeed> QuoteService<F> {
         let windows = priced
             .operations
             .iter()
-            .map(|op| {
-                window(
-                    &mut session,
-                    op.leg.edge,
-                    op.leg.arrays_used,
-                    self.settings.max_arrays,
-                )
-            })
+            .map(|op| window(&mut session, &op.leg, self.settings.max_arrays))
             .collect::<Result<_, _>>()?;
         match session.verify(priced.operations.iter().map(|op| op.leg.edge.pool())) {
             Verdict::Current(_) => {}
@@ -786,16 +775,17 @@ fn validate_flow_amounts(
 
 fn window(
     session: &mut SearchSession,
-    edge: graph::EdgeId,
-    arrays_used: u8,
+    leg: &route::Leg,
     max_arrays: u8,
 ) -> Result<SwapWindow, ServiceError> {
-    session
-        .swap_window(edge, arrays_used, max_arrays, true)
+    let mut window = session
+        .swap_window(leg.edge, leg.arrays_used, max_arrays, true)
         .map_err(|reason| ServiceError::NoWindow {
-            pool: session.topology().pool(edge.pool()).pubkey,
+            pool: session.topology().pool(leg.edge.pool()).pubkey,
             reason,
-        })
+        })?;
+    window.walk = leg.walk;
+    Ok(window)
 }
 
 fn quoted_edge(topology: &Topology, leg: &RoutedLeg) -> Result<graph::EdgeId, ServiceError> {

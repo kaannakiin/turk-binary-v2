@@ -17,7 +17,7 @@ use crate::{
     SearchSession,
 };
 
-const POLISH: [u64; 2] = [100, 10];
+const POLISH: [u64; 3] = [100, 10, 1];
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Carried {
@@ -28,6 +28,7 @@ pub(crate) struct Carried {
     pub(crate) amount_in: u64,
     pub(crate) amount_out: u64,
     arrays_used: u8,
+    walk: domain::Walk,
     cross_stream: bool,
 }
 
@@ -92,6 +93,7 @@ fn merge(session: &SearchSession, used: &[Carried], path: &Path) -> Option<Vec<C
             old.amount_in = old.amount_in.checked_add(leg.amount_in)?;
             old.amount_out = old.amount_out.checked_add(leg.amount_out)?;
             old.arrays_used = leg.arrays_used;
+            old.walk = leg.walk;
             old.cross_stream = leg.cross_stream;
         } else {
             let (from, to) = session.topology().edge_ends(leg.edge);
@@ -103,6 +105,7 @@ fn merge(session: &SearchSession, used: &[Carried], path: &Path) -> Option<Vec<C
                 amount_in: leg.amount_in,
                 amount_out: leg.amount_out,
                 arrays_used: leg.arrays_used,
+                walk: leg.walk,
                 cross_stream: leg.cross_stream,
             });
         }
@@ -182,6 +185,7 @@ fn merged_flow(edges: &[Carried], shape: &Shape) -> Option<Flow> {
                     amount_in: edge.amount_in,
                     amount_out: edge.amount_out,
                     arrays_used: edge.arrays_used,
+                    walk: edge.walk,
                     cross_stream: edge.cross_stream,
                 },
             });
@@ -392,6 +396,7 @@ mod tests {
             amount_in,
             amount_out,
             arrays_used: 0,
+            walk: domain::Walk::default(),
             cross_stream: false,
         }
     }
@@ -537,6 +542,7 @@ mod tests {
                     amount_in,
                     amount_out,
                     arrays_used: 0,
+                    walk: domain::Walk::default(),
                     cross_stream: false,
                 })
                 .collect(),

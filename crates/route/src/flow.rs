@@ -80,6 +80,11 @@ impl Flow {
     }
 }
 
+// On the universe capture under the server's admission, eight chunks matched or beat
+// discovery at fixed sizes from 1 to 10,000 SOL; sixteen gained nothing and took up to
+// three times as long (docs/exactin-performance.md).
+pub const SPLIT_CHUNKS: NonZeroU8 = NonZeroU8::new(8).expect("eight is not zero");
+
 #[derive(Debug, Clone, Copy)]
 pub struct FlowOptions {
     pub single_route_only: bool,
@@ -383,7 +388,11 @@ impl SearchSession {
                         {
                             break 'pairs;
                         }
-                        weights[source] -= quantum;
+                        // A move kept for an earlier destination can leave the source short.
+                        let Some(remaining) = weights[source].checked_sub(quantum) else {
+                            continue 'pairs;
+                        };
+                        weights[source] = remaining;
                         weights[destination] += quantum;
                         let candidate =
                             self.allocated_flow(query, candidates, weights, options, result);
@@ -554,6 +563,7 @@ impl SearchSession {
                         amount_in: amount,
                         amount_out: quote.out.amount_out,
                         arrays_used: quote.out.arrays_used,
+                        walk: quote.out.walk,
                         cross_stream: quote.cross_stream,
                     },
                 });
@@ -640,6 +650,7 @@ impl SearchSession {
             operation.leg.amount_in = amount;
             operation.leg.amount_out = quote.out.amount_out;
             operation.leg.arrays_used = quote.out.arrays_used;
+            operation.leg.walk = quote.out.walk;
             operation.leg.cross_stream = quote.cross_stream;
         }
         next.amount_out = *balances.get(1).ok_or(RouteError::InvalidFlow)?;
