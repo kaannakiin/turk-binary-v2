@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "crates/tx/src/tests/fixtures"
 SCENARIO_POOLS = FIXTURES / "scenario_pools.json.gz"
 
-UNCOMPARED = {"compute_units", "v1_compute_units", "router_sha256"}
+UNCOMPARED = {"compute_units", "v1_compute_units", "v1_router_compute_units", "router_sha256"}
 ERROR_KIND = re.compile(r"^[A-Za-z]+\(\d+, [A-Za-z]+(?:\(\d+\))?\)")
 SHOWN_DIFFERENCES = 20
 
@@ -155,8 +155,9 @@ def compare(recorded, now, path, key, differences, units):
     if isinstance(recorded, dict) and isinstance(now, dict):
         for name in sorted(recorded.keys() | now.keys()):
             if name not in now or name not in recorded:
-                differences.append({"path": f"{path}.{name}", "recorded": recorded.get(name),
-                                    "now": now.get(name)})
+                found = units if name in UNCOMPARED else differences
+                found.append({"path": f"{path}.{name}", "recorded": recorded.get(name),
+                              "now": now.get(name)})
             else:
                 compare(recorded[name], now[name], f"{path}.{name}", name, differences, units)
     elif isinstance(recorded, list) and isinstance(now, list):

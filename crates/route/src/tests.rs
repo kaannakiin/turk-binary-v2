@@ -1171,6 +1171,7 @@ fn refinement_moves_the_whole_share_to_the_best_pool_without_overdrawing_a_candi
                     amount_in: 1,
                     amount_out: 1,
                     arrays_used: 0,
+                    walk: domain::Walk::default(),
                     cross_stream: false,
                 }],
             }

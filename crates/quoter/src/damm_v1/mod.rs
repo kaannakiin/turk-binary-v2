@@ -198,6 +198,7 @@ impl DammV1 {
             fee_in: u64::try_from(quote.trade_fee).map_err(|_| QuoteError::Math)?,
             fee_out: 0,
             arrays_used: 0,
+            walk: domain::Walk::default(),
         })
     }
 }

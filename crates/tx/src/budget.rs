@@ -19,22 +19,34 @@ const CPMM_HOP_UNITS: u32 = 60_000;
 // src: crates/tx/src/tests/fixtures/router_replay_amm_v4.json (`just router-replay`):
 // 162 V2 routes consumed at most 32,803 compute units including the router.
 const AMM_V4_HOP_UNITS: u32 = 50_000;
-// src: crates/tx/src/tests/fixtures/router_replay_clmm.json (`oracle router` over the CLMM SVM corpus):
-// required-array windows of up to three consumed at most 456,975 CU including the router;
-// a four-array swap reached 1,355,658 CU. `SETUP_UNITS` covers token-account setup.
-const CLMM_HOP_UNITS: u32 = 500_000;
-const CLMM_MANY_ARRAY_UNITS: u32 = 1_250_000;
-// src: crates/quoter/src/tests/fixtures/sim/whirlpool-onchain-sim{,-adaptive}.json.gz: 409 paid
-// mainnet simulations, max 313,199 CU when the quote walks one array, 758,402 for two and
-// 896,495 for three. Each tier rounds 110% up to the next 10k.
-const WHIRLPOOL_ONE_ARRAY_UNITS: u32 = 350_000;
-const WHIRLPOOL_TWO_ARRAY_UNITS: u32 = 840_000;
-const WHIRLPOOL_THREE_ARRAY_UNITS: u32 = 990_000;
-// src: crates/tx/src/tests/fixtures/router_dlmm_replay.json from `oracle router` over the 152-case
-// meteora_dlmm corpus: 89 paid v1 swaps, max 277,084 CU for one array and
-// 713,797 CU for two or three. Each tier rounds 110% up to the next 10k.
-const DLMM_ONE_ARRAY_UNITS: u32 = 310_000;
-const DLMM_THREE_ARRAY_UNITS: u32 = 790_000;
+// src: crates/tx/src/tests/fixtures/router_compute.json (`just router-compute-replay` on the
+// universe captures of slots 451,259,947 and 452,267,679 and on the quoter's CLMM, Whirlpool
+// and DLMM program replay corpora, joined by scripts/compute_fixture.py): what the router's
+// instruction spent on 1,647 one-hop swaps of 41 pools, in their v1 transaction, against the
+// walk their quote reported. Each rate is the least that covers every case with 15% to spare,
+// rounded up to 100; fitted on the two captures alone, the rates covered every corpus swap with
+// 12% to spare. A walk's span is bounded by the fee loop's volatility range (`quoter`), so it
+// does not grow with an arbitrarily long swap.
+const CLMM_HOP: Rate = Rate {
+    base: 59_700,
+    crossed: 11_400,
+    span: 10_800,
+    array: 4_500,
+};
+const WHIRLPOOL_HOP: Rate = Rate {
+    base: 76_000,
+    crossed: 6_700,
+    span: 8_400,
+    array: 0,
+};
+const DLMM_HOP: Rate = Rate {
+    base: 45_600,
+    crossed: 6_600,
+    span: 0,
+    array: 0,
+};
+// The fixture holds no paid DLMM swap through more arrays.
+const DLMM_MEASURED_ARRAYS: u8 = 4;
 // Creating an account, wrapping and unwrapping SOL are not in the replay. A limit set too low
 // fails the transaction; one set high only lowers its scheduling priority, since the cost model
 // charges what is requested.
@@ -110,28 +122,7 @@ fn code(program: &Pubkey) -> Option<u32> {
 pub fn compute_units(hops: &[SwapWindow]) -> Result<u32, TxError> {
     let units = hops
         .iter()
-        .map(|hop| match hop.kind {
-            DexKind::RaydiumAmmV4 => Ok(AMM_V4_HOP_UNITS),
-            DexKind::RaydiumClmm => Ok(
-                if (hop.tail & 0x7f).saturating_sub(hop.optional_tail) >= 4 {
-                    CLMM_MANY_ARRAY_UNITS
-                } else {
-                    CLMM_HOP_UNITS
-                },
-            ),
-            DexKind::RaydiumCpmm => Ok(CPMM_HOP_UNITS),
-            DexKind::OrcaWhirlpool => Ok(match hop.arrays_used {
-                1 => WHIRLPOOL_ONE_ARRAY_UNITS,
-                2 => WHIRLPOOL_TWO_ARRAY_UNITS,
-                _ => WHIRLPOOL_THREE_ARRAY_UNITS,
-            }),
-            DexKind::MeteoraDlmm => match hop.tail {
-                1 => Ok(DLMM_ONE_ARRAY_UNITS),
-                2 | 3 => Ok(DLMM_THREE_ARRAY_UNITS),
-                arrays => Err(TxError::UnmeasuredDlmmArrays { arrays }),
-            },
-            other => Err(TxError::Unsupported(other)),
-        })
+        .map(hop_units)
         .try_fold(SETUP_UNITS, |total, units| Ok(total.saturating_add(units?)))?;
     if units > MAX_COMPUTE_UNITS {
         return Err(TxError::TooMuchCompute {
@@ -140,6 +131,36 @@ pub fn compute_units(hops: &[SwapWindow]) -> Result<u32, TxError> {
         });
     }
     Ok(units)
+}
+
+fn hop_units(hop: &SwapWindow) -> Result<u32, TxError> {
+    match hop.kind {
+        DexKind::RaydiumAmmV4 => Ok(AMM_V4_HOP_UNITS),
+        DexKind::RaydiumCpmm => Ok(CPMM_HOP_UNITS),
+        DexKind::RaydiumClmm => Ok(CLMM_HOP.units(hop)),
+        DexKind::OrcaWhirlpool => Ok(WHIRLPOOL_HOP.units(hop)),
+        DexKind::MeteoraDlmm if hop.tail > DLMM_MEASURED_ARRAYS => {
+            Err(TxError::UnmeasuredDlmmArrays { arrays: hop.tail })
+        }
+        DexKind::MeteoraDlmm => Ok(DLMM_HOP.units(hop)),
+        other => Err(TxError::Unsupported(other)),
+    }
+}
+
+struct Rate {
+    base: u32,
+    crossed: u32,
+    span: u32,
+    array: u32,
+}
+
+impl Rate {
+    fn units(&self, hop: &SwapWindow) -> u32 {
+        self.base
+            .saturating_add(self.crossed.saturating_mul(hop.walk.crossed))
+            .saturating_add(self.span.saturating_mul(hop.walk.span))
+            .saturating_add(self.array.saturating_mul(u32::from(hop.arrays_used)))
+    }
 }
 
 pub(crate) fn limits<'a>(
@@ -186,80 +207,99 @@ pub(crate) fn limits<'a>(
 
 #[cfg(test)]
 mod tests {
-    use domain::{SwapWindow, TokenSide};
+    use domain::{SwapWindow, TokenSide, Walk};
+    use serde::Deserialize;
 
     use super::*;
 
-    fn dlmm_window(arrays: u8) -> SwapWindow {
-        let mint = Pubkey::new_from_array([1; 32]);
+    fn window(kind: DexKind, arrays: u8, walk: Walk) -> SwapWindow {
         let side = TokenSide {
-            mint,
+            mint: Pubkey::new_from_array([1; 32]),
             token_program: TOKEN_PROGRAM,
         };
         SwapWindow {
-            kind: DexKind::MeteoraDlmm,
-            program_id: DLMM_PROGRAM,
+            kind,
+            program_id: match kind {
+                DexKind::MeteoraDlmm => DLMM_PROGRAM,
+                _ => CLMM_PROGRAM,
+            },
             accounts: Vec::new(),
             source: side,
             destination: side,
             tail: arrays,
             optional_tail: 0,
             arrays_used: arrays,
+            walk,
         }
     }
 
-    fn clmm_window() -> SwapWindow {
-        let input = TokenSide {
-            mint: Pubkey::new_from_array([2; 32]),
-            token_program: TOKEN_PROGRAM,
-        };
-        let output = TokenSide {
-            mint: Pubkey::new_from_array([3; 32]),
-            token_program: TOKEN_PROGRAM,
-        };
-        SwapWindow {
-            kind: DexKind::RaydiumClmm,
-            program_id: CLMM_PROGRAM,
-            accounts: Vec::new(),
-            source: input,
-            destination: output,
-            tail: 4,
-            optional_tail: 0,
-            arrays_used: 4,
+    #[derive(Deserialize)]
+    struct Recorded {
+        cases: Vec<Case>,
+    }
+
+    #[derive(Deserialize)]
+    struct Case {
+        dex: DexKind,
+        pool: String,
+        crossed: u32,
+        span: u32,
+        arrays: u8,
+        router_compute_units: u32,
+    }
+
+    // Gate: a hop's budget must cover what the deployed program spent, or the transaction runs
+    // out of compute on chain. The expected values are the router's own compute in `LiteSVM` on
+    // mainnet bytecode (`just router-compute-replay`), not the rates under test.
+    #[test]
+    fn every_recorded_one_hop_swap_fits_the_budget_of_its_walk() {
+        let recorded: Recorded =
+            serde_json::from_str(include_str!("tests/fixtures/router_compute.json"))
+                .expect("the compute fixture parses");
+        assert!(recorded.cases.len() > 1_000);
+        for case in &recorded.cases {
+            let walk = Walk {
+                span: case.span,
+                crossed: case.crossed,
+            };
+            let budget = hop_units(&window(case.dex, case.arrays, walk))
+                .expect("every measured venue and array count is budgeted");
+            assert!(
+                budget >= case.router_compute_units,
+                "{} {:?}: {budget} for {}",
+                case.pool,
+                walk,
+                case.router_compute_units
+            );
         }
     }
 
     #[test]
-    fn dlmm_compute_budget_refuses_unmeasured_and_over_limit_routes() {
-        let payer = Pubkey::new_from_array([9; 32]);
-        let instructions: [Instruction; 0] = [];
+    fn a_hop_past_what_was_measured_or_a_plan_past_the_limit_is_refused() {
+        let long = Walk {
+            span: 100,
+            crossed: 100,
+        };
         assert_eq!(
-            limits(&[dlmm_window(4)], &instructions, &payer),
-            Err(TxError::UnmeasuredDlmmArrays { arrays: 4 })
+            compute_units(&[window(DexKind::MeteoraDlmm, 5, Walk::default())]),
+            Err(TxError::UnmeasuredDlmmArrays { arrays: 5 })
         );
-        assert_eq!(
-            limits(&[dlmm_window(2), dlmm_window(2)], &instructions, &payer),
+        assert!(matches!(
+            compute_units(&[
+                window(DexKind::MeteoraDlmm, 2, long),
+                window(DexKind::MeteoraDlmm, 2, long),
+            ]),
             Err(TxError::TooMuchCompute {
-                units: 1_730_000,
-                max: 1_400_000,
+                max: MAX_COMPUTE_UNITS,
+                ..
             })
-        );
-    }
-
-    #[test]
-    fn compute_budget_refuses_over_limit_non_dlmm_flow() {
-        let payer = Pubkey::new_from_array([9; 32]);
-        let instructions: [Instruction; 0] = [];
-        assert_eq!(
-            limits(
-                &[clmm_window(), clmm_window(), clmm_window()],
-                &instructions,
-                &payer,
-            ),
+        ));
+        assert!(matches!(
+            compute_units(&[window(DexKind::RaydiumClmm, 3, long)]),
             Err(TxError::TooMuchCompute {
-                units: 3_900_000,
-                max: 1_400_000,
+                max: MAX_COMPUTE_UNITS,
+                ..
             })
-        );
+        ));
     }
 }

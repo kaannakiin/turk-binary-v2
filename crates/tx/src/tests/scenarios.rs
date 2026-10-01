@@ -292,6 +292,7 @@ fn orca_cross_dex_v1_matches_direct_venues_and_reverts_on_thresholds() {
         ("orca_to_cpmm", AI66, USDC),
         ("cpmm_to_orca", USDC, AI66),
         ("orca_to_clmm", AI66, USDC),
+        ("clmm_to_orca", USDC, AI66),
     ];
     assert_eq!(matrix.swaps.len(), orders.len());
     for (swap, (name, input, output)) in matrix.swaps.iter().zip(orders) {

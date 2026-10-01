@@ -58,3 +58,59 @@ fn a_requote_prices_the_path_at_the_feed_clock_not_the_session_clock() {
     }
     assert!(disabled > 0, "some pool opens after the epoch of Unix time");
 }
+
+const DLMM: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz"
+);
+// src: crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz (direct LiteSVM payout).
+const DLMM_TWO_ARRAYS: &str = "3msVd34R5KxonDzyNSV5nT19UtUeJ2RF1NaQhvVPNLxL";
+
+// Gate: the transaction's compute budget is built from each leg's walk, so a flow priced
+// again must carry the walk of its new quote, not the one it was found with.
+#[test]
+fn a_requoted_flow_carries_the_walk_of_its_new_quote() {
+    let universe = universe::load_selected_from(DLMM, &[DLMM_TWO_ARRAYS]);
+    let topology = &universe.topology;
+    let pool = topology
+        .pool_id(&DLMM_TWO_ARRAYS.parse().expect("pool address"))
+        .expect("the pool is loaded");
+    let node = topology.pool(pool);
+    let edge = topology.edge(pool, node.mint_b).expect("edge");
+    let mut session = universe.reader.session().expect("session");
+    let small = session
+        .search_flow(
+            &Query {
+                from: node.mint_b,
+                goal: Goal::To(node.mint_a),
+                amount_in: 1_000_000,
+                max_hops: 1,
+                max_arrays: 8,
+                max_quotes: 1_000,
+                per_pair: None,
+            },
+            &Everything,
+            route::FlowOptions::default(),
+        )
+        .best
+        .expect("a one-pool flow");
+    let large = 1_000_000_000;
+    let expected = session
+        .quote(edge, large, 8)
+        .expect("a large quote")
+        .out
+        .walk;
+    assert!(expected.crossed > small.operations[0].leg.walk.crossed);
+    let mut scaled = small;
+    scaled.amount_in = large;
+    scaled.operations[0].leg.amount_in = large;
+
+    let requoted = universe
+        .reader
+        .session()
+        .expect("session")
+        .requote_flow(&scaled, 8)
+        .expect("the flow requotes");
+
+    assert_eq!(requoted.operations[0].leg.walk, expected);
+}

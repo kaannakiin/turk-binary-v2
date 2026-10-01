@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use dex::{Role, Side};
 use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
-use domain::{DexKind, Pubkey, SwapWindow, TokenSide, WindowAccount};
+use domain::{DexKind, Pubkey, SwapWindow, TokenSide, Walk, WindowAccount};
 use orca_whirlpools_client::{
     ORACLE_DISCRIMINATOR, Oracle, TickArray, WHIRLPOOL_DISCRIMINATOR, Whirlpool,
 };
@@ -15,7 +15,7 @@ use orca_whirlpools_core::{
 
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError, WindowError};
-use crate::state::{QuoteInput, QuoteOut};
+use crate::state::{QuoteInput, QuoteOut, fee_loop_steps, tick_steps};
 use crate::token::any_token_account;
 use crate::token22::{Mint, check_transfer, decode_mint};
 
@@ -248,6 +248,42 @@ impl Whirlpools {
         Ok(())
     }
 
+    /// The fee loop of an adaptive-fee pool steps once per tick group, near
+    /// enough to the volatility reference; any other pool's steps once per
+    /// initialized tick, which `crossed` counts.
+    fn walked(&self, pool: &Whirlpool, to: i32) -> Walk {
+        let (from, spacing) = (pool.tick_current_index, pool.tick_spacing);
+        let (low, high) = (from.min(to), from.max(to));
+        let step = i32::from(spacing);
+        let width = step * i32::try_from(TICK_ARRAY_SIZE).unwrap_or(i32::MAX);
+        let crossed = self
+            .arrays
+            .range(low.saturating_sub(width)..=high)
+            .filter_map(|(_, array)| array.as_deref())
+            .flat_map(|array| {
+                (array.start_tick_index..)
+                    .step_by(usize::from(spacing.max(1)))
+                    .zip(&array.ticks)
+            })
+            .filter(|(index, tick)| tick.initialized && (low..=high).contains(index))
+            .count();
+        let span = match self.oracle {
+            Some(oracle)
+                if is_adaptive(pool)
+                    && oracle.adaptive_fee_constants.adaptive_fee_control_factor != 0 =>
+            {
+                let constants = oracle.adaptive_fee_constants;
+                tick_steps(from, to, constants.tick_group_size)
+                    .min(fee_loop_steps(constants.max_volatility_accumulator))
+            }
+            _ => 0,
+        };
+        Walk {
+            span,
+            crossed: u32::try_from(crossed).unwrap_or(u32::MAX),
+        }
+    }
+
     fn sequence(
         &self,
         pool: &Whirlpool,
@@ -363,6 +399,7 @@ impl Whirlpools {
             fee_in: result.trade_fee,
             fee_out: 0,
             arrays_used: u8::try_from(arrays_used).unwrap_or(u8::MAX),
+            walk: self.walked(pool, result.post_tick_index),
         })
     }
 
@@ -468,6 +505,7 @@ impl Whirlpools {
             tail: optional_tail,
             optional_tail,
             arrays_used,
+            walk: Walk::default(),
         })
     }
 }

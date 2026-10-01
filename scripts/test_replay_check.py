@@ -70,6 +70,13 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(found, [])
         self.assertEqual(len(units), 1)
 
+    def test_a_compute_field_the_fixture_predates_is_reported_not_compared(self) -> None:
+        now = copy.deepcopy(SCENARIOS)
+        paid(now)["v1_router_compute_units"] = 62_820
+        found, units = differences(now)
+        self.assertEqual(found, [])
+        self.assertEqual(len(units), 1)
+
 
 class ReplayTests(unittest.TestCase):
     def setUp(self) -> None:

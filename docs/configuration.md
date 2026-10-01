@@ -167,7 +167,7 @@ Used by `serve` only (see [architecture.md](architecture.md#http-api)). Both add
 | `default_max_hops` | `3`      | Pools a route may pass when the request gives no `maxHops`.                                                                                              |
 | `max_hops`         | `4`      | Largest `maxHops` a request may ask for.                                                                                                                 |
 | `max_operations`   | `16`     | Maximum operations in a routed execution flow. Must be between 1 and 16.                                                                                 |
-| `max_quotes`       | `100000` | Quote budget of one search, all its widening attempts together. A work budget, not a deadline: filtering, pinning and ranking are not counted.           |
+| `max_quotes`       | `100000` | Quotes one search may compute, all its widening attempts and split chunks together; a quote the session's memo answers is not counted. A work budget, not a deadline: filtering, pinning and ranking are not counted.           |
 | `per_pair`         | `2`      | Pools kept per pair while searching (see [architecture.md](architecture.md#algorithm)); `0` keeps every one.                                             |
 | `max_arrays`       | `8`      | Tick or bin arrays one quote may cross. The transaction that carries a route has to pass the same arrays ([dexes.md](dexes.md)).                         |
 | `unique_dex_ids`   | `[]`     | DEX program IDs which are unique by default in cyclic-arbitrage requests; a non-empty request `uniqueDexIds` replaces this list.                         |

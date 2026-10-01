@@ -70,6 +70,7 @@ impl SearchSession {
                             amount_in: amount,
                             amount_out: quote.out.amount_out,
                             arrays_used: quote.out.arrays_used,
+                            walk: quote.out.walk,
                             cross_stream: quote.cross_stream,
                         });
                         if closes {

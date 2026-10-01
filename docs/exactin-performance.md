@@ -194,8 +194,19 @@ SOL→pump 10 SOL paid exactly, in 249,584 units; SOL→USDC 10,000 SOL and SOL�
 budgets requested. Both send thousands of SOL into a thin pool once the deep
 ones are spent at the margin (3,080 SOL into CLMM `3ucNos…`, 1,490 SOL into DLMM
 `qhJ7kL…`), and a swap that large crosses many ticks or bins inside the arrays
-its budget counts. The chunked split stays off until the compute budget counts
-what a swap crosses. On the earlier capture, whose CLMM pools lack the
+its budget counts. That was the budget, which counted arrays. Budgeted by the walk each quote
+reports (initialized ticks or bins crossed and fee-loop steps,
+`crates/tx/src/budget.rs`), with DLMM pools whose oracle the router refuses left
+out, the same capture's plans all paid exactly what they quoted in their v1
+transaction:
+
+| Order               |        current split |             chunks 8 |
+| ------------------- | -------------------: | -------------------: |
+| SOL→USDC 10,000 SOL | 1,162.56B (1.04M CU) | 1,164.08B (1.05M CU) |
+| SOL→pump 10 SOL     |    19.06B (0.12M CU) |    19.06B (0.25M CU) |
+| SOL→pump 10,000 SOL |    37.24B (0.52M CU) | 1,742.96B (1.09M CU) |
+
+On the earlier capture, whose CLMM pools lack the
 observation account a swap now names, only the plans without CLMM ran; the
 chunked SOL→pump 10,000 SOL plan there paid exactly, in 1,251,596 units.
 

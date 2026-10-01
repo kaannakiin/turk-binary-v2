@@ -86,6 +86,13 @@ router-split-replay capture="oracle/snapshots/universe.json.gz":
     ROUTE_UNIVERSE={{justfile_directory()}}/{{capture}} ROUTER_SPLIT_PLANS={{justfile_directory()}}/target/router-split-plans.json cargo nextest run -p server --run-ignored only router_split_plans --no-capture
     cargo run --manifest-path oracle/Cargo.toml -- router {{capture}} target/router-split-plans.json oracle/programs onchain/target/deploy/router.so target/router-split-replay.json
 
+# LiteSVM: one-hop swaps of a universe capture from tiny to the largest each pool quotes, sent
+# through the router; records what each spent against the steps and arrays its quote walked.
+router-compute-replay capture="oracle/snapshots/universe.json.gz":
+    NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
+    ROUTE_UNIVERSE={{justfile_directory()}}/{{capture}} ROUTER_COMPUTE_PLANS={{justfile_directory()}}/target/router-compute-plans.json cargo nextest run -p server --run-ignored only router_compute_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router {{capture}} target/router-compute-plans.json oracle/programs onchain/target/deploy/router.so target/router-compute-replay.json
+
 router-flow-replay:
     NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
     NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/short-venue/Cargo.toml

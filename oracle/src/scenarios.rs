@@ -435,7 +435,9 @@ impl World<'_> {
                 == *account
         });
         let (error, compute_units, fee) = match sent {
-            Ok(Sent { compute_units, fee }) => (None, Some(compute_units), Some(fee)),
+            Ok(Sent {
+                compute_units, fee, ..
+            }) => (None, Some(compute_units), Some(fee)),
             Err(error) => (Some(error), None, None),
         };
         Swap {

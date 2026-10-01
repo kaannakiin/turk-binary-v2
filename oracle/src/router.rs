@@ -215,6 +215,8 @@ struct Case {
     #[serde(skip_serializing_if = "Option::is_none")]
     v1_compute_units: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    v1_router_compute_units: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     v1_error: Option<String>,
 }
 
@@ -414,6 +416,7 @@ fn run(
         error: None,
         v1_paid: None,
         v1_compute_units: None,
+        v1_router_compute_units: None,
         v1_error: None,
     };
     if let Ok(Some(flow)) = plan.flow_route() {
@@ -455,6 +458,7 @@ fn run(
         Ok((paid, sent)) => {
             case.v1_paid = Some(paid.to_string());
             case.v1_compute_units = Some(sent.compute_units);
+            case.v1_router_compute_units = sent.router_units;
         }
         Err(error) => case.v1_error = Some(error),
     }

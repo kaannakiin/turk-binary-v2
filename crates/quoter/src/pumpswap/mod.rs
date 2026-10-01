@@ -274,6 +274,7 @@ impl PumpSwap {
             fee_in: if input.a_to_b { 0 } else { venue_fee },
             fee_out: if input.a_to_b { venue_fee } else { 0 },
             arrays_used: 0,
+            walk: domain::Walk::default(),
         })
     }
 }

@@ -38,7 +38,7 @@ pub enum TxError {
     UnknownProgram(domain::Pubkey),
     #[error("the transaction would load {bytes} bytes of accounts, past the 64 MiB limit")]
     TooMuchData { bytes: u64 },
-    #[error("DLMM needs {arrays} bin arrays; router compute was measured only through three")]
+    #[error("DLMM needs {arrays} bin arrays; router compute was measured only through four")]
     UnmeasuredDlmmArrays { arrays: u8 },
     #[error("the route needs {units} compute units, beyond the v1 limit of {max}")]
     TooMuchCompute { units: u32, max: u32 },

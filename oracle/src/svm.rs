@@ -37,6 +37,8 @@ const LOADER_V3: Pubkey = Pubkey::from_str_const("BPFLoaderUpgradeab1e1111111111
 pub struct Sent {
     pub compute_units: u64,
     pub fee: u64,
+    /// What the router's own instruction consumed, CPIs included, read from the logs.
+    pub router_units: Option<u64>,
 }
 
 pub struct Machine {
@@ -317,9 +319,18 @@ impl Machine {
 }
 
 fn sent(meta: litesvm::types::TransactionMetadata) -> Sent {
+    let consumed = format!("Program {} consumed ", crate::router::ROUTER);
+    let router_units = meta.logs.iter().find_map(|line| {
+        line.strip_prefix(&consumed)?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    });
     Sent {
         compute_units: meta.compute_units_consumed,
         fee: meta.fee,
+        router_units,
     }
 }
 

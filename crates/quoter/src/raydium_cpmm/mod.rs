@@ -298,6 +298,7 @@ impl Cpmm {
                 creator_fee
             },
             arrays_used: 0,
+            walk: domain::Walk::default(),
         };
         Ok((
             quote,
@@ -347,6 +348,7 @@ impl Cpmm {
             tail: 0,
             optional_tail: 0,
             arrays_used: 0,
+            walk: domain::Walk::default(),
             accounts: vec![
                 WindowAccount::User,
                 fixed(AUTHORITY, false),

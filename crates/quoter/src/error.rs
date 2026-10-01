@@ -39,7 +39,13 @@ pub enum WindowError {
     TransferHook,
     #[error("the quote's tick arrays are not available in this pool state")]
     Arrays,
+    #[error("the router takes a DLMM oracle of {ROUTER_DLMM_ORACLE_LEN} bytes, this one has {0}")]
+    OracleLength(usize),
 }
+
+// src: onchain/crates/router-core/src/adapters/meteora/dlmm.rs (ORACLE_LEN: the router's DLMM
+// adapter refuses a window whose oracle has any other length, as BadWindow)
+pub const ROUTER_DLMM_ORACLE_LEN: usize = 3_232;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum QuoteError {

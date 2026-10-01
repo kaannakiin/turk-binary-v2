@@ -1373,6 +1373,66 @@ async fn router_split_plans() {
     serde_json::to_writer(file, &json!({ "plans": plans })).expect("write plans");
 }
 
+/// One-hop swaps of a universe capture from tiny to the largest each pool
+/// quotes, with the steps and arrays their quote walked; `just
+/// router-compute-replay` records what each spent in the router.
+#[tokio::test]
+#[ignore = "writes one-hop compute plans of a universe capture for `just router-compute-replay`"]
+async fn router_compute_plans() {
+    const POOLS_PER_DEX: usize = 12;
+    let output = std::env::var("ROUTER_COMPUTE_PLANS").expect("output path");
+    let pricing = universe::load();
+    let fixture = Fixture::from_universe(universe::load(), 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let topology = Arc::clone(&pricing.topology);
+    let mut taken = std::collections::HashMap::<domain::DexKind, usize>::new();
+    let mut plans = Vec::new();
+    for node in topology.pools() {
+        if !tx::supports(node.dex) {
+            continue;
+        }
+        let count = taken.entry(node.dex).or_default();
+        if *count == POOLS_PER_DEX {
+            continue;
+        }
+        *count += 1;
+        let pool = topology.pool_id(&node.pubkey).expect("pool");
+        for (from, to) in [(node.mint_a, node.mint_b), (node.mint_b, node.mint_a)] {
+            let edge = topology.edge(pool, from).expect("edge");
+            let mut session = pricing.reader.session().expect("session");
+            let mut amount: u64 = 1_000;
+            while let Ok(quote) = session.quote(edge, amount, 8) {
+                let request = json!({
+                    "fromTokenAddress": topology.mint(from).to_string(),
+                    "toTokenAddress": topology.mint(to).to_string(),
+                    "amount": amount.to_string(),
+                    "maxHops": 1,
+                    "allowedPools": [node.pubkey.to_string()],
+                });
+                let (status, _, quoted) = call(fixture.router(), post(&request)).await;
+                if status == StatusCode::OK {
+                    let name = format!("compute_{}_{}_{amount}", node.dex.as_str(), node.pubkey);
+                    let mut plan = scenario_plan(&fixture, &name, &quoted, false, None).await;
+                    plan["dex"] = json!(node.dex.as_str());
+                    plan["span"] = json!(quote.out.walk.span);
+                    plan["crossed"] = json!(quote.out.walk.crossed);
+                    plan["arraysUsed"] = json!(quote.out.arrays_used);
+                    plans.push(plan);
+                }
+                let Some(next) = amount.checked_mul(4) else {
+                    break;
+                };
+                amount = next;
+            }
+        }
+    }
+    let file = std::fs::File::create(output).expect("plans file");
+    serde_json::to_writer(file, &json!({ "plans": plans })).expect("write plans");
+}
+
 async fn sequential_cpmm_plan(fixture: &Fixture, direct: &Value) -> Value {
     let captured = universe::load_from(SCENARIO_POOLS);
     let mut session = captured.reader.session().expect("captured quote session");
@@ -1403,6 +1463,7 @@ async fn sequential_cpmm_plan(fixture: &Fixture, direct: &Value) -> Value {
             amount_in: 0,
             amount_out: 0,
             arrays_used: 0,
+            walk: domain::Walk::default(),
             cross_stream: false,
         },
     };
@@ -1783,7 +1844,6 @@ fn orca_cross_matrix() -> [CrossRoute; 6] {
 
 // The route's summed per-hop compute budget exceeds the v1 limit although its replay
 // used far less: the builder refuses it by policy, not because it cannot run.
-const ORCA_CROSS_OVER_BUDGET: [&str; 1] = ["clmm_to_orca"];
 
 async fn orca_cross_quote(snapshot: &str, route: CrossRoute) -> (Fixture, Value) {
     let (name, pools, dexes, from, to, amount) = route;
@@ -1864,9 +1924,7 @@ async fn router_orca_cross_plans() {
     let out = std::env::var("ROUTER_ORCA_CROSS_PLANS").expect("names plans file");
     let mut plans = Vec::new();
     for route in orca_cross_matrix() {
-        if !ORCA_CROSS_OVER_BUDGET.contains(&route.0) {
-            plans.push(orca_cross_plan(&snapshot, route).await);
-        }
+        plans.push(orca_cross_plan(&snapshot, route).await);
     }
     if std::env::var_os("ROUTER_ORCA_THREE_HOP_SNAPSHOT").is_some() {
         orca_three_hop_cycle_rejected(&snapshot).await;
@@ -1891,38 +1949,6 @@ async fn recorded_orca_cross_dex_routes_build_and_quote_what_the_programs_paid_w
     .expect("replay fixture");
     for route in orca_cross_matrix() {
         let name = route.0;
-        if ORCA_CROSS_OVER_BUDGET.contains(&name) {
-            let (_, pools, _, from, to, amount) = route;
-            let fixture =
-                Fixture::from_universe(universe::load_selected_from(snapshot, &pools), 1, 4);
-            let request = json!({
-                "fromTokenAddress": from,
-                "toTokenAddress": to,
-                "amount": amount,
-                "maxHops": 2,
-            });
-            let (status, _, refused) = call(fixture.router(), post(&request)).await;
-            assert_eq!(
-                (status, &refused["error"]["code"]),
-                (StatusCode::UNPROCESSABLE_ENTITY, &json!("NO_ROUTE")),
-                "{name}"
-            );
-            let (fixture, quote) =
-                orca_cross_quote(snapshot, (name, pools, route.2, from, to, "1000")).await;
-            let body = json!({
-                "userWalletAddress": ORACLE_PAYER,
-                "wrapAndUnwrapSol": false,
-                "quoteResponse": spending(quote, amount),
-            });
-            let (status, _, refused) =
-                call(fixture.router(), post_to("/swap-instructions", &body)).await;
-            assert_eq!(
-                (status, &refused["error"]["code"]),
-                (StatusCode::UNPROCESSABLE_ENTITY, &json!("TOO_MUCH_COMPUTE")),
-                "{name}"
-            );
-            continue;
-        }
         let paid = replay["swaps"]
             .as_array()
             .expect("swaps")

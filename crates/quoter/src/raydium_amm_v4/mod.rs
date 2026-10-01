@@ -194,6 +194,7 @@ impl AmmV4 {
             fee_in: u64::try_from(swap_fee.as_u128()).map_err(|_| QuoteError::Math)?,
             fee_out: 0,
             arrays_used: 0,
+            walk: domain::Walk::default(),
         })
     }
 
@@ -238,6 +239,7 @@ impl AmmV4 {
             tail: 0,
             optional_tail: 0,
             arrays_used: 0,
+            walk: domain::Walk::default(),
             accounts: vec![
                 fixed(TOKEN_PROGRAM, false),
                 fixed(address, true),

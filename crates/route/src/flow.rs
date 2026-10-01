@@ -558,6 +558,7 @@ impl SearchSession {
                         amount_in: amount,
                         amount_out: quote.out.amount_out,
                         arrays_used: quote.out.arrays_used,
+                        walk: quote.out.walk,
                         cross_stream: quote.cross_stream,
                     },
                 });
@@ -644,6 +645,7 @@ impl SearchSession {
             operation.leg.amount_in = amount;
             operation.leg.amount_out = quote.out.amount_out;
             operation.leg.arrays_used = quote.out.arrays_used;
+            operation.leg.walk = quote.out.walk;
             operation.leg.cross_stream = quote.cross_stream;
         }
         next.amount_out = *balances.get(1).ok_or(RouteError::InvalidFlow)?;

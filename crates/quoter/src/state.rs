@@ -1,4 +1,4 @@
-use domain::{ChainClock, DexKind, SwapWindow};
+use domain::{ChainClock, DexKind, SwapWindow, Walk};
 
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError, WindowError};
@@ -19,6 +19,27 @@ pub struct QuoteOut {
     pub fee_in: u64,
     pub fee_out: u64,
     pub arrays_used: u8,
+    pub walk: Walk,
+}
+
+// src: kaannakiin/whirlpools@536d2dac6c53eb50da09b4534ac5113b5c5c7052 programs/whirlpool/src/manager/fee_rate_manager.rs (FeeRateManager::new: the core tick group range, ceil((max_volatility_accumulator - volatility_reference) / VOLATILITY_ACCUMULATOR_SCALE_FACTOR) groups either side of the reference; get_bounded_sqrt_price_target skips past it)
+// src: kaannakiin/whirlpools@86ea599eebe33ab4553a9bd273b5653dab90869b rust-sdk/core/src/math/adaptive_fee.rs (the same range in the SDK)
+// src: kaannakiin/raydium-clmm@1de19c560b751cb685dea31e1aeb18f2f2602525 programs/amm/src/states/pool_fee.rs (update_volatility_accumulator: reference + index delta * VOLATILITY_ACCUMULATOR_SCALE, capped), programs/amm/src/instructions/swap.rs (get_spacing_bounded_price: no step once the accumulator is at its maximum)
+const VOLATILITY_SCALE: u32 = 10_000;
+
+/// The most steps a volatility-driven fee loop takes in one swap: it steps
+/// only while the accumulator is below its maximum, inside the range around
+/// the reference where that holds, whatever the reference.
+pub(crate) fn fee_loop_steps(max_volatility_accumulator: u32) -> u32 {
+    max_volatility_accumulator
+        .div_ceil(VOLATILITY_SCALE)
+        .saturating_mul(2)
+        .saturating_add(1)
+}
+
+pub(crate) fn tick_steps(from: i32, to: i32, spacing: u16) -> u32 {
+    let span = (i64::from(to) - i64::from(from)).unsigned_abs() / u64::from(spacing.max(1));
+    u32::try_from(span.saturating_add(1)).unwrap_or(u32::MAX)
 }
 
 #[derive(Debug, Clone)]

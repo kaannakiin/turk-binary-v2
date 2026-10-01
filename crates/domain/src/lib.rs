@@ -16,4 +16,4 @@ pub use filter::{AccountFilter, Memcmp};
 pub use latency::{LatencyHistogram, LatencySnapshot};
 pub use retry::RetryPolicy;
 pub use solana_pubkey::Pubkey;
-pub use swap::{SwapWindow, TokenSide, WindowAccount};
+pub use swap::{SwapWindow, TokenSide, Walk, WindowAccount};

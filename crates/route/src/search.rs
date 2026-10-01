@@ -74,6 +74,7 @@ pub struct Leg {
     pub amount_in: u64,
     pub amount_out: u64,
     pub arrays_used: u8,
+    pub walk: domain::Walk,
     pub cross_stream: bool,
 }
 
@@ -131,6 +132,7 @@ impl SearchSession {
                     amount_in: amount,
                     amount_out: quote.out.amount_out,
                     arrays_used: quote.out.arrays_used,
+                    walk: quote.out.walk,
                     cross_stream: quote.cross_stream,
                     ..*leg
                 };
@@ -331,6 +333,7 @@ impl<F: Filter> Walk<'_, F> {
             amount_in: amount,
             amount_out,
             arrays_used: quote.out.arrays_used,
+            walk: quote.out.walk,
             cross_stream: quote.cross_stream,
         }))
     }

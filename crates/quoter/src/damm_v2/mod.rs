@@ -154,6 +154,7 @@ impl DammV2 {
             fee_in: if fee_on_input { venue_fee } else { 0 },
             fee_out: if fee_on_input { 0 } else { venue_fee },
             arrays_used: 0,
+            walk: domain::Walk::default(),
         })
     }
 }
