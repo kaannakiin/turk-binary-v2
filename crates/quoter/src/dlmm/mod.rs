@@ -8,7 +8,6 @@ use commons::{
     pod_read_unaligned_skip_disc, quote_exact_in,
 };
 use dex::{Role, Side};
-use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 use domain::{DexKind, Pubkey, SwapWindow, TokenSide, Walk, WindowAccount};
 use solana_sdk_2::clock::Clock;
 use solana_sdk_2::pubkey::Pubkey as SdkPubkey;
@@ -310,21 +309,8 @@ impl Dlmm {
             return Err(WindowError::TransferHook);
         }
         let key = |value: SdkPubkey| Pubkey::new_from_array(value.to_bytes());
-        let token_program = |mint: &Mint| {
-            if mint.token_2022 {
-                TOKEN_2022_PROGRAM
-            } else {
-                TOKEN_PROGRAM
-            }
-        };
-        let side_x = TokenSide {
-            mint: key(pair.token_x_mint),
-            token_program: token_program(mint_x),
-        };
-        let side_y = TokenSide {
-            mint: key(pair.token_y_mint),
-            token_program: token_program(mint_y),
-        };
+        let side_x = mint_x.token_side(key(pair.token_x_mint));
+        let side_y = mint_y.token_side(key(pair.token_y_mint));
         let [vault_x, vault_y] = [Side::A, Side::B].map(|side| {
             self.vaults[side_index(side)].ok_or(WindowError::Incomplete(Role::Vault(side)))
         });
@@ -443,6 +429,8 @@ mod tests {
     use bytemuck::Zeroable as _;
 
     use super::*;
+    use domain::chain::TOKEN_PROGRAM;
+
     use crate::token22::Restrictions;
 
     // src: kaannakiin/dlmm-sdk@b4322cc2857a5f5955adb0a119164bbcda48a6d1

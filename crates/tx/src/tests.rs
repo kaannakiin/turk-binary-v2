@@ -97,10 +97,12 @@ fn mainnet_hop() -> SwapWindow {
         TokenSide {
             mint: INPUT_MINT,
             token_program: TOKEN_2022_PROGRAM,
+            has_transfer_fee: false,
         },
         TokenSide {
             mint: OUTPUT_MINT,
             token_program: TOKEN_PROGRAM,
+            has_transfer_fee: false,
         },
     )
 }
@@ -149,6 +151,7 @@ fn two_clmm_hops_past_the_compute_limit_are_rejected_before_account_assembly() {
     let side = |seed| TokenSide {
         mint: Pubkey::new_from_array([seed; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let (input, middle, output) = (side(101), side(102), side(103));
     let long = domain::Walk {
@@ -238,10 +241,12 @@ fn a_flow_builds_slot_accounts_and_flow_wire_steps() {
     let input = TokenSide {
         mint: INPUT_MINT,
         token_program: TOKEN_2022_PROGRAM,
+        has_transfer_fee: false,
     };
     let output = TokenSide {
         mint: OUTPUT_MINT,
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let windows = [mainnet_hop()];
     let slots = [input, output];
@@ -283,14 +288,17 @@ fn split_merge() -> SplitMerge {
     let input = TokenSide {
         mint: INPUT_MINT,
         token_program: TOKEN_2022_PROGRAM,
+        has_transfer_fee: false,
     };
     let middle = TokenSide {
         mint: OUTPUT_MINT,
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let output = TokenSide {
         mint: Pubkey::new_from_array([44; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let share = |source, destination, numerator, denominator| FlowAllocation {
         source,
@@ -373,6 +381,7 @@ fn a_non_dlmm_flow_over_compute_limit_is_refused() {
     let side = |seed| TokenSide {
         mint: Pubkey::new_from_array([seed; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let (input, middle, middle_two, output) = (side(10), side(11), side(12), side(13));
     let window = |source, destination| SwapWindow {
@@ -449,12 +458,14 @@ fn a_native_sol_input_is_wrapped_and_unwrapped_as_mainnet_does() {
     let wsol = TokenSide {
         mint: NATIVE_MINT,
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let hops = [cpmm_window(
         wsol,
         TokenSide {
             mint: OUTPUT_MINT,
             token_program: TOKEN_PROGRAM,
+            has_transfer_fee: false,
         },
     )];
     let request = SwapRequest {
@@ -517,6 +528,7 @@ fn a_route_past_the_v1_account_limit_is_refused() {
     let side = |seed: u8| TokenSide {
         mint: Pubkey::new_from_array([seed; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let hops: Vec<SwapWindow> = (0u8..4)
         .map(|hop| SwapWindow {
@@ -612,6 +624,7 @@ fn a_lower_account_limit_drops_the_optional_tail_before_refusing_the_route() {
     let side = |seed| TokenSide {
         mint: Pubkey::new_from_array([seed; 32]),
         token_program: TOKEN_PROGRAM,
+        has_transfer_fee: false,
     };
     let hops = [clmm_budget_window(81, side(101), side(102), 1, true)];
     let full = build(&request(&hops)).unwrap();

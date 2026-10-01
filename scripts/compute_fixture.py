@@ -47,6 +47,7 @@ def main(argv):
                     "arrays": plan["arraysUsed"],
                     "tail": plan["tail"],
                     "token_2022": plan["token2022"],
+                    "transfer_fee": plan["transferFee"],
                     "router_compute_units": spent,
                 }
             )

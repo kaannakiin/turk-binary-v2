@@ -21,17 +21,18 @@ const CPMM_HOP_UNITS: u32 = 60_000;
 const AMM_V4_HOP_UNITS: u32 = 50_000;
 // src: crates/tx/src/tests/fixtures/router_compute.json (`just router-compute-replay` on the
 // universe captures of slots 451,259,947 and 452,267,679, the quoter's CLMM, Whirlpool and DLMM
-// program replay corpora, and the Whirlpool and DLMM Token-2022 captures in this directory,
-// joined by scripts/compute_fixture.py): what the router's instruction spent on 2,642 one-hop
-// swaps of 65 pools under the largest compute limit, against the walk their quote reported.
-// Each rate is the least that covers every case with 15% to spare, rounded up to 100. Fitted
-// with any one source left out, the rates covered it with 12% to spare, but for the Whirlpool
-// transfer-fee capture, which no other source holds (1.00), and the CLMM corpus without the
-// capture that holds most CLMM swaps. A walk's span is bounded by the fee loop's volatility
-// range (`quoter`), so it does not grow with an arbitrarily long swap.
+// program replay corpora, and the CLMM, Whirlpool and DLMM Token-2022 captures in this
+// directory, joined by scripts/compute_fixture.py): what the router's instruction spent on 2,867
+// one-hop swaps of 72 pools under the largest compute limit, against the walk their quote
+// reported. Each rate is the least that covers every case with 15% to spare, rounded up to 100.
+// Fitted with any one source left out, the rates covered it with 12% to spare, but for the CLMM
+// and Whirlpool transfer-fee captures, the only ones of their kind (0.96 and 1.00), and the CLMM
+// corpus without the capture that holds most CLMM swaps. A walk's span is bounded by the fee
+// loop's volatility range (`quoter`), so it does not grow with an arbitrarily long swap.
 const CLMM_HOP: Rate = Rate {
     base: 59_200,
     token_2022: 0,
+    transfer_fee: 6_500,
     fee_loop: 38_600,
     crossed: 11_400,
     span: 6_000,
@@ -39,7 +40,8 @@ const CLMM_HOP: Rate = Rate {
 };
 const WHIRLPOOL_HOP: Rate = Rate {
     base: 58_200,
-    token_2022: 25_700,
+    token_2022: 12_600,
+    transfer_fee: 13_100,
     fee_loop: 3_700,
     crossed: 7_800,
     span: 8_600,
@@ -47,7 +49,8 @@ const WHIRLPOOL_HOP: Rate = Rate {
 };
 const DLMM_HOP: Rate = Rate {
     base: 42_300,
-    token_2022: 3_900,
+    token_2022: 2_200,
+    transfer_fee: 1_800,
     fee_loop: 0,
     crossed: 6_700,
     span: 0,
@@ -159,6 +162,7 @@ fn hop_units(hop: &SwapWindow) -> Result<u32, TxError> {
 struct Rate {
     base: u32,
     token_2022: u32,
+    transfer_fee: u32,
     fee_loop: u32,
     crossed: u32,
     span: u32,
@@ -167,12 +171,18 @@ struct Rate {
 
 impl Rate {
     fn units(&self, hop: &SwapWindow) -> u32 {
-        let token_2022: u32 = [&hop.source, &hop.destination]
-            .into_iter()
+        let sides = [&hop.source, &hop.destination];
+        let token_2022: u32 = sides
+            .iter()
             .map(|side| u32::from(side.token_program == TOKEN_2022_PROGRAM))
+            .sum();
+        let transfer_fee: u32 = sides
+            .iter()
+            .map(|side| u32::from(side.has_transfer_fee))
             .sum();
         self.base
             .saturating_add(self.token_2022.saturating_mul(token_2022))
+            .saturating_add(self.transfer_fee.saturating_mul(transfer_fee))
             .saturating_add(if hop.walk.span > 0 { self.fee_loop } else { 0 })
             .saturating_add(self.crossed.saturating_mul(hop.walk.crossed))
             .saturating_add(self.span.saturating_mul(hop.walk.span))
@@ -230,17 +240,24 @@ mod tests {
     use super::*;
 
     fn window(kind: DexKind, arrays: u8, walk: Walk) -> SwapWindow {
-        window_of(kind, arrays, arrays, 0, walk)
+        window_of(kind, arrays, arrays, [0, 0], walk)
     }
 
-    fn window_of(kind: DexKind, tail: u8, arrays: u8, token_2022: u8, walk: Walk) -> SwapWindow {
-        let side = |token_2022| TokenSide {
+    fn window_of(
+        kind: DexKind,
+        tail: u8,
+        arrays: u8,
+        [token_2022, transfer_fee]: [u8; 2],
+        walk: Walk,
+    ) -> SwapWindow {
+        let side = |index: u8| TokenSide {
             mint: Pubkey::new_from_array([1; 32]),
-            token_program: if token_2022 {
+            token_program: if index < token_2022 {
                 TOKEN_2022_PROGRAM
             } else {
                 TOKEN_PROGRAM
             },
+            has_transfer_fee: index < transfer_fee,
         };
         SwapWindow {
             kind,
@@ -249,8 +266,8 @@ mod tests {
                 _ => CLMM_PROGRAM,
             },
             accounts: Vec::new(),
-            source: side(token_2022 > 0),
-            destination: side(token_2022 > 1),
+            source: side(0),
+            destination: side(1),
             tail,
             optional_tail: 0,
             arrays_used: arrays,
@@ -272,6 +289,7 @@ mod tests {
         arrays: u8,
         tail: u8,
         token_2022: u8,
+        transfer_fee: u8,
         router_compute_units: u32,
     }
 
@@ -289,7 +307,8 @@ mod tests {
                 span: case.span,
                 crossed: case.crossed,
             };
-            let hop = window_of(case.dex, case.tail, case.arrays, case.token_2022, walk);
+            let sides = [case.token_2022, case.transfer_fee];
+            let hop = window_of(case.dex, case.tail, case.arrays, sides, walk);
             let budget = hop_units(&hop).expect("every measured venue and array count is budgeted");
             assert!(
                 budget >= case.router_compute_units,

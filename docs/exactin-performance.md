@@ -207,7 +207,7 @@ transaction:
 | SOL→pump 10,000 SOL |    37.24B (0.52M CU) | 1,742.96B (1.09M CU) |
 
 The server now splits in chunks. With the router taking grown DLMM oracles and
-each hop budgeted for its Token-2022 sides and fee loop as well (`budget.rs`), the
+each hop budgeted for its Token-2022 and transfer-fee sides and fee loop as well (`budget.rs`), the
 same capture's chunked plans paid exactly what they quoted, in `LiteSVM` and,
 sent through `sendTransaction` with preflight, on Surfpool 1.6.0 started from
 the accounts `LiteSVM` prepared (`just router-surfpool-replay`), in the same
@@ -217,7 +217,7 @@ compute units on both:
 | ------------------- | -------------------: |
 | SOL→USDC 10,000 SOL | 1,166.82B (1.04M CU) |
 | SOL→pump 10 SOL     |    19.06B (0.25M CU) |
-| SOL→pump 10,000 SOL | 1,723.03B (1.07M CU) |
+| SOL→pump 10,000 SOL | 1,727.39B (1.07M CU) |
 
 On the earlier capture, whose CLMM pools lack the
 observation account a swap now names, only the plans without CLMM ran; the

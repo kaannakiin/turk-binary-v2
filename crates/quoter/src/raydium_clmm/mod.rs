@@ -461,13 +461,20 @@ impl Clmm {
                 TOKEN_PROGRAM
             }
         };
+        let has_transfer_fee = |state: &Option<Mint>| {
+            state
+                .as_ref()
+                .is_some_and(|mint| mint.transfer_fee.is_some())
+        };
         let source = TokenSide {
             mint: key(source_mint),
             token_program: token_program(source_state),
+            has_transfer_fee: has_transfer_fee(source_state),
         };
         let destination = TokenSide {
             mint: key(destination_mint),
             token_program: token_program(destination_state),
+            has_transfer_fee: has_transfer_fee(destination_state),
         };
         let accounts = vec![
             WindowAccount::User,

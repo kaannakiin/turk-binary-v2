@@ -1465,12 +1465,15 @@ async fn router_compute_plans() {
                         .swap_window(edge, quote.out.arrays_used, 8, true)
                         .expect("the quoted pool's window");
                     plan["tail"] = json!(window.tail);
+                    let sides = [window.source, window.destination];
                     plan["token2022"] = json!(
-                        [window.source, window.destination]
+                        sides
                             .iter()
                             .filter(|side| side.token_program == domain::chain::TOKEN_2022_PROGRAM)
                             .count()
                     );
+                    plan["transferFee"] =
+                        json!(sides.iter().filter(|side| side.has_transfer_fee).count());
                     plans.push(plan);
                 }
             }

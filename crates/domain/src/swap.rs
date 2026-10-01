@@ -12,6 +12,7 @@ pub enum WindowAccount {
 pub struct TokenSide {
     pub mint: Pubkey,
     pub token_program: Pubkey,
+    pub has_transfer_fee: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -227,6 +227,7 @@ impl AmmV4 {
         let side = |mint| TokenSide {
             mint,
             token_program: TOKEN_PROGRAM,
+            has_transfer_fee: false,
         };
         let (source, destination) = if a_to_b {
             (coin_mint, pc_mint)

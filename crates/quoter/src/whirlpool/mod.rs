@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use dex::{Role, Side};
-use domain::chain::{TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 use domain::{DexKind, Pubkey, SwapWindow, TokenSide, Walk, WindowAccount};
 use orca_whirlpools_client::{
     ORACLE_DISCRIMINATOR, Oracle, TickArray, WHIRLPOOL_DISCRIMINATOR, Whirlpool,
@@ -443,21 +442,8 @@ impl Whirlpools {
         }
         let key = |value: solana_pubkey::Pubkey| Pubkey::new_from_array(value.to_bytes());
         let fixed = |key, writable| WindowAccount::Fixed { key, writable };
-        let token_program = |mint: &Mint| {
-            if mint.token_2022 {
-                TOKEN_2022_PROGRAM
-            } else {
-                TOKEN_PROGRAM
-            }
-        };
-        let side_a = TokenSide {
-            mint: key(pool.token_mint_a),
-            token_program: token_program(mint_a),
-        };
-        let side_b = TokenSide {
-            mint: key(pool.token_mint_b),
-            token_program: token_program(mint_b),
-        };
+        let side_a = mint_a.token_side(key(pool.token_mint_a));
+        let side_b = mint_b.token_side(key(pool.token_mint_b));
         let program = dex::spec(DexKind::OrcaWhirlpool).program_id;
         let mut accounts = base_swap_accounts(pool, pool_key, side_a, side_b, a_to_b);
         let array_key = |start: i32| {
