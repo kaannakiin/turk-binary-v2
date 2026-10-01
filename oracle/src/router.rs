@@ -73,18 +73,20 @@ pub fn machine(programs: &Path, router: &[u8]) -> Machine {
 }
 
 #[derive(Deserialize)]
-struct Plans {
-    plans: Vec<Plan>,
+pub(crate) struct Plans {
+    pub(crate) plans: Vec<Plan>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Plan {
+pub(crate) struct Plan {
+    #[serde(default)]
+    pub(crate) name: String,
     pool: String,
     input_mint: String,
     output_mint: String,
     amount_in: String,
-    expected_out: String,
+    pub(crate) expected_out: String,
     #[serde(default)]
     prefunded_intermediate: Option<Prefund>,
     #[serde(default)]
@@ -96,7 +98,7 @@ struct Plan {
     setup_instructions: Vec<InstructionBody>,
     swap_instruction: InstructionBody,
     cleanup_instructions: Vec<InstructionBody>,
-    transaction: String,
+    pub(crate) transaction: String,
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
@@ -678,7 +680,7 @@ fn replay(
     Ok((machine.balance(&destination), sent))
 }
 
-fn prepare(
+pub(crate) fn prepare(
     machine: &mut Machine,
     clock: &Clock,
     accounts: &HashMap<Pubkey, Option<Stored>>,

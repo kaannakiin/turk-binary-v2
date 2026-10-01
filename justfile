@@ -86,6 +86,13 @@ router-split-replay capture="oracle/snapshots/universe.json.gz":
     ROUTE_UNIVERSE={{justfile_directory()}}/{{capture}} ROUTER_SPLIT_PLANS={{justfile_directory()}}/target/router-split-plans.json cargo nextest run -p server --run-ignored only router_split_plans --no-capture
     cargo run --manifest-path oracle/Cargo.toml -- router {{capture}} target/router-split-plans.json oracle/programs onchain/target/deploy/router.so target/router-split-replay.json
 
+# Surfpool: the split plans `router-split-replay` writes, each on an offline Surfnet started from
+# the accounts LiteSVM prepared for it, sent through its JSON-RPC; each must pay what it quoted.
+router-surfpool-replay capture="oracle/snapshots/universe.json.gz":
+    just router-split-replay {{capture}}
+    cargo run --manifest-path oracle/Cargo.toml -- surfpool {{capture}} target/router-split-plans.json oracle/programs onchain/target/deploy/router.so target/surfpool
+    python3 scripts/surfpool_replay.py target/surfpool/manifest.json target/surfpool-replay.json
+
 # LiteSVM: one-hop swaps of a universe capture from tiny to the largest each pool quotes, sent
 # through the router; records what each spent against the steps and arrays its quote walked.
 router-compute-replay capture="oracle/snapshots/universe.json.gz":

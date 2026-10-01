@@ -32,7 +32,7 @@ pub fn lamports_per_byte(rent: &[u8]) -> u64 {
     );
     u64::from_le_bytes(rent[0..8].try_into().expect("rent"))
 }
-const LOADER_V3: Pubkey = Pubkey::from_str_const("BPFLoaderUpgradeab1e11111111111111111111111");
+pub const LOADER_V3: Pubkey = Pubkey::from_str_const("BPFLoaderUpgradeab1e11111111111111111111111");
 
 pub struct Sent {
     pub compute_units: u64,
@@ -45,6 +45,10 @@ pub struct Machine {
     svm: LiteSVM,
     payer: Keypair,
     pub programs: Vec<Pubkey>,
+}
+
+pub fn program_data(program: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[program.as_ref()], &LOADER_V3).0
 }
 
 pub fn ata(owner: &Pubkey, token_program: &Pubkey, mint: &Pubkey) -> Pubkey {
@@ -264,7 +268,7 @@ impl Machine {
     }
 
     pub fn set_upgrade_authority(&mut self, program: &Pubkey, authority: Option<Pubkey>) {
-        let address = Pubkey::find_program_address(&[program.as_ref()], &LOADER_V3).0;
+        let address = program_data(program);
         let mut account = self.svm.get_account(&address).expect("program data");
         let header = UpgradeableLoaderState::size_of_programdata_metadata();
         let UpgradeableLoaderState::ProgramData { slot, .. } =
@@ -284,15 +288,22 @@ impl Machine {
             .expect("program data");
     }
 
-    /// Signs `unsigned` as the payer, changing nothing else, and sends it.
-    pub fn send_unsigned(&mut self, unsigned: &[u8]) -> Result<Sent, String> {
+    /// Signs `unsigned` as the payer, changing nothing else.
+    pub fn sign(
+        &self,
+        unsigned: &[u8],
+    ) -> Result<solana_transaction::versioned::VersionedTransaction, String> {
         let unsigned: solana_transaction::versioned::VersionedTransaction =
             wincode::deserialize(unsigned).map_err(|e| format!("decoding: {e}"))?;
-        let signed = solana_transaction::versioned::VersionedTransaction::try_new(
+        solana_transaction::versioned::VersionedTransaction::try_new(
             unsigned.message,
             &[&self.payer],
         )
-        .map_err(|e| format!("signing: {e}"))?;
+        .map_err(|e| format!("signing: {e}"))
+    }
+
+    pub fn send_unsigned(&mut self, unsigned: &[u8]) -> Result<Sent, String> {
+        let signed = self.sign(unsigned)?;
         self.svm
             .send_transaction(signed)
             .map(sent)

@@ -8,6 +8,7 @@ mod router;
 mod rpc;
 mod scenarios;
 mod snapshot;
+mod surfpool;
 mod svm;
 mod venue;
 
@@ -274,6 +275,7 @@ fn main() {
         Some("router") => return router::main(&args[1..]),
         Some("router-scenarios") => return scenarios::main(&args[1..]),
         Some("router-matrix") => return scenarios::matrix_main(&args[1..]),
+        Some("surfpool") => return surfpool::main(&args[1..]),
         _ => {}
     }
     let [snapshot_path, programs, out_dir] = args.as_slice() else {
