@@ -11,7 +11,7 @@ use crate::TxError;
 use crate::budget::{Limits, limits};
 use crate::router::{ROUTER_PROGRAM, hop_kind, router_config};
 use crate::token::{
-    associated_token_address, close_account, create_idempotent, sync_native, transfer_lamports,
+    TokenAccounts, close_account, create_idempotent, sync_native, transfer_lamports,
 };
 
 pub const MAX_ACCOUNTS: usize = AccountLimit::MAX.get();
@@ -37,7 +37,7 @@ impl AccountLimit {
 
 #[derive(Debug, Clone, Copy)]
 pub struct SwapRequest<'a> {
-    pub user: Pubkey,
+    pub wallet: &'a TokenAccounts,
     pub hops: &'a [SwapWindow],
     pub amount_in: u64,
     pub min_out: u64,
@@ -56,7 +56,7 @@ pub struct FlowAllocation {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FlowSwapRequest<'a> {
-    pub user: Pubkey,
+    pub wallet: &'a TokenAccounts,
     pub slots: &'a [TokenSide],
     pub windows: &'a [SwapWindow],
     pub allocations: &'a [FlowAllocation],
@@ -241,19 +241,20 @@ fn build_flow_once(
             min_out: request.min_out,
         });
     }
-    let user = &request.user;
+    let wallet = request.wallet;
+    let user = wallet.owner();
     let wraps_in = request.wrap_sol && request.slots[0].mint == NATIVE_MINT;
     let wraps_out = request.wrap_sol && request.slots[1].mint == NATIVE_MINT;
 
     let setup = setup_instructions(
-        user,
+        wallet,
         request.slots[0],
         request.slots.iter().copied(),
         request.amount_in,
         request.wrap_sol,
     );
     let cleanup = cleanup_instructions(
-        user,
+        wallet,
         [(wraps_in, request.slots[0]), (wraps_out, request.slots[1])],
     );
 
@@ -283,19 +284,20 @@ fn build_once(request: &SwapRequest, hops: &[SwapWindow]) -> Result<SwapInstruct
             min_out: request.min_out,
         });
     }
-    let user = &request.user;
+    let wallet = request.wallet;
+    let user = wallet.owner();
     let wraps_in = request.wrap_sol && first.source.mint == NATIVE_MINT;
     let wraps_out = request.wrap_sol && last.destination.mint == NATIVE_MINT;
 
     let setup = setup_instructions(
-        user,
+        wallet,
         first.source,
         hops.iter().map(|hop| hop.destination),
         request.amount_in,
         request.wrap_sol,
     );
     let cleanup = cleanup_instructions(
-        user,
+        wallet,
         [(wraps_in, first.source), (wraps_out, last.destination)],
     );
 
@@ -333,12 +335,8 @@ fn endpoints(hops: &[SwapWindow]) -> Result<(&SwapWindow, &SwapWindow), TxError>
     Ok((first, last))
 }
 
-fn ata(user: &Pubkey, side: &TokenSide) -> Pubkey {
-    associated_token_address(user, &side.mint, &side.token_program)
-}
-
 fn setup_instructions<I>(
-    user: &Pubkey,
+    wallet: &TokenAccounts,
     root: TokenSide,
     destinations: I,
     amount_in: u64,
@@ -347,42 +345,34 @@ fn setup_instructions<I>(
 where
     I: IntoIterator<Item = TokenSide>,
 {
+    let user = wallet.owner();
     let wraps_in = wrap_sol && root.mint == NATIVE_MINT;
     let mut setup = Vec::new();
     let mut created = BTreeSet::new();
     if wraps_in {
-        let wsol = ata(user, &root);
-        setup.push(create_idempotent(
-            user,
-            user,
-            &NATIVE_MINT,
-            &root.token_program,
-        ));
+        let wsol = wallet.of(&root);
+        setup.push(create_idempotent(user, wallet, &root));
         setup.push(transfer_lamports(user, &wsol, amount_in));
         setup.push(sync_native(&wsol));
         created.insert(root);
     }
     for side in destinations {
         if created.insert(side) {
-            setup.push(create_idempotent(
-                user,
-                user,
-                &side.mint,
-                &side.token_program,
-            ));
+            setup.push(create_idempotent(user, wallet, &side));
         }
     }
     setup
 }
 
 fn cleanup_instructions<const N: usize>(
-    user: &Pubkey,
+    wallet: &TokenAccounts,
     wrapped: [(bool, TokenSide); N],
 ) -> Vec<Instruction> {
+    let user = wallet.owner();
     wrapped
         .into_iter()
         .filter(|(is_wrapped, _)| *is_wrapped)
-        .map(|(_, side)| ata(user, &side))
+        .map(|(_, side)| wallet.of(&side))
         .collect::<BTreeSet<_>>()
         .iter()
         .map(|wsol| close_account(wsol, user, user))
@@ -395,11 +385,12 @@ fn route_instruction(
     first: &SwapWindow,
     last: &SwapWindow,
 ) -> Result<Instruction, TxError> {
-    let user = request.user;
+    let wallet = request.wallet;
+    let user = *wallet.owner();
     let mut accounts = vec![
         AccountMeta::new(user, true),
-        AccountMeta::new(ata(&user, &first.source), false),
-        AccountMeta::new(ata(&user, &last.destination), false),
+        AccountMeta::new(wallet.of(&first.source), false),
+        AccountMeta::new(wallet.of(&last.destination), false),
         AccountMeta::new_readonly(router_config(), false),
     ];
     let mut plan = Vec::with_capacity(hops.len());
@@ -411,7 +402,7 @@ fn route_instruction(
             tail: hop.tail,
             min_out,
         });
-        let (source, destination) = (ata(&user, &hop.source), ata(&user, &hop.destination));
+        let (source, destination) = (wallet.of(&hop.source), wallet.of(&hop.destination));
         accounts.push(AccountMeta::new_readonly(hop.program_id, false));
         accounts.extend(hop.accounts.iter().map(|account| match *account {
             WindowAccount::User => AccountMeta::new(user, true),
@@ -444,18 +435,19 @@ fn flow_instruction(
     request: &FlowSwapRequest,
     windows: &[SwapWindow],
 ) -> Result<Instruction, TxError> {
-    let user = request.user;
+    let wallet = request.wallet;
+    let user = *wallet.owner();
     let mut accounts = vec![
         AccountMeta::new(user, true),
-        AccountMeta::new(ata(&user, &request.slots[0]), false),
-        AccountMeta::new(ata(&user, &request.slots[1]), false),
+        AccountMeta::new(wallet.of(&request.slots[0]), false),
+        AccountMeta::new(wallet.of(&request.slots[1]), false),
         AccountMeta::new_readonly(router_config(), false),
     ];
     accounts.extend(
         request
             .slots
             .iter()
-            .map(|side| AccountMeta::new(ata(&user, side), false)),
+            .map(|side| AccountMeta::new(wallet.of(side), false)),
     );
 
     let mut steps = Vec::with_capacity(windows.len());
@@ -487,8 +479,8 @@ fn flow_instruction(
             },
         });
 
-        let source_ata = ata(&user, source);
-        let destination_ata = ata(&user, destination);
+        let source_ata = wallet.of(source);
+        let destination_ata = wallet.of(destination);
         accounts.push(AccountMeta::new_readonly(window.program_id, false));
         accounts.extend(window.accounts.iter().map(|account| match *account {
             WindowAccount::User => AccountMeta::new(user, true),

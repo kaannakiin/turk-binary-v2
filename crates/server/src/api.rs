@@ -211,6 +211,7 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
             max_accounts: quoted.max_accounts,
         },
     };
+    let wallet = tx::TokenAccounts::new(swapping.user);
     let hop_min_outs = service::hop_min_outs(
         priced
             .routed
@@ -234,7 +235,7 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
             .all(|pair| pair[0].allocation.destination == pair[1].allocation.source);
     let instructions = if linear {
         tx::build(&SwapRequest {
-            user: swapping.user,
+            wallet: &wallet,
             hops: &priced.windows,
             amount_in: priced.routed.amount_in,
             min_out,
@@ -256,7 +257,7 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
             })
             .collect();
         tx::build_flow(&tx::FlowSwapRequest {
-            user: swapping.user,
+            wallet: &wallet,
             slots: &slots,
             windows: &priced.windows,
             allocations: &allocations,

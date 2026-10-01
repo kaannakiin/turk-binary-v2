@@ -7,11 +7,19 @@ use solana_instruction::AccountMeta;
 
 use crate::{
     AccountLimit, FlowAllocation, FlowSwapRequest, MAX_ACCOUNTS, MAX_TRANSACTION_BYTES,
-    ROUTER_PROGRAM, SwapRequest, TxError, build, build_flow, router_config, unsigned_v1,
+    ROUTER_PROGRAM, SwapRequest, TokenAccounts, TxError, build, build_flow, router_config,
+    unsigned_v1,
 };
 
 const CPMM: Pubkey = Pubkey::from_str_const("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
 const HOP_MIN_OUTS: [u64; 5] = [1_917_139_225; 5];
+
+fn wallet() -> &'static TokenAccounts {
+    thread_local! {
+        static WALLET: &'static TokenAccounts = Box::leak(Box::new(TokenAccounts::new(USER)));
+    }
+    WALLET.with(|wallet| *wallet)
+}
 
 // src: mainnet tx 49Gr3dn1wF3QkLzACMVCnnZj9SXRKe3UgWAxdc7oL11fhncYR2Sn7fwqzgpWwRyL72CSSeU29x7cUCb9cnetC2PX
 // (slot 451386322): the swapper, its input account, and the pool's fixed swap_base_input accounts.
@@ -156,7 +164,7 @@ fn two_many_array_clmm_hops_are_rejected_before_account_assembly() {
 
 fn request(hops: &[SwapWindow]) -> SwapRequest<'_> {
     SwapRequest {
-        user: USER,
+        wallet: wallet(),
         hops,
         amount_in: 76_890_690_099,
         min_out: 1_917_139_225,
@@ -232,7 +240,7 @@ fn a_flow_builds_slot_accounts_and_flow_wire_steps() {
         denominator: 1,
     }];
     let request = FlowSwapRequest {
-        user: USER,
+        wallet: wallet(),
         slots: &slots,
         windows: &windows,
         allocations: &allocations,
@@ -298,7 +306,7 @@ fn split_merge() -> SplitMerge {
 impl SplitMerge {
     fn request(&self) -> FlowSwapRequest<'_> {
         FlowSwapRequest {
-            user: USER,
+            wallet: wallet(),
             slots: &self.slots,
             windows: &self.windows,
             allocations: &self.allocations,
@@ -392,7 +400,7 @@ fn a_non_dlmm_flow_over_compute_limit_is_refused() {
         },
     ];
     let request = FlowSwapRequest {
-        user: USER,
+        wallet: wallet(),
         slots: &slots,
         windows: &windows,
         allocations: &allocations,

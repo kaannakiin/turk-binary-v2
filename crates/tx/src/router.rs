@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use domain::{DexKind, Pubkey};
 use router_wire::{CONFIG_SEED, HopKind};
 
@@ -9,7 +11,9 @@ pub const ROUTER_PROGRAM: Pubkey =
 
 #[must_use]
 pub fn router_config() -> Pubkey {
-    Pubkey::find_program_address(&[CONFIG_SEED], &ROUTER_PROGRAM).0
+    static CONFIG: LazyLock<Pubkey> =
+        LazyLock::new(|| Pubkey::find_program_address(&[CONFIG_SEED], &ROUTER_PROGRAM).0);
+    *CONFIG
 }
 
 #[must_use]

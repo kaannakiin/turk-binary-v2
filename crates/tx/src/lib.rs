@@ -15,7 +15,7 @@ pub use plan::{
 pub use router::{ROUTER_PROGRAM, router_config, supports};
 pub use slippage::{MAX_SLIPPAGE_BPS, min_out};
 pub use solana_instruction::{AccountMeta, Instruction};
-pub use token::associated_token_address;
+pub use token::{TokenAccounts, associated_token_address};
 pub use transaction::{MAX_TRANSACTION_BYTES, unsigned_v1};
 
 #[cfg(test)]

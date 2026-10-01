@@ -96,7 +96,7 @@ impl Filter for DexFilter {
 /// venues the router lacks admits no pool, never every pool.
 struct Swappable<'a> {
     dexes: &'a DexFilter,
-    user: Pubkey,
+    wallet: tx::TokenAccounts,
     wrap_sol: bool,
     max_arrays: u8,
     slippage_bps: u16,
@@ -234,7 +234,7 @@ fn admissible_flow(
             .all(|pair| pair[0].destination == pair[1].source);
     let built = if linear {
         tx::build(&tx::SwapRequest {
-            user: filter.user,
+            wallet: &filter.wallet,
             hops: &windows,
             amount_in: flow.amount_in,
             min_out,
@@ -244,7 +244,7 @@ fn admissible_flow(
         })
     } else {
         tx::build_flow(&tx::FlowSwapRequest {
-            user: filter.user,
+            wallet: &filter.wallet,
             slots: &slots,
             windows: &windows,
             allocations: &allocations,
@@ -420,7 +420,7 @@ impl<F: PoolFeed> QuoteService<F> {
     ) -> Swappable<'a> {
         Swappable {
             dexes: &request.dexes,
-            user,
+            wallet: tx::TokenAccounts::new(user),
             wrap_sol,
             max_arrays: self.settings.max_arrays,
             slippage_bps,
@@ -869,7 +869,7 @@ mod tests {
             .expect("a route the venue filter alone admits");
         let swappable = Swappable {
             dexes: &venues,
-            user: QUOTE_USER,
+            wallet: tx::TokenAccounts::new(QUOTE_USER),
             wrap_sol: true,
             max_arrays: 8,
             slippage_bps: 50,
