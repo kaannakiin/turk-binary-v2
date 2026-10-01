@@ -134,3 +134,20 @@ and 5,013 allocations, but an unwrapped build can leave the native mint out and
 undercount a wrapped swap, so the quote stays wrapped. The cost is the
 candidate builds a `/quote` skipped before, when it could answer a route no
 swap endpoint would build.
+
+The candidate check then stopped compiling each admitted transaction a second
+time, and the finalist, priced again on the newest state, is admitted again
+there. Two more runs of the same matrix (allocations per request are exact; the
+latencies moved between the two runs by up to 1.6× in one cell, so only the
+allocations are a firm result):
+
+| `/quote`      |   C | first change, alloc | then, alloc | p50, two runs (µs) |
+| ------------- | --: | ------------------: | ----------: | -----------------: |
+| single route  |   1 |               1,332 |       1,339 |          349 / 359 |
+| split allowed |   1 |               5,858 |       5,270 |        1977 / 1977 |
+| split allowed |   4 |               5,857 |       5,269 |        3601 / 2275 |
+
+`/swap-instructions` split allowed went from 5,537 to 5,176 allocations and
+`/swap` from 5,140 to 4,779, below `main`. A single-route `/quote` is about
+55 µs slower in both runs: the finalist's own admission, one more build per
+request.

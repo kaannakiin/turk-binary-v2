@@ -17,7 +17,7 @@ use crate::api::{self, Api};
 use crate::{QuoteSettings, QuoteSlot, SearchPool};
 
 #[path = "../../../route/tests/support/universe.rs"]
-pub(super) mod universe;
+pub(crate) mod universe;
 
 const CPMM: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -670,21 +670,64 @@ async fn a_quote_routes_only_through_venues_the_router_can_swap() {
 // mask, a 32-byte lifetime, the instruction count, then the address count).
 const V1_ADDRESS_COUNT: usize = 41;
 
-#[tokio::test]
-async fn a_quote_names_no_more_accounts_than_the_caller_allows() {
+async fn swapped_addresses(fixture: &Fixture, quote_request: &Value) -> u8 {
     use base64::Engine as _;
-    let best = best_sol_to_usdc_pool();
-    let fixture = Fixture::over_selected(CPMM, &[&best.pool], 1, 4);
     fixture.blockhashes.set(domain::chain::LatestBlockhash {
         hash: [7; 32],
         last_valid_block_height: 123,
     });
-    let (status, _, swapped) = call(fixture.router(), post_to("/swap", &swap_one_sol())).await;
+    let body = json!({ "userWalletAddress": USER, "quoteRequest": quote_request });
+    let (status, _, swapped) = call(fixture.router(), post_to("/swap", &body)).await;
     assert_eq!(status, StatusCode::OK, "{swapped}");
     let transaction = base64::engine::general_purpose::STANDARD
         .decode(swapped["transaction"].as_str().expect("base64"))
         .expect("base64");
-    let addresses = transaction[V1_ADDRESS_COUNT];
+    transaction[V1_ADDRESS_COUNT]
+}
+
+#[tokio::test]
+async fn a_quote_takes_the_best_route_that_fits_when_a_better_one_does_not() {
+    let fixture = Fixture::over_selected(AMM_V4_ROUTES, &[V4_SOL_USDC, CPMM_SOL_USDC], 1, 4);
+    let through = |pool: Option<&str>| {
+        let mut request = sol_to_usdc();
+        request["amount"] = json!(ONE_SOL);
+        if let Some(pool) = pool {
+            request["allowedPools"] = json!([pool]);
+        }
+        request
+    };
+    let (status, _, best) = call(fixture.router(), post(&through(None))).await;
+    assert_eq!(status, StatusCode::OK, "{best}");
+    let best_pool = best["operations"][0]["poolAddress"].as_str().expect("pool");
+    let other = if best_pool == V4_SOL_USDC {
+        CPMM_SOL_USDC
+    } else {
+        V4_SOL_USDC
+    };
+    let best_accounts = swapped_addresses(&fixture, &through(Some(best_pool))).await;
+    let other_accounts = swapped_addresses(&fixture, &through(Some(other))).await;
+    assert!(
+        other_accounts < best_accounts,
+        "the pool paying more names more accounts: {best_accounts} against {other_accounts}"
+    );
+    let (_, _, alone) = call(fixture.router(), post(&through(Some(other)))).await;
+
+    let mut fitted = through(None);
+    fitted["maxAccounts"] = json!(other_accounts);
+    let (status, _, fitted) = call(fixture.router(), post(&fitted)).await;
+
+    assert_eq!(status, StatusCode::OK, "{fitted}");
+    assert_eq!(fitted["operations"][0]["poolAddress"], other);
+    assert_eq!(fitted["toTokenAmount"], alone["toTokenAmount"]);
+}
+
+#[tokio::test]
+async fn a_quote_names_no_more_accounts_than_the_caller_allows() {
+    let best = best_sol_to_usdc_pool();
+    let fixture = Fixture::over_selected(CPMM, &[&best.pool], 1, 4);
+    let mut one_sol = sol_to_usdc();
+    one_sol["amount"] = json!(ONE_SOL);
+    let addresses = swapped_addresses(&fixture, &one_sol).await;
     let quote = |max_accounts: u8| {
         let mut request = sol_to_usdc();
         request["amount"] = json!(ONE_SOL);

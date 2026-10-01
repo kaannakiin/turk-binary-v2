@@ -232,7 +232,7 @@ fn admissible_flow(
         && allocations
             .windows(2)
             .all(|pair| pair[0].destination == pair[1].source);
-    let instructions = if linear {
+    let built = if linear {
         tx::build(&tx::SwapRequest {
             user: filter.user,
             hops: &windows,
@@ -242,8 +242,6 @@ fn admissible_flow(
             wrap_sol: filter.wrap_sol,
             max_accounts: filter.max_accounts,
         })
-        .inspect_err(|error| filter.note(error))
-        .ok()?
     } else {
         tx::build_flow(&tx::FlowSwapRequest {
             user: filter.user,
@@ -256,11 +254,8 @@ fn admissible_flow(
             wrap_sol: filter.wrap_sol,
             max_accounts: filter.max_accounts,
         })
-        .inspect_err(|error| filter.note(error))
-        .ok()?
     };
-    tx::unsigned_v1(&instructions, &filter.user, [0; 32], 0).ok()?;
-    Some(())
+    built.inspect_err(|error| filter.note(error)).ok().map(drop)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,6 +344,8 @@ pub(crate) enum Changed {
     Unusable { pool: Pubkey, reason: RouteError },
     #[error("published again while priced: {0:?}")]
     Stale(Vec<Pubkey>),
+    #[error("priced again, the route no longer fits the transaction budgets")]
+    Unbuildable,
 }
 
 pub(crate) struct QuoteService<F> {
@@ -482,21 +479,7 @@ impl<F: PoolFeed> QuoteService<F> {
         // The search compared paths on pins taken at different moments; the
         // answer is the winner priced again on the newest state and Clock.
         let mut now = self.quotes.session().map_err(|_| ServiceError::NotReady)?;
-        let path = now
-            .requote_flow(&best, self.settings.max_arrays)
-            .map_err(|error| ServiceError::RouteChanged(Changed::Requote(error)))?;
-        // Each pool is checked as it is pinned; one pinned early can still
-        // change or become unusable before the last is quoted.
-        match now.verify(path.operations.iter().map(|op| op.leg.edge.pool())) {
-            Verdict::Current(_) => {}
-            Verdict::Stale(pools) => return Err(ServiceError::RouteChanged(Changed::Stale(pools))),
-            Verdict::Unusable { pool, reason } => {
-                return Err(ServiceError::RouteChanged(Changed::Unusable {
-                    pool,
-                    reason,
-                }));
-            }
-        }
+        let path = settle(&mut now, &best, &filter, self.settings.max_arrays)?;
         let windows = if windows {
             path.operations
                 .iter()
@@ -697,6 +680,32 @@ impl<F: PoolFeed> QuoteService<F> {
     }
 }
 
+fn settle(
+    now: &mut SearchSession,
+    best: &route::Flow,
+    filter: &impl Filter,
+    max_arrays: u8,
+) -> Result<route::Flow, ServiceError> {
+    let path = now
+        .requote_flow(best, max_arrays)
+        .map_err(|error| ServiceError::RouteChanged(Changed::Requote(error)))?;
+    // Newer state can walk more tick or bin arrays than the search admitted:
+    // more accounts and compute for the same route.
+    if !filter.flow(now, &path) {
+        return Err(ServiceError::RouteChanged(Changed::Unbuildable));
+    }
+    // Each pool is checked as it is pinned; one pinned early can still
+    // change or become unusable before the last is quoted.
+    match now.verify(path.operations.iter().map(|op| op.leg.edge.pool())) {
+        Verdict::Current(_) => Ok(path),
+        Verdict::Stale(pools) => Err(ServiceError::RouteChanged(Changed::Stale(pools))),
+        Verdict::Unusable { pool, reason } => Err(ServiceError::RouteChanged(Changed::Unusable {
+            pool,
+            reason,
+        })),
+    }
+}
+
 fn validate_flow_amounts(
     routed: &Routed,
     max_operations: u8,
@@ -811,4 +820,69 @@ fn quoted_edge(topology: &Topology, leg: &RoutedLeg) -> Result<graph::EdgeId, Se
         ));
     }
     Ok(edge)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use route::{FlowOptions, Goal, Query};
+
+    use super::{Changed, Cycles, DexFilter, QUOTE_USER, ServiceError, Swappable, settle};
+
+    use crate::tests::universe;
+
+    const DLMM: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz"
+    );
+    // src: crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz (direct LiteSVM payout).
+    const DLMM_TWO_ARRAYS: &str = "3msVd34R5KxonDzyNSV5nT19UtUeJ2RF1NaQhvVPNLxL";
+    const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const WSOL: &str = "So11111111111111111111111111111111111111112";
+
+    #[test]
+    fn a_finalist_that_no_longer_fits_the_budgets_once_priced_again_is_refused() {
+        let universe = universe::load_selected_from(DLMM, &[DLMM_TWO_ARRAYS]);
+        let mint = |address: &str| {
+            universe
+                .topology
+                .mint_id(&address.parse().expect("mint address"))
+                .expect("a mint of the pool")
+        };
+        let query = Query {
+            from: mint(USDC),
+            goal: Goal::To(mint(WSOL)),
+            amount_in: 1_000_000_000,
+            max_hops: 1,
+            max_arrays: 8,
+            max_quotes: 1_000,
+            per_pair: None,
+        };
+        let venues = DexFilter::default();
+        let best = universe
+            .reader
+            .session()
+            .expect("session")
+            .search_flow(&query, &venues, FlowOptions::default())
+            .best
+            .expect("a route the venue filter alone admits");
+        let swappable = Swappable {
+            dexes: &venues,
+            user: QUOTE_USER,
+            wrap_sol: true,
+            max_arrays: 8,
+            slippage_bps: 50,
+            max_accounts: tx::AccountLimit::MAX,
+            cycles: Cycles::MayLose,
+            refused_unprofitable_cycle: Cell::new(false),
+        };
+        let mut now = universe.reader.session().expect("session");
+
+        assert!(settle(&mut now, &best, &venues, 8).is_ok());
+        assert!(matches!(
+            settle(&mut now, &best, &swappable, 8),
+            Err(ServiceError::RouteChanged(Changed::Unbuildable))
+        ));
+    }
 }

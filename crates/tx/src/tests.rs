@@ -253,8 +253,13 @@ fn a_flow_builds_slot_accounts_and_flow_wire_steps() {
     assert_eq!(built.swap.accounts[2].pubkey, USER_OUTPUT_ATA);
 }
 
-#[test]
-fn a_flow_encodes_split_and_merge_dependencies() {
+struct SplitMerge {
+    slots: [TokenSide; 3],
+    windows: [SwapWindow; 4],
+    allocations: [FlowAllocation; 4],
+}
+
+fn split_merge() -> SplitMerge {
     let input = TokenSide {
         mint: INPUT_MINT,
         token_program: TOKEN_2022_PROGRAM,
@@ -267,51 +272,50 @@ fn a_flow_encodes_split_and_merge_dependencies() {
         mint: Pubkey::new_from_array([44; 32]),
         token_program: TOKEN_PROGRAM,
     };
-    let windows = [
-        cpmm_window(input, middle),
-        cpmm_window(input, middle),
-        cpmm_window(middle, output),
-        cpmm_window(middle, output),
-    ];
-    let slots = [input, output, middle];
-    let allocations = [
-        FlowAllocation {
-            source: 0,
-            destination: 2,
-            numerator: 1,
-            denominator: 2,
-        },
-        FlowAllocation {
-            source: 0,
-            destination: 2,
-            numerator: 1,
-            denominator: 1,
-        },
-        FlowAllocation {
-            source: 2,
-            destination: 1,
-            numerator: 1,
-            denominator: 2,
-        },
-        FlowAllocation {
-            source: 2,
-            destination: 1,
-            numerator: 1,
-            denominator: 1,
-        },
-    ];
-    let request = FlowSwapRequest {
-        user: USER,
-        slots: &slots,
-        windows: &windows,
-        allocations: &allocations,
-        step_min_outs: &[1, 1, 1, 1],
-        amount_in: 76_890_690_099,
-        min_out: 1,
-        wrap_sol: false,
-        max_accounts: AccountLimit::MAX,
+    let share = |source, destination, numerator, denominator| FlowAllocation {
+        source,
+        destination,
+        numerator,
+        denominator,
     };
-    let built = build_flow(&request).unwrap();
+    SplitMerge {
+        slots: [input, output, middle],
+        windows: [
+            cpmm_window(input, middle),
+            cpmm_window(input, middle),
+            cpmm_window(middle, output),
+            cpmm_window(middle, output),
+        ],
+        allocations: [
+            share(0, 2, 1, 2),
+            share(0, 2, 1, 1),
+            share(2, 1, 1, 2),
+            share(2, 1, 1, 1),
+        ],
+    }
+}
+
+impl SplitMerge {
+    fn request(&self) -> FlowSwapRequest<'_> {
+        FlowSwapRequest {
+            user: USER,
+            slots: &self.slots,
+            windows: &self.windows,
+            allocations: &self.allocations,
+            step_min_outs: &[1, 1, 1, 1],
+            amount_in: 76_890_690_099,
+            min_out: 1,
+            wrap_sol: false,
+            max_accounts: AccountLimit::MAX,
+        }
+    }
+}
+
+#[test]
+fn a_flow_encodes_split_and_merge_dependencies() {
+    let plan = split_merge();
+    let [input, output, middle] = plan.slots;
+    let built = build_flow(&plan.request()).unwrap();
     let RouterInstruction::Flow(route) = RouterInstruction::decode(&built.swap.data).unwrap()
     else {
         panic!("split/merge request encoded as linear route");
@@ -545,6 +549,36 @@ fn a_route_is_built_at_the_callers_account_limit_and_refused_one_below_it() {
     };
     assert_eq!(
         build(&below),
+        Err(TxError::TooManyAccounts {
+            count: addresses,
+            max: addresses - 1
+        })
+    );
+}
+
+#[test]
+fn a_split_and_merge_is_built_at_its_merged_account_count_and_refused_one_below_it() {
+    let plan = split_merge();
+    let built = build_flow(&plan.request()).unwrap();
+    let addresses = compiled_addresses(&built);
+    let listed: usize = plan
+        .windows
+        .iter()
+        .map(|window| window.accounts.len())
+        .sum();
+    assert!(addresses < listed, "the windows share accounts");
+
+    let at = FlowSwapRequest {
+        max_accounts: limit(addresses),
+        ..plan.request()
+    };
+    assert_eq!(build_flow(&at), Ok(built));
+    let below = FlowSwapRequest {
+        max_accounts: limit(addresses - 1),
+        ..plan.request()
+    };
+    assert_eq!(
+        build_flow(&below),
         Err(TxError::TooManyAccounts {
             count: addresses,
             max: addresses - 1

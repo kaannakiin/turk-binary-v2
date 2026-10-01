@@ -12,6 +12,8 @@ mod ready;
 mod serve;
 mod service;
 
+pub(crate) use api::universe;
+
 async fn call(router: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {
     let response = router.oneshot(request).await.expect("router is infallible");
     let status = response.status();

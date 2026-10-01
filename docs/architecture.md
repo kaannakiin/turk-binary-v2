@@ -302,17 +302,17 @@ Unknown fields are refused, so legacy names such as `dexes`, `excludeDexes` and 
 
 Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 
-| Status | `code`            | When                                                                                                                                                   |
-| ------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 400    | `INVALID_REQUEST` | The body does not parse, a field is malformed or unknown, `maxHops` or `maxAccounts` is out of range, or the mints contradict `enableCyclicArbitrage`. |
-| 422    | `UNKNOWN_MINT`    | A mint no watched pool trades.                                                                                                                         |
-| 422    | `NO_ROUTE`        | No path; `error.search` says whether pruning or the budget may have hidden one.                                                                        |
-| 503    | `NOT_READY`       | The engine has not started yet, or has no Clock.                                                                                                       |
-| 503    | `STALE_DATA`      | The Clock has not moved for `ready.max_clock_stall_ms`: the feed stalled, however ready its pools still look.                                          |
-| 503    | `OVERLOADED`      | Every search thread is busy and `quote.max_queued` searches wait. Answered at once, with `Retry-After: 1`.                                             |
-| 503    | `ROUTE_CHANGED`   | A pool of the winning path failed its requote, or `verify` after it found one unusable or published again. Asking again searches again.                |
-| 504    | `TIMEOUT`         | The search did not finish within `quote.timeout_ms`, queue time included.                                                                              |
-| 500    | `INTERNAL`        | The search panicked. The thread survives.                                                                                                              |
+| Status | `code`            | When                                                                                                                                                                                                                    |
+| ------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `INVALID_REQUEST` | The body does not parse, a field is malformed or unknown, `maxHops` or `maxAccounts` is out of range, or the mints contradict `enableCyclicArbitrage`.                                                                  |
+| 422    | `UNKNOWN_MINT`    | A mint no watched pool trades.                                                                                                                                                                                          |
+| 422    | `NO_ROUTE`        | No path; `error.search` says whether pruning or the budget may have hidden one.                                                                                                                                         |
+| 503    | `NOT_READY`       | The engine has not started yet, or has no Clock.                                                                                                                                                                        |
+| 503    | `STALE_DATA`      | The Clock has not moved for `ready.max_clock_stall_ms`: the feed stalled, however ready its pools still look.                                                                                                           |
+| 503    | `OVERLOADED`      | Every search thread is busy and `quote.max_queued` searches wait. Answered at once, with `Retry-After: 1`.                                                                                                              |
+| 503    | `ROUTE_CHANGED`   | A pool of the winning path failed its requote, the route priced again no longer fits `maxAccounts` or the transaction budgets, or `verify` after it found one unusable or published again. Asking again searches again. |
+| 504    | `TIMEOUT`         | The search did not finish within `quote.timeout_ms`, queue time included.                                                                                                                                               |
+| 500    | `INTERNAL`        | The search panicked. The thread survives.                                                                                                                                                                               |
 
 ### `POST /swap-instructions` and `POST /swap`
 
