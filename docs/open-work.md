@@ -12,7 +12,7 @@ The budget should come from a structure fed continuously instead, as Pallas serv
 - take every other account's data length from the market's own views, which already hold them;
 - compute the limit exactly per SIMD-0186 (data length plus 64 bytes per account, programdata of LoaderV3 programs), with headroom for the accounts the setup creates, rounded up to 32 KiB pages (SIMD-0553).
 
-The compute unit limit has the same shape: per-venue budgets from `just router-replay` today, better measured per route (simulation, or a replay-fed table per venue and hop shape).
+The compute unit limit is a per-hop model fitted to replayed swaps (`just router-compute-replay`); it covers only what the replays reached. DLMM windows of four to eight bin arrays are refused because no measured swap took more than three, and a swap whose estimate alone passes 1.4 million is refused unmeasured. Simulating the route before sending would replace the estimate with what it spends.
 
 The AMM v4/CPMM matrix snapshots contain market closure accounts at one slot, but CPMM observation accounts are fetched when `oracle router-matrix` first runs and cached with their bytes in the replay fixture. Later replay runs are deterministic from that fixture. A future capture should fetch observation accounts alongside pool state at the same slot; the current cached observation bytes may come from a later slot.
 

@@ -1374,12 +1374,12 @@ async fn router_split_plans() {
 }
 
 /// One-hop swaps of a universe capture from tiny to the largest each pool
-/// quotes, with the steps and arrays their quote walked; `just
+/// quotes, on the first pools of each DEX and on those whose walks reach the
+/// most arrays, with the steps and arrays their quote walked; `just
 /// router-compute-replay` records what each spent in the router.
 #[tokio::test]
 #[ignore = "writes one-hop compute plans of a universe capture for `just router-compute-replay`"]
 async fn router_compute_plans() {
-    const POOLS_PER_DEX: usize = 12;
     let output = std::env::var("ROUTER_COMPUTE_PLANS").expect("output path");
     let pricing = universe::load();
     let fixture = Fixture::from_universe(universe::load(), 1, 4);
@@ -1388,23 +1388,19 @@ async fn router_compute_plans() {
         last_valid_block_height: 1,
     });
     let topology = Arc::clone(&pricing.topology);
-    let mut taken = std::collections::HashMap::<domain::DexKind, usize>::new();
+    let selected = compute_pools(&pricing);
     let mut plans = Vec::new();
-    for node in topology.pools() {
-        if !tx::supports(node.dex) {
-            continue;
-        }
-        let count = taken.entry(node.dex).or_default();
-        if *count == POOLS_PER_DEX {
-            continue;
-        }
-        *count += 1;
+    for node in topology
+        .pools()
+        .iter()
+        .filter(|node| selected.contains(&node.pubkey))
+    {
         let pool = topology.pool_id(&node.pubkey).expect("pool");
         for (from, to) in [(node.mint_a, node.mint_b), (node.mint_b, node.mint_a)] {
             let edge = topology.edge(pool, from).expect("edge");
             let mut session = pricing.reader.session().expect("session");
-            let mut amount: u64 = 1_000;
-            while let Ok(quote) = session.quote(edge, amount, 8) {
+            for amount in ladder(&mut session, edge) {
+                let quote = session.quote(edge, amount, 8).expect("quoted above");
                 let request = json!({
                     "fromTokenAddress": topology.mint(from).to_string(),
                     "toTokenAddress": topology.mint(to).to_string(),
@@ -1420,17 +1416,104 @@ async fn router_compute_plans() {
                     plan["span"] = json!(quote.out.walk.span);
                     plan["crossed"] = json!(quote.out.walk.crossed);
                     plan["arraysUsed"] = json!(quote.out.arrays_used);
+                    let window = session
+                        .swap_window(edge, quote.out.arrays_used, 8, true)
+                        .expect("the quoted pool's window");
+                    plan["tail"] = json!(window.tail);
+                    plan["token2022"] = json!(
+                        [window.source, window.destination]
+                            .iter()
+                            .filter(|side| side.token_program == domain::chain::TOKEN_2022_PROGRAM)
+                            .count()
+                    );
                     plans.push(plan);
                 }
-                let Some(next) = amount.checked_mul(4) else {
-                    break;
-                };
-                amount = next;
             }
         }
     }
     let file = std::fs::File::create(output).expect("plans file");
     serde_json::to_writer(file, &json!({ "plans": plans })).expect("write plans");
+}
+
+fn compute_pools(pricing: &universe::Universe) -> std::collections::HashSet<domain::Pubkey> {
+    const POOLS_PER_DEX: usize = 20;
+    const WIDE_POOLS_PER_DEX: usize = 8;
+    const WIDE: u8 = 4;
+    let topology = &pricing.topology;
+    let reach = |pool, from| {
+        let edge = topology.edge(pool, from).expect("edge");
+        let mut session = pricing.reader.session().expect("session");
+        ladder(&mut session, edge)
+            .into_iter()
+            .map(|amount| {
+                session
+                    .quote(edge, amount, 8)
+                    .expect("laddered")
+                    .out
+                    .arrays_used
+            })
+            .max()
+            .unwrap_or(0)
+    };
+    let mut first = std::collections::HashMap::<domain::DexKind, usize>::new();
+    let mut wide = std::collections::HashMap::<domain::DexKind, Vec<_>>::new();
+    let mut selected = std::collections::HashSet::new();
+    for node in topology
+        .pools()
+        .iter()
+        .filter(|node| tx::supports(node.dex))
+    {
+        let taken = first.entry(node.dex).or_default();
+        if *taken < POOLS_PER_DEX {
+            *taken += 1;
+            selected.insert(node.pubkey);
+            continue;
+        }
+        let pool = topology.pool_id(&node.pubkey).expect("pool");
+        let widest = reach(pool, node.mint_a).max(reach(pool, node.mint_b));
+        if widest >= WIDE {
+            wide.entry(node.dex)
+                .or_default()
+                .push((widest, node.pubkey));
+        }
+    }
+    for mut pools in wide.into_values() {
+        pools.sort_by_key(|&(widest, _)| std::cmp::Reverse(widest));
+        selected.extend(
+            pools
+                .into_iter()
+                .take(WIDE_POOLS_PER_DEX)
+                .map(|(_, pool)| pool),
+        );
+    }
+    selected
+}
+
+fn ladder(session: &mut route::SearchSession, edge: graph::EdgeId) -> Vec<u64> {
+    let mut amounts = Vec::new();
+    let mut amount: u64 = 1_000;
+    while session.quote(edge, amount, 8).is_ok() {
+        amounts.push(amount);
+        let Some(next) = amount.checked_mul(4) else {
+            break;
+        };
+        amount = next;
+    }
+    if let Some(&quoted) = amounts.last() {
+        let (mut low, mut high) = (quoted, amount);
+        while high - low > low / 100 + 1 {
+            let middle = low + (high - low) / 2;
+            if session.quote(edge, middle, 8).is_ok() {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        if low != quoted {
+            amounts.push(low);
+        }
+    }
+    amounts
 }
 
 async fn sequential_cpmm_plan(fixture: &Fixture, direct: &Value) -> Value {

@@ -20,33 +20,42 @@ const CPMM_HOP_UNITS: u32 = 60_000;
 // 162 V2 routes consumed at most 32,803 compute units including the router.
 const AMM_V4_HOP_UNITS: u32 = 50_000;
 // src: crates/tx/src/tests/fixtures/router_compute.json (`just router-compute-replay` on the
-// universe captures of slots 451,259,947 and 452,267,679 and on the quoter's CLMM, Whirlpool
-// and DLMM program replay corpora, joined by scripts/compute_fixture.py): what the router's
-// instruction spent on 1,647 one-hop swaps of 41 pools, in their v1 transaction, against the
-// walk their quote reported. Each rate is the least that covers every case with 15% to spare,
-// rounded up to 100; fitted on the two captures alone, the rates covered every corpus swap with
-// 12% to spare. A walk's span is bounded by the fee loop's volatility range (`quoter`), so it
-// does not grow with an arbitrarily long swap.
+// universe captures of slots 451,259,947 and 452,267,679, the quoter's CLMM, Whirlpool and DLMM
+// program replay corpora, and the Whirlpool and DLMM Token-2022 captures in this directory,
+// joined by scripts/compute_fixture.py): what the router's instruction spent on 2,642 one-hop
+// swaps of 65 pools under the largest compute limit, against the walk their quote reported.
+// Each rate is the least that covers every case with 15% to spare, rounded up to 100. Fitted
+// with any one source left out, the rates covered it with 12% to spare, but for the Whirlpool
+// transfer-fee capture, which no other source holds (1.00), and the CLMM corpus without the
+// capture that holds most CLMM swaps. A walk's span is bounded by the fee loop's volatility
+// range (`quoter`), so it does not grow with an arbitrarily long swap.
 const CLMM_HOP: Rate = Rate {
-    base: 59_700,
+    base: 59_200,
+    token_2022: 0,
+    fee_loop: 38_600,
     crossed: 11_400,
-    span: 10_800,
-    array: 4_500,
+    span: 6_000,
+    array: 4_900,
 };
 const WHIRLPOOL_HOP: Rate = Rate {
-    base: 76_000,
-    crossed: 6_700,
-    span: 8_400,
-    array: 0,
+    base: 58_200,
+    token_2022: 25_700,
+    fee_loop: 3_700,
+    crossed: 7_800,
+    span: 8_600,
+    array: 1_400,
 };
 const DLMM_HOP: Rate = Rate {
-    base: 45_600,
-    crossed: 6_600,
+    base: 42_300,
+    token_2022: 3_900,
+    fee_loop: 0,
+    crossed: 6_700,
     span: 0,
-    array: 0,
+    array: 1_200,
 };
-// The fixture holds no paid DLMM swap through more arrays.
-const DLMM_MEASURED_ARRAYS: u8 = 4;
+// The fixture holds no paid DLMM swap through more arrays: a fourth contiguous array is 211 bins
+// or more, past what 1,400,000 units pay for.
+const DLMM_MEASURED_ARRAYS: u8 = 3;
 // Creating an account, wrapping and unwrapping SOL are not in the replay. A limit set too low
 // fails the transaction; one set high only lowers its scheduling priority, since the cost model
 // charges what is requested.
@@ -149,6 +158,8 @@ fn hop_units(hop: &SwapWindow) -> Result<u32, TxError> {
 
 struct Rate {
     base: u32,
+    token_2022: u32,
+    fee_loop: u32,
     crossed: u32,
     span: u32,
     array: u32,
@@ -156,7 +167,13 @@ struct Rate {
 
 impl Rate {
     fn units(&self, hop: &SwapWindow) -> u32 {
+        let token_2022: u32 = [&hop.source, &hop.destination]
+            .into_iter()
+            .map(|side| u32::from(side.token_program == TOKEN_2022_PROGRAM))
+            .sum();
         self.base
+            .saturating_add(self.token_2022.saturating_mul(token_2022))
+            .saturating_add(if hop.walk.span > 0 { self.fee_loop } else { 0 })
             .saturating_add(self.crossed.saturating_mul(hop.walk.crossed))
             .saturating_add(self.span.saturating_mul(hop.walk.span))
             .saturating_add(self.array.saturating_mul(u32::from(hop.arrays_used)))
@@ -213,9 +230,17 @@ mod tests {
     use super::*;
 
     fn window(kind: DexKind, arrays: u8, walk: Walk) -> SwapWindow {
-        let side = TokenSide {
+        window_of(kind, arrays, arrays, 0, walk)
+    }
+
+    fn window_of(kind: DexKind, tail: u8, arrays: u8, token_2022: u8, walk: Walk) -> SwapWindow {
+        let side = |token_2022| TokenSide {
             mint: Pubkey::new_from_array([1; 32]),
-            token_program: TOKEN_PROGRAM,
+            token_program: if token_2022 {
+                TOKEN_2022_PROGRAM
+            } else {
+                TOKEN_PROGRAM
+            },
         };
         SwapWindow {
             kind,
@@ -224,9 +249,9 @@ mod tests {
                 _ => CLMM_PROGRAM,
             },
             accounts: Vec::new(),
-            source: side,
-            destination: side,
-            tail: arrays,
+            source: side(token_2022 > 0),
+            destination: side(token_2022 > 1),
+            tail,
             optional_tail: 0,
             arrays_used: arrays,
             walk,
@@ -245,6 +270,8 @@ mod tests {
         crossed: u32,
         span: u32,
         arrays: u8,
+        tail: u8,
+        token_2022: u8,
         router_compute_units: u32,
     }
 
@@ -256,14 +283,14 @@ mod tests {
         let recorded: Recorded =
             serde_json::from_str(include_str!("tests/fixtures/router_compute.json"))
                 .expect("the compute fixture parses");
-        assert!(recorded.cases.len() > 1_000);
+        assert!(recorded.cases.len() > 2_000);
         for case in &recorded.cases {
             let walk = Walk {
                 span: case.span,
                 crossed: case.crossed,
             };
-            let budget = hop_units(&window(case.dex, case.arrays, walk))
-                .expect("every measured venue and array count is budgeted");
+            let hop = window_of(case.dex, case.tail, case.arrays, case.token_2022, walk);
+            let budget = hop_units(&hop).expect("every measured venue and array count is budgeted");
             assert!(
                 budget >= case.router_compute_units,
                 "{} {:?}: {budget} for {}",
@@ -281,8 +308,8 @@ mod tests {
             crossed: 100,
         };
         assert_eq!(
-            compute_units(&[window(DexKind::MeteoraDlmm, 5, Walk::default())]),
-            Err(TxError::UnmeasuredDlmmArrays { arrays: 5 })
+            compute_units(&[window(DexKind::MeteoraDlmm, 4, Walk::default())]),
+            Err(TxError::UnmeasuredDlmmArrays { arrays: 4 })
         );
         assert!(matches!(
             compute_units(&[

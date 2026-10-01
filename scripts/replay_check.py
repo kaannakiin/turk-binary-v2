@@ -39,7 +39,8 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "crates/tx/src/tests/fixtures"
 SCENARIO_POOLS = FIXTURES / "scenario_pools.json.gz"
 
-UNCOMPARED = {"compute_units", "v1_compute_units", "v1_router_compute_units", "router_sha256"}
+UNCOMPARED = {"compute_units", "router_compute_units", "v1_compute_units", "v1_router_compute_units",
+              "router_sha256"}
 ERROR_KIND = re.compile(r"^[A-Za-z]+\(\d+, [A-Za-z]+(?:\(\d+\))?\)")
 SHOWN_DIFFERENCES = 20
 

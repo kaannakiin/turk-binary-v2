@@ -209,6 +209,8 @@ struct Case {
     #[serde(skip_serializing_if = "Option::is_none")]
     compute_units: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    router_compute_units: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     v1_paid: Option<String>,
@@ -413,6 +415,7 @@ fn run(
         },
         paid: None,
         compute_units: None,
+        router_compute_units: None,
         error: None,
         v1_paid: None,
         v1_compute_units: None,
@@ -446,6 +449,7 @@ fn run(
         Ok((paid, sent)) => {
             case.paid = Some(paid.to_string());
             case.compute_units = Some(sent.compute_units);
+            case.router_compute_units = sent.router_units;
         }
         Err(error) => case.error = Some(error),
     }

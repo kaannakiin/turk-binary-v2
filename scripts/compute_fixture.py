@@ -5,9 +5,11 @@ Usage: compute_fixture.py OUT PLANS REPLAY [PLANS REPLAY ...]
 
 Each PLANS file is `target/router-compute-plans.json` and each REPLAY the
 `target/router-compute-replay.json` that `oracle router` wrote from it. Keeps
-every one-hop swap the router paid in its v1 transaction, with the walk its
-quote reported and what the router's instruction spent, so `tx` can test its
-compute budget against what the deployed programs spent.
+every one-hop swap the router paid, with the walk its quote reported and what
+the router's instruction spent under the largest compute limit, so `tx` can
+test its compute budget against what the deployed programs spent. The v1
+transaction carries the budget under test and fails a swap that outspends it;
+the instruction replay does not, so it measures the swaps a refit needs.
 """
 
 import json
@@ -32,8 +34,8 @@ def main(argv):
         for plan, case in zip(plans, replay["cases"]):
             if plan["dex"] not in STEPPED:
                 continue
-            spent = case.get("v1_router_compute_units")
-            if case.get("v1_paid") is None or spent is None:
+            spent = case.get("router_compute_units")
+            if case.get("paid") is None or spent is None:
                 continue
             cases.append(
                 {
@@ -43,6 +45,8 @@ def main(argv):
                     "crossed": plan["crossed"],
                     "span": plan["span"],
                     "arrays": plan["arraysUsed"],
+                    "tail": plan["tail"],
+                    "token_2022": plan["token2022"],
                     "router_compute_units": spent,
                 }
             )
