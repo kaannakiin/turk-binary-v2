@@ -469,7 +469,7 @@ impl<F: PoolFeed> QuoteService<F> {
                 single_pool_per_hop: request.single_pool_per_hop,
                 max_operations: self.settings.max_operations,
                 deadline: self.deadline,
-                chunks: None,
+                chunks: Some(route::SPLIT_CHUNKS),
             },
         );
         let search = SearchQuality {

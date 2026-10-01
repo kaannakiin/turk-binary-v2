@@ -80,6 +80,11 @@ impl Flow {
     }
 }
 
+// On the universe capture under the server's admission, eight chunks matched or beat
+// discovery at fixed sizes from 1 to 10,000 SOL; sixteen gained nothing and took up to
+// three times as long (docs/exactin-performance.md).
+pub const SPLIT_CHUNKS: NonZeroU8 = NonZeroU8::new(8).expect("eight is not zero");
+
 #[derive(Debug, Clone, Copy)]
 pub struct FlowOptions {
     pub single_route_only: bool,

@@ -206,7 +206,7 @@ transaction:
 | SOL→pump 10 SOL     |    19.06B (0.12M CU) |    19.06B (0.25M CU) |
 | SOL→pump 10,000 SOL |    37.24B (0.52M CU) | 1,742.96B (1.09M CU) |
 
-On the earlier capture, whose CLMM pools lack the
+The server now splits in chunks. On the earlier capture, whose CLMM pools lack the
 observation account a swap now names, only the plans without CLMM ran; the
 chunked SOL→pump 10,000 SOL plan there paid exactly, in 1,251,596 units.
 

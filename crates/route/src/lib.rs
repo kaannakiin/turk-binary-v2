@@ -23,7 +23,7 @@ pub use stats::RouteStatsSnapshot;
 mod chunked;
 mod flow;
 mod layered;
-pub use flow::{Allocation, Flow, FlowOptions, FlowSearch, Operation};
+pub use flow::{Allocation, Flow, FlowOptions, FlowSearch, Operation, SPLIT_CHUNKS};
 
 /// Resolves an on-chain program identity through the DEX registry.
 #[must_use]
