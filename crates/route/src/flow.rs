@@ -383,7 +383,11 @@ impl SearchSession {
                         {
                             break 'pairs;
                         }
-                        weights[source] -= quantum;
+                        // A move kept for an earlier destination can leave the source short.
+                        let Some(remaining) = weights[source].checked_sub(quantum) else {
+                            continue 'pairs;
+                        };
+                        weights[source] = remaining;
                         weights[destination] += quantum;
                         let candidate =
                             self.allocated_flow(query, candidates, weights, options, result);
