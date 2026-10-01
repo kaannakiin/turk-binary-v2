@@ -8,8 +8,9 @@ accounts LiteSVM prepared for it, the payer-signed v1 transaction, the account
 its output lands in and what the quote promised. Each plan gets its own offline
 Surfnet started from its snapshot, with the capture's Clock written into the
 sysvar, and LiteSVM's Rent, while the clock is paused; the transaction goes through
-`sendTransaction` with preflight, and the plan passes when the output account
-holds exactly what was quoted. Nothing leaves the machine: Surfpool runs with
+`sendTransaction` with preflight, and the plan passes when it landed as a v1
+transaction without error and the output account gained exactly what was
+quoted. Nothing leaves the machine: Surfpool runs with
 `--offline`, so no account is fetched and nothing reaches a cluster.
 """
 
@@ -93,7 +94,29 @@ def balance(account):
     return int.from_bytes(data[TOKEN_AMOUNT], "little")
 
 
+def paid_exactly(result):
+    return (
+        result.get("landed") is True
+        and result.get("version") == 1
+        and result.get("error") is None
+        and result.get("paid") == result.get("expected_out")
+    )
+
+
+def all_paid(results):
+    return bool(results) and all(paid_exactly(result) for result in results)
+
+
+def held_before(plan):
+    snapshot = json.loads(pathlib.Path(plan["snapshot"]).read_text())
+    account = snapshot.get(plan["destination"])
+    if account is None:
+        return 0
+    return int.from_bytes(base64.b64decode(account["data"])[TOKEN_AMOUNT], "little")
+
+
 def replay(plan, clock, logs):
+    before = held_before(plan)
     with open(logs / f"{plan['name']}.log", "w") as log:
         surfnet = start(plan["snapshot"], log)
         try:
@@ -115,17 +138,20 @@ def replay(plan, clock, logs):
                     break
                 time.sleep(0.25)
             meta = landed["meta"] if landed else {}
-            paid = balance(plan["destination"])
-            return {
+            after = balance(plan["destination"])
+            paid = None if after is None else after - before
+            result = {
                 "name": plan["name"],
                 "surfnet": version,
+                "landed": landed is not None,
                 "version": landed.get("version") if landed else None,
                 "error": meta.get("err"),
                 "compute_units": meta.get("computeUnitsConsumed"),
                 "expected_out": plan["expected_out"],
                 "paid": None if paid is None else str(paid),
-                "exact": paid is not None and str(paid) == plan["expected_out"],
             }
+            result["exact"] = paid_exactly(result)
+            return result
         finally:
             surfnet.terminate()
             try:
@@ -144,11 +170,11 @@ def main(argv):
     logs.mkdir(parents=True, exist_ok=True)
     results = [replay(plan, manifest["clock"], logs) for plan in manifest["plans"]]
     out.write_text(json.dumps({"plans": results}, indent=1) + "\n")
-    exact = sum(result.get("exact", False) for result in results)
+    exact = sum(paid_exactly(result) for result in results)
     for result in results:
         print(json.dumps(result))
     print(f"{exact} of {len(results)} paid exactly what they quoted")
-    sys.exit(0 if exact == len(results) else 1)
+    sys.exit(0 if all_paid(results) else 1)
 
 
 if __name__ == "__main__":
