@@ -151,3 +151,26 @@ allocations are a firm result):
 `/swap` from 5,140 to 4,779, below `main`. A single-route `/quote` is about
 55 µs slower in both runs: the finalist's own admission, one more build per
 request.
+
+## Windows and token accounts (2026-10-01)
+
+A profile of the search threads over this matrix (samply, 4 kHz, 256 requests
+per cell) put 44% of their busy time in deriving user token accounts and 11% in
+building swap windows, both mostly the curve check of a program-address search:
+every candidate derived the same few addresses again. Deriving each wallet
+token account once per request (`tx::TokenAccounts`) and keeping each window a
+session built cut the busy samples from 23,492 to 11,725. Admission fell from
+61% to 24% of them; quoting is now 56%.
+
+The same matrix, two runs each, p50 at concurrency 1 (µs). Every request
+returned 200:
+
+| Split allowed        | `main` | `d9557b7` | token accounts | and windows |
+| -------------------- | -----: | --------: | -------------: | ----------: |
+| `/quote`             |    927 |      1977 |      859 / 860 |   770 / 763 |
+| `/swap-instructions` |   1552 |      1641 |      935 / 910 |   768 / 751 |
+| `/swap`              |   1508 |      1580 |      832 / 851 |   722 / 737 |
+
+A single-route `/quote` went from 349 / 359 to 198 / 203 µs. These held across
+both runs and every concurrency, unlike the run-to-run spread of the earlier
+section.

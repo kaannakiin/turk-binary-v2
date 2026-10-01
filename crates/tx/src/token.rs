@@ -1,5 +1,7 @@
-use domain::Pubkey;
+use std::cell::RefCell;
+
 use domain::chain::{ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_PROGRAM};
+use domain::{Pubkey, TokenSide};
 use solana_instruction::{AccountMeta, Instruction};
 
 // src: spl-associated-token-account-interface@2.0.0 src/address.rs
@@ -13,23 +15,59 @@ pub fn associated_token_address(wallet: &Pubkey, mint: &Pubkey, token_program: &
     .0
 }
 
+// Deriving an address searches bumps for one off the curve, which costs more than
+// the rest of a candidate's build; every candidate of a search names the same few.
+#[derive(Debug)]
+pub struct TokenAccounts {
+    owner: Pubkey,
+    derived: RefCell<Vec<(TokenSide, Pubkey)>>,
+}
+
+impl TokenAccounts {
+    #[must_use]
+    pub const fn new(owner: Pubkey) -> Self {
+        Self {
+            owner,
+            derived: RefCell::new(Vec::new()),
+        }
+    }
+
+    #[must_use]
+    pub const fn owner(&self) -> &Pubkey {
+        &self.owner
+    }
+
+    pub(crate) fn of(&self, side: &TokenSide) -> Pubkey {
+        if let Some(&(_, address)) = self
+            .derived
+            .borrow()
+            .iter()
+            .find(|(known, _)| known == side)
+        {
+            return address;
+        }
+        let address = associated_token_address(&self.owner, &side.mint, &side.token_program);
+        self.derived.borrow_mut().push((*side, address));
+        address
+    }
+}
+
 // src: spl-associated-token-account-interface@2.0.0 src/instruction.rs (CreateIdempotent = 1,
 // build_associated_token_account_instruction); mainnet tx 5jHTTBfnxVby… creates a WSOL account so.
 pub(crate) fn create_idempotent(
     payer: &Pubkey,
-    wallet: &Pubkey,
-    mint: &Pubkey,
-    token_program: &Pubkey,
+    wallet: &TokenAccounts,
+    side: &TokenSide,
 ) -> Instruction {
     Instruction {
         program_id: ASSOCIATED_TOKEN_PROGRAM,
         accounts: vec![
             AccountMeta::new(*payer, true),
-            AccountMeta::new(associated_token_address(wallet, mint, token_program), false),
-            AccountMeta::new_readonly(*wallet, false),
-            AccountMeta::new_readonly(*mint, false),
+            AccountMeta::new(wallet.of(side), false),
+            AccountMeta::new_readonly(*wallet.owner(), false),
+            AccountMeta::new_readonly(side.mint, false),
             AccountMeta::new_readonly(SYSTEM_PROGRAM, false),
-            AccountMeta::new_readonly(*token_program, false),
+            AccountMeta::new_readonly(side.token_program, false),
         ],
         data: vec![1],
     }

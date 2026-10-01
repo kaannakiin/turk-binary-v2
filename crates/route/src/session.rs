@@ -20,6 +20,7 @@ pub struct SearchSession {
     clock: ChainClock,
     pins: Pins,
     memo: Option<HashMap<MemoKey, Result<Quote, RouteError>, ahash::RandomState>>,
+    windows: HashMap<WindowKey, SwapWindow, ahash::RandomState>,
     computed: u64,
     ceiling: Option<u64>,
 }
@@ -27,6 +28,8 @@ pub struct SearchSession {
 type Pins = HashMap<PoolId, Arc<Decoded>, ahash::RandomState>;
 
 type MemoKey = (EdgeId, u64, u8);
+
+type WindowKey = (EdgeId, u8, u8, bool);
 
 /// Bounds the memo of an exhaustive search; later quotes are computed, not stored.
 const MEMO_ENTRIES: usize = 1 << 17;
@@ -73,6 +76,7 @@ impl<F: PoolFeed> QuoteReader<F> {
             clock: self.feed.clock().ok_or(RouteError::NoClock)?,
             pins: HashMap::default(),
             memo: None,
+            windows: HashMap::default(),
             computed: 0,
             ceiling: None,
         })
@@ -194,11 +198,20 @@ impl SearchSession {
         max_arrays: u8,
         guard: bool,
     ) -> Result<SwapWindow, RouteError> {
+        // A window names its tick or bin arrays by address, each derived off the curve:
+        // every admitted candidate through a pool would derive the same ones again.
+        let key = (edge, arrays_used, max_arrays, guard);
+        if let Some(window) = self.windows.get(&key) {
+            return Ok(window.clone());
+        }
         let decoded = pin(&mut self.pins, &self.topology, &self.table, edge.pool())?;
         decoded.usable()?;
-        Ok(decoded
-            .state
-            .swap_window_for_quote(edge.a_to_b(), arrays_used, max_arrays, guard)?)
+        let window =
+            decoded
+                .state
+                .swap_window_for_quote(edge.a_to_b(), arrays_used, max_arrays, guard)?;
+        self.windows.insert(key, window.clone());
+        Ok(window)
     }
 
     pub(crate) fn pin(&mut self, pool: PoolId) -> Result<&Arc<Decoded>, RouteError> {
