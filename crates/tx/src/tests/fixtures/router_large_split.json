@@ -1,0 +1,34 @@
+{
+  "provenance": {
+    "corpus_sha256": "e217fafc1494ce948e57d26ae59f202f9443e3d0eea72d1f508f23b94e4432f6",
+    "router_sha256": "47671cefcb180baafb7beb74dd474fc0c86630851011ccc425ff0e1ce90b7c4a",
+    "litesvm": "0.17.0"
+  },
+  "cases": [
+    {
+      "pool": "qhJ7kLjrE68sbDF11CpwMt3P9rqiwZtretM5ZzeAX6o",
+      "input_mint": "So11111111111111111111111111111111111111112",
+      "amount_in": "10000000000000",
+      "expected_out": "1727392154929",
+      "direct_paid": "1727392154929",
+      "over_threshold_rejected": true,
+      "over_threshold_state_unchanged": true,
+      "flow": {
+        "slot_count": 3,
+        "step_count": 3,
+        "slots": [
+          "So11111111111111111111111111111111111111112",
+          "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump",
+          "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        ]
+      },
+      "paid": "1727392154929",
+      "compute_units": 1073347,
+      "router_compute_units": 1040584,
+      "steps_changed": 155,
+      "v1_paid": "1727392154929",
+      "v1_compute_units": 1073197,
+      "v1_router_compute_units": 1040584
+    }
+  ]
+}

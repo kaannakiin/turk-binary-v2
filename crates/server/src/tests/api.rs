@@ -55,6 +55,10 @@ const DLMM_EXTENSION: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../tx/src/tests/fixtures/dlmm_extension_pools.json"
 );
+const LARGE_SPLIT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tx/src/tests/fixtures/large_split_pools.json.gz"
+);
 const DLMM_GROWN_ORACLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../tx/src/tests/fixtures/dlmm_grown_oracle_pools.json.gz"
@@ -1383,6 +1387,47 @@ async fn router_flow_plans() {
 
 /// Split orders of a universe capture as `/swap-instructions` builds them;
 /// `just router-split-replay` runs them through the router in `LiteSVM`.
+fn splits(quote: &Value) -> bool {
+    let ops = quote["operations"].as_array().expect("operations");
+    ops.iter().any(|op| {
+        ops.iter()
+            .filter(|other| other["sourceSlot"] == op["sourceSlot"])
+            .count()
+            > 1
+    })
+}
+
+/// SOL to pump at 10,000 SOL over the three pools the server split it across
+/// on the slot-452267679 capture, for `just replay-check`.
+#[tokio::test]
+#[ignore = "writes the large chunked split plan for LiteSVM replay"]
+async fn router_large_split_plans() {
+    let output = std::env::var("ROUTER_LARGE_SPLIT_PLANS").expect("output path");
+    let captured = universe::load_from(LARGE_SPLIT);
+    assert!(captured.skipped.is_empty(), "{:?}", captured.skipped);
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let request = json!({
+        "fromTokenAddress": WSOL,
+        "toTokenAddress": universe::PUMP,
+        "amount": "10000000000000",
+        "maxHops": 2,
+    });
+    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{quote}");
+    assert!(
+        splits(&quote),
+        "spends one slot through more than one pool: {quote}"
+    );
+    let plan = scenario_plan(&fixture, "large_split_sol_pump_10000", &quote, false, None).await;
+    let file = std::fs::File::create(output).expect("plans file");
+    serde_json::to_writer(file, &json!({ "corpus": LARGE_SPLIT, "plans": [plan] }))
+        .expect("write plans");
+}
+
 #[tokio::test]
 #[ignore = "writes split plans of a universe capture for `just router-split-replay`"]
 async fn router_split_plans() {
@@ -1407,10 +1452,8 @@ async fn router_split_plans() {
         let (status, _, quote) = call(fixture.router(), post(&request)).await;
         assert_eq!(status, StatusCode::OK, "{name}: {quote}");
         assert!(
-            quote["operations"]
-                .as_array()
-                .is_some_and(|ops| ops.len() > 1),
-            "{name} splits: {quote}"
+            splits(&quote),
+            "{name} spends one slot through more than one pool: {quote}"
         );
         plans.push(scenario_plan(&fixture, name, &quote, false, None).await);
     }

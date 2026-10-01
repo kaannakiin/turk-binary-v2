@@ -758,6 +758,26 @@ fn replay() -> Replay {
 // Gate: the captured router result must match an independently executed sequence
 // of deployed venue instructions on the same LiteSVM bank. The quoted number is
 // checked against that program payout; it is not used as its own oracle.
+// src: crates/tx/src/tests/fixtures/large_split_pools.json.gz, slot 452267679; `oracle router`
+// runs the server's chunked SOL to pump 10,000 SOL split and its venues one by one.
+#[test]
+fn the_large_chunked_split_pays_what_its_venues_pay_one_by_one() {
+    let replay: serde_json::Value =
+        serde_json::from_str(include_str!("tests/fixtures/router_large_split.json"))
+            .expect("captured large split replay");
+    let cases = replay["cases"].as_array().expect("split cases");
+    assert_eq!(cases.len(), 1);
+    let case = &cases[0];
+    let direct = case["direct_paid"].as_str().expect("direct program payout");
+    assert_eq!(direct, "1727392154929");
+    assert_eq!(case["expected_out"], direct);
+    assert_eq!(case["paid"], direct);
+    assert_eq!(case["v1_paid"], direct);
+    assert_eq!(case["flow"]["step_count"], 3);
+    assert_eq!(case["over_threshold_rejected"], true);
+    assert_eq!(case["over_threshold_state_unchanged"], true);
+}
+
 #[test]
 fn split_merge_and_reused_cpmm_flows_match_direct_venue_execution() {
     let replay: serde_json::Value =

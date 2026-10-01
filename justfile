@@ -86,6 +86,12 @@ router-split-replay capture="oracle/snapshots/universe.json.gz":
     ROUTE_UNIVERSE={{justfile_directory()}}/{{capture}} ROUTER_SPLIT_PLANS={{justfile_directory()}}/target/router-split-plans.json cargo nextest run -p server --run-ignored only router_split_plans --no-capture
     cargo run --manifest-path oracle/Cargo.toml -- router {{capture}} target/router-split-plans.json oracle/programs onchain/target/deploy/router.so target/router-split-replay.json
 
+# LiteSVM: the chunked SOL to pump 10,000 SOL split on the three pools it took at slot 452267679.
+router-large-split-replay:
+    NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_LARGE_SPLIT_PLANS={{justfile_directory()}}/target/router-large-split-plans.json cargo nextest run -p server --run-ignored only router_large_split_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router crates/tx/src/tests/fixtures/large_split_pools.json.gz target/router-large-split-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_large_split.json
+
 # Surfpool: the split plans `router-split-replay` writes, each on an offline Surfnet started from
 # the accounts LiteSVM prepared for it, sent through its JSON-RPC; each must pay what it quoted.
 router-surfpool-replay capture="oracle/snapshots/universe.json.gz":
