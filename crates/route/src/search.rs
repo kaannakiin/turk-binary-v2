@@ -6,6 +6,7 @@ use std::sync::Arc;
 use domain::{DexKind, Pubkey};
 use graph::{EdgeId, MintId, PoolNode, Topology};
 
+use crate::chunked::Carried;
 use crate::error::RouteError;
 use crate::feed::PoolFeed;
 use crate::reader::QuoteReader;
@@ -142,11 +143,23 @@ impl SearchSession {
 
     /// A cycle may come back at a loss; whether it pays is the caller's call.
     pub fn search(&mut self, query: &Query, filter: &impl Filter) -> Search {
+        self.search_on(query, filter, &[])
+    }
+
+    /// Prices every leg on top of what `used` already sends through its
+    /// edge: a leg is the marginal output of its input added to that edge.
+    pub(crate) fn search_on(
+        &mut self,
+        query: &Query,
+        filter: &impl Filter,
+        used: &[Carried],
+    ) -> Search {
         let topology = Arc::clone(&self.topology);
         let hops = usize::from(query.max_hops);
         let mut walk = Walk {
             query,
             filter,
+            used,
             target: match query.goal {
                 Goal::To(mint) => mint,
                 Goal::Cycle => query.from,
@@ -168,11 +181,20 @@ impl SearchSession {
     /// A path found pruned is kept: widening cannot tell whether a better
     /// one was dropped.
     pub fn search_widening(&mut self, query: &Query, filter: &impl Filter) -> Search {
+        self.widening_on(query, filter, &[])
+    }
+
+    pub(crate) fn widening_on(
+        &mut self,
+        query: &Query,
+        filter: &impl Filter,
+        used: &[Carried],
+    ) -> Search {
         let mut attempt = *query;
         let mut quotes = 0;
         loop {
             attempt.max_quotes = query.max_quotes - quotes;
-            let mut found = self.search(&attempt, filter);
+            let mut found = self.search_on(&attempt, filter, used);
             quotes += found.quotes;
             let dropped_the_way = found.best.is_none() && found.pruned && !found.exhausted;
             if !dropped_the_way || attempt.per_pair.is_none() {
@@ -190,6 +212,7 @@ impl SearchSession {
 struct Walk<'q, F> {
     query: &'q Query,
     filter: &'q F,
+    used: &'q [Carried],
     target: MintId,
     path: Vec<Leg>,
     passed: Vec<MintId>,
@@ -274,7 +297,10 @@ impl<F: Filter> Walk<'_, F> {
         {
             return ControlFlow::Continue(None);
         }
-        if self.search.quotes == self.query.max_quotes || self.filter.should_stop() {
+        if self.search.quotes == self.query.max_quotes
+            || session.spent()
+            || self.filter.should_stop()
+        {
             self.search.exhausted = true;
             return ControlFlow::Break(());
         }
@@ -285,12 +311,20 @@ impl<F: Filter> Walk<'_, F> {
         if session.shares_writes(pool, self.path.iter().map(|leg| leg.edge.pool())) {
             return ControlFlow::Continue(None);
         }
+        let (sent, paid) = self
+            .used
+            .iter()
+            .find(|used| used.edge == edge)
+            .map_or((0, 0), |used| (used.amount_in, used.amount_out));
+        let Some(total) = sent.checked_add(amount) else {
+            return ControlFlow::Continue(None);
+        };
         self.search.quotes += 1;
-        let Ok(quote) = session.quote(edge, amount, self.query.max_arrays) else {
+        let Ok(quote) = session.quote(edge, total, self.query.max_arrays) else {
             self.search.refused = self.search.refused.saturating_add(1);
             return ControlFlow::Continue(None);
         };
-        let amount_out = quote.out.amount_out;
+        let amount_out = quote.out.amount_out.saturating_sub(paid);
         ControlFlow::Continue((amount_out > 0).then_some(Leg {
             edge,
             pool: node.pubkey,

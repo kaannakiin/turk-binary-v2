@@ -419,6 +419,7 @@ impl<F: PoolFeed> QuoteService<F> {
                 single_pool_per_hop: request.single_pool_per_hop,
                 max_operations: self.settings.max_operations,
                 deadline: self.deadline,
+                chunks: None,
             },
         );
         let search = SearchQuality {

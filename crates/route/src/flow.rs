@@ -4,6 +4,7 @@
 //! independently quoting two uses of a pool against the same reserves would
 //! count the same liquidity twice.
 
+use std::num::NonZeroU8;
 use std::time::Instant;
 
 use domain::DexKind;
@@ -11,7 +12,8 @@ use graph::{EdgeId, MintId, PoolNode};
 
 use crate::{Filter, Goal, Leg, Path, Query, RouteError, SearchSession};
 
-const SCALE: u64 = 10_000;
+pub(crate) const SCALE: u64 = 10_000;
+const QUANTA: [u64; 5] = [2_500, 1_000, 100, 10, 1];
 const MAX_CANDIDATES: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +86,9 @@ pub struct FlowOptions {
     pub single_pool_per_hop: bool,
     pub max_operations: u8,
     pub deadline: Option<Instant>,
+    /// Route the order in this many equal chunks, each priced on top of the
+    /// earlier ones, in place of candidate discovery at fixed sizes.
+    pub chunks: Option<NonZeroU8>,
 }
 
 impl Default for FlowOptions {
@@ -93,6 +98,7 @@ impl Default for FlowOptions {
             single_pool_per_hop: false,
             max_operations: 16,
             deadline: None,
+            chunks: None,
         }
     }
 }
@@ -105,6 +111,8 @@ pub struct FlowSearch {
     pub pruned: bool,
     pub exhausted: bool,
     pub timed_out: bool,
+    /// Quotes priced by this search; `quotes` also counts memo answers.
+    pub computed: u64,
 }
 
 struct Restricted<'a, F> {
@@ -172,7 +180,26 @@ impl<F: Filter> Filter for Excluding<'_, F> {
 impl SearchSession {
     /// Keeps the original single-path winner as an incumbent. Candidate and
     /// allocation pruning is explicit; this is not a global optimum claim.
+    /// With `options.chunks`, `max_quotes` bounds the quotes computed rather
+    /// than the quote calls.
     pub fn search_flow(
+        &mut self,
+        query: &Query,
+        filter: &impl Filter,
+        options: FlowOptions,
+    ) -> FlowSearch {
+        let started = self.quotes_computed();
+        let ceiling = options
+            .chunks
+            .map(|_| started.saturating_add(u64::from(query.max_quotes)));
+        let outer = self.set_ceiling(ceiling);
+        let mut found = self.plan_flow(query, filter, options);
+        self.set_ceiling(outer);
+        found.computed = self.quotes_computed() - started;
+        found
+    }
+
+    fn plan_flow(
         &mut self,
         query: &Query,
         filter: &impl Filter,
@@ -204,8 +231,16 @@ impl SearchSession {
             pruned: found.pruned,
             exhausted: found.exhausted,
             timed_out: restricted.should_stop(),
+            computed: 0,
         };
         if options.single_route_only || query.goal == Goal::Cycle || result.exhausted {
+            return result;
+        }
+        if let Some(chunks) = options.chunks {
+            self.split_in_chunks(&bounded, &restricted, options, chunks, &mut result);
+            result.pruned = true;
+            result.timed_out = restricted.should_stop();
+            result.exhausted |= result.timed_out || self.spent();
             return result;
         }
         let first = found.best.or_else(|| {
@@ -245,7 +280,28 @@ impl SearchSession {
         };
         let candidates = self.flow_candidates(query, filter, options.deadline, first, &mut result);
         result.pruned = true;
-        self.refine_allocations(query, &candidates, options, &restricted, &mut result);
+        let mut weights = vec![0; candidates.len()];
+        weights[0] = SCALE;
+        if result.best.is_none() {
+            let count = u64::try_from(weights.len()).expect("bounded candidate count");
+            weights.fill(SCALE / count);
+            weights[0] += SCALE % count;
+            if let Some(flow) =
+                self.allocated_flow(query, &candidates, &weights, options, &mut result)
+                && restricted.flow(self, &flow)
+            {
+                result.best = Some(flow);
+            }
+        }
+        self.refine_allocations(
+            query,
+            &candidates,
+            &mut weights,
+            &QUANTA,
+            options,
+            &restricted,
+            &mut result,
+        );
         result.timed_out = restricted.should_stop();
         result.exhausted |= result.timed_out || result.quotes >= query.max_quotes;
         result
@@ -298,27 +354,19 @@ impl SearchSession {
         candidates
     }
 
-    fn refine_allocations(
+    /// Moves `quanta` of share between candidate pairs while that pays.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn refine_allocations(
         &mut self,
         query: &Query,
         candidates: &[Path],
+        weights: &mut [u64],
+        quanta: &[u64],
         options: FlowOptions,
         restricted: &impl Filter,
         result: &mut FlowSearch,
     ) {
-        let mut weights = vec![0; candidates.len()];
-        weights[0] = SCALE;
-        if result.best.is_none() {
-            let count = u64::try_from(weights.len()).expect("bounded candidate count");
-            weights.fill(SCALE / count);
-            weights[0] += SCALE % count;
-            if let Some(flow) = self.allocated_flow(query, candidates, &weights, options, result)
-                && restricted.flow(self, &flow)
-            {
-                result.best = Some(flow);
-            }
-        }
-        for quantum in [2_500, 1_000, 100, 10, 1] {
+        for &quantum in quanta {
             loop {
                 let mut improved = false;
                 'pairs: for source in 0..weights.len() {
@@ -329,13 +377,16 @@ impl SearchSession {
                         if source == destination {
                             continue;
                         }
-                        if restricted.should_stop() || result.quotes >= query.max_quotes {
+                        if restricted.should_stop()
+                            || self.spent()
+                            || result.quotes >= query.max_quotes
+                        {
                             break 'pairs;
                         }
                         weights[source] -= quantum;
                         weights[destination] += quantum;
                         let candidate =
-                            self.allocated_flow(query, candidates, &weights, options, result);
+                            self.allocated_flow(query, candidates, weights, options, result);
                         if candidate.as_ref().is_some_and(|flow| {
                             result
                                 .best
@@ -351,7 +402,11 @@ impl SearchSession {
                         }
                     }
                 }
-                if !improved || restricted.should_stop() || result.quotes >= query.max_quotes {
+                if !improved
+                    || restricted.should_stop()
+                    || self.spent()
+                    || result.quotes >= query.max_quotes
+                {
                     break;
                 }
             }
@@ -359,7 +414,7 @@ impl SearchSession {
     }
 }
 
-fn same_path(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
     a.legs.len() == b.legs.len() && a.legs.iter().zip(&b.legs).all(|(a, b)| a.edge == b.edge)
 }
 
@@ -407,7 +462,7 @@ impl SearchSession {
         Some(edges)
     }
 
-    fn allocated_flow(
+    pub(crate) fn allocated_flow(
         &mut self,
         query: &Query,
         paths: &[Path],
@@ -467,6 +522,7 @@ impl SearchSession {
                 .ok()?;
                 if amount == 0
                     || search.quotes >= query.max_quotes
+                    || self.spent()
                     || options.deadline.is_some_and(|at| Instant::now() >= at)
                 {
                     return None;
