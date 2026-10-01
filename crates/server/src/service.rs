@@ -190,6 +190,9 @@ fn admissible_flow(
         .iter()
         .map(|op| window(session, op.leg.edge, op.leg.arrays_used, filter.max_arrays).ok())
         .collect::<Option<_>>()?;
+    // The build refuses a plan past the compute budget before anything else
+    // it checks; the windows alone decide that, without building instructions.
+    tx::compute_units(&windows).ok()?;
     let mut slots = vec![None; flow.slots.len()];
     for (op, window) in flow.operations.iter().zip(&windows) {
         for (index, side) in [

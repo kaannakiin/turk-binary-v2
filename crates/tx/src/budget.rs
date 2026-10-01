@@ -107,12 +107,8 @@ fn code(program: &Pubkey) -> Option<u32> {
     .find_map(|(key, bytes)| (key == *program).then_some(bytes))
 }
 
-pub(crate) fn limits<'a>(
-    hops: &[SwapWindow],
-    instructions: impl IntoIterator<Item = &'a Instruction>,
-    fee_payer: &Pubkey,
-) -> Result<Limits, TxError> {
-    let compute_units = hops
+pub fn compute_units(hops: &[SwapWindow]) -> Result<u32, TxError> {
+    let units = hops
         .iter()
         .map(|hop| match hop.kind {
             DexKind::RaydiumAmmV4 => Ok(AMM_V4_HOP_UNITS),
@@ -137,12 +133,21 @@ pub(crate) fn limits<'a>(
             other => Err(TxError::Unsupported(other)),
         })
         .try_fold(SETUP_UNITS, |total, units| Ok(total.saturating_add(units?)))?;
-    if compute_units > MAX_COMPUTE_UNITS {
+    if units > MAX_COMPUTE_UNITS {
         return Err(TxError::TooMuchCompute {
-            units: compute_units,
+            units,
             max: MAX_COMPUTE_UNITS,
         });
     }
+    Ok(units)
+}
+
+pub(crate) fn limits<'a>(
+    hops: &[SwapWindow],
+    instructions: impl IntoIterator<Item = &'a Instruction>,
+    fee_payer: &Pubkey,
+) -> Result<Limits, TxError> {
+    let compute_units = compute_units(hops)?;
 
     let mut invoked = BTreeSet::new();
     let mut keys = BTreeSet::from([*fee_payer]);
