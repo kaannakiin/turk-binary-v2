@@ -1434,7 +1434,7 @@ async fn router_compute_plans() {
     });
     let topology = Arc::clone(&pricing.topology);
     let selected = compute_pools(&pricing);
-    let mut plans = Vec::new();
+    let (mut plans, mut unquoted) = (Vec::new(), Vec::new());
     for node in topology
         .pools()
         .iter()
@@ -1444,7 +1444,16 @@ async fn router_compute_plans() {
         for (from, to) in [(node.mint_a, node.mint_b), (node.mint_b, node.mint_a)] {
             let edge = topology.edge(pool, from).expect("edge");
             let mut session = pricing.reader.session().expect("session");
-            for amount in ladder(&mut session, edge) {
+            let amounts = ladder(&mut session, edge);
+            if amounts.is_empty() {
+                let refused = session.quote(edge, 1_000, 8).err();
+                unquoted.push(json!({
+                    "pool": node.pubkey.to_string(),
+                    "inputMint": topology.mint(from).to_string(),
+                    "error": format!("{refused:?}"),
+                }));
+            }
+            for amount in amounts {
                 let quote = session.quote(edge, amount, 8).expect("quoted above");
                 let request = json!({
                     "fromTokenAddress": topology.mint(from).to_string(),
@@ -1480,7 +1489,20 @@ async fn router_compute_plans() {
         }
     }
     let file = std::fs::File::create(output).expect("plans file");
-    serde_json::to_writer(file, &json!({ "plans": plans })).expect("write plans");
+    let root = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .expect("workspace root");
+    let corpus = std::env::var("ROUTE_UNIVERSE").expect("names the capture");
+    let corpus = std::fs::canonicalize(corpus).expect("the capture exists");
+    let corpus = corpus
+        .strip_prefix(&root)
+        .expect("a capture inside the workspace")
+        .display()
+        .to_string();
+    serde_json::to_writer(
+        file,
+        &json!({ "corpus": corpus, "plans": plans, "unquoted": unquoted }),
+    )
+    .expect("write plans");
 }
 
 fn compute_pools(pricing: &universe::Universe) -> std::collections::HashSet<domain::Pubkey> {
@@ -1537,9 +1559,17 @@ fn compute_pools(pricing: &universe::Universe) -> std::collections::HashSet<doma
     selected
 }
 
+// A small amount may quote nothing once integer rounding takes the output to zero, so the
+// ladder starts at the first amount that quotes.
 fn ladder(session: &mut route::SearchSession, edge: graph::EdgeId) -> Vec<u64> {
     let mut amounts = Vec::new();
     let mut amount: u64 = 1_000;
+    while session.quote(edge, amount, 8).is_err() {
+        let Some(next) = amount.checked_mul(4) else {
+            return amounts;
+        };
+        amount = next;
+    }
     while session.quote(edge, amount, 8).is_ok() {
         amounts.push(amount);
         let Some(next) = amount.checked_mul(4) else {

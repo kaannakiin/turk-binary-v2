@@ -22,8 +22,8 @@ const AMM_V4_HOP_UNITS: u32 = 50_000;
 // src: crates/tx/src/tests/fixtures/router_compute.json (`just router-compute-replay` on the
 // universe captures of slots 451,259,947 and 452,267,679, the quoter's CLMM, Whirlpool and DLMM
 // program replay corpora, and the CLMM, Whirlpool and DLMM Token-2022 captures in this
-// directory, joined by scripts/compute_fixture.py): what the router's instruction spent on 2,867
-// one-hop swaps of 72 pools under the largest compute limit, against the walk their quote
+// directory, joined by scripts/compute_fixture.py): what the router's instruction spent on 3,018
+// one-hop swaps of 73 pools under the largest compute limit, against the walk their quote
 // reported. Each rate is the least that covers every case with 15% to spare, rounded up to 100.
 // Fitted with any one source left out, the rates covered it with 12% to spare, but for the CLMM
 // and Whirlpool transfer-fee captures, the only ones of their kind (0.96 and 1.00), and the CLMM
@@ -56,8 +56,7 @@ const DLMM_HOP: Rate = Rate {
     span: 0,
     array: 1_200,
 };
-// The fixture holds no paid DLMM swap through more arrays: a fourth contiguous array is 211 bins
-// or more, past what 1,400,000 units pay for.
+// No measured DLMM swap drew more arrays; a window of more is refused until one is.
 const DLMM_MEASURED_ARRAYS: u8 = 3;
 // Creating an account, wrapping and unwrapping SOL are not in the replay. A limit set too low
 // fails the transaction; one set high only lowers its scheduling priority, since the cost model

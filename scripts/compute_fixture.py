@@ -26,11 +26,13 @@ def main(argv):
     runs = []
     cases = []
     for plans_path, replay_path in zip(argv[2::2], argv[3::2]):
-        plans = json.loads(pathlib.Path(plans_path).read_text())["plans"]
+        written = json.loads(pathlib.Path(plans_path).read_text())
+        plans = written["plans"]
         replay = json.loads(pathlib.Path(replay_path).read_text())
         if len(plans) != len(replay["cases"]):
             sys.exit(f"{plans_path} and {replay_path} differ in length")
-        runs.append(replay["provenance"])
+        run = len(runs)
+        runs.append({"corpus": written["corpus"], **replay["provenance"]})
         for plan, case in zip(plans, replay["cases"]):
             if plan["dex"] not in STEPPED:
                 continue
@@ -39,8 +41,10 @@ def main(argv):
                 continue
             cases.append(
                 {
+                    "run": run,
                     "dex": plan["dex"],
                     "pool": plan["pool"],
+                    "input_mint": plan["inputMint"],
                     "amount_in": plan["amountIn"],
                     "crossed": plan["crossed"],
                     "span": plan["span"],
@@ -48,6 +52,7 @@ def main(argv):
                     "tail": plan["tail"],
                     "token_2022": plan["token2022"],
                     "transfer_fee": plan["transferFee"],
+                    "steps_changed": case.get("steps_changed"),
                     "router_compute_units": spent,
                 }
             )

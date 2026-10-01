@@ -14,7 +14,7 @@ use solana_sdk_2::pubkey::Pubkey as SdkPubkey;
 
 use crate::account::AccountRef;
 use crate::error::{DecodeError, QuoteError, WindowError};
-use crate::state::{QuoteInput, QuoteOut, tick_steps};
+use crate::state::{QuoteInput, QuoteOut};
 use crate::token::any_token_account;
 use crate::token22::{Mint, check_transfer, decode_mint};
 
@@ -286,7 +286,11 @@ impl Dlmm {
             fee_out: if fee_on_input { 0 } else { quote.fee },
             arrays_used: u8::try_from(arrays_used).unwrap_or(u8::MAX),
             walk: {
-                let bins = tick_steps(lb_pair.active_id, quote.terminal_active_id, 1);
+                let bins = bins_walked(
+                    lb_pair.active_id,
+                    quote.terminal_active_id,
+                    &window.touched.borrow(),
+                );
                 Walk {
                     span: bins,
                     crossed: bins,
@@ -421,6 +425,22 @@ impl Dlmm {
             walk: Walk::default(),
         })
     }
+}
+
+// A swap leaving an array for the next one that holds liquidity moves its active bin to that
+// array's edge, so only bins inside the arrays it drew are stepped through.
+// src: kaannakiin/dlmm-sdk@28e1f83f053aa64a80e33b5a0c71d5f509e2384d commons/src/quote.rs
+// (shift_active_bin_if_empty_gap)
+fn bins_walked(from: i32, to: i32, arrays: &[i32]) -> u32 {
+    let (low, high) = (from.min(to), from.max(to));
+    arrays
+        .iter()
+        .filter_map(|&index| {
+            let (lower, upper) = BinArray::get_bin_array_lower_upper_bin_id(index).ok()?;
+            let (start, end) = (low.max(lower), high.min(upper));
+            (start <= end).then(|| end.abs_diff(start) + 1)
+        })
+        .sum()
 }
 
 #[cfg(test)]

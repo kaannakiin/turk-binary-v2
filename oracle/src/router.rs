@@ -213,6 +213,8 @@ struct Case {
     #[serde(skip_serializing_if = "Option::is_none")]
     router_compute_units: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    steps_changed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     v1_paid: Option<String>,
@@ -418,6 +420,7 @@ fn run(
         paid: None,
         compute_units: None,
         router_compute_units: None,
+        steps_changed: None,
         error: None,
         v1_paid: None,
         v1_compute_units: None,
@@ -452,6 +455,7 @@ fn run(
             case.paid = Some(paid.to_string());
             case.compute_units = Some(sent.compute_units);
             case.router_compute_units = sent.router_units;
+            case.steps_changed = steps_changed(machine, accounts, &plan.pool);
         }
         Err(error) => case.error = Some(error),
     }
@@ -668,6 +672,67 @@ fn direct_flow(
 
 /// Funds the user from the corpus state, sends, and reads what the output
 /// account received.
+// src: kaannakiin/raydium-clmm@1de19c560b751cb685dea31e1aeb18f2f2602525
+// programs/amm/src/states/tick_array.rs (TickArrayState: discriminator, pool_id, start_tick_index,
+// then 60 TickState of TickState::LEN 168 bytes; LEN 10,240).
+const CLMM: Pubkey = Pubkey::from_str_const("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK");
+const CLMM_TICKS: Steps = Steps {
+    len: 10_240,
+    pool: 8..40,
+    first: 44,
+    size: 168,
+    count: 60,
+};
+// src: MeteoraAg/dlmm-sdk@576919e3e4368e542c402f000b4264724f7f23ec idls/dlmm.json (BinArray:
+// index i64, version u8, padding [u8; 7], lb_pair, then 70 Bin of 144 bytes; BinArray.lb_pair).
+const DLMM: Pubkey = Pubkey::from_str_const("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
+const DLMM_BINS: Steps = Steps {
+    len: 10_136,
+    pool: 24..56,
+    first: 56,
+    size: 144,
+    count: 70,
+};
+
+struct Steps {
+    len: usize,
+    pool: std::ops::Range<usize>,
+    first: usize,
+    size: usize,
+    count: usize,
+}
+
+/// The ticks (CLMM) or bins (DLMM) of `pool` whose bytes the last swap
+/// changed: what the program stepped through, as its own writes record it.
+fn steps_changed(
+    machine: &Machine,
+    accounts: &HashMap<Pubkey, Option<Stored>>,
+    pool: &str,
+) -> Option<u64> {
+    let pool: Pubkey = pool.parse().ok()?;
+    let (mut arrays, mut changed) = (0, 0);
+    for (key, stored) in accounts {
+        let Some(before) = stored else { continue };
+        let steps = match before.owner {
+            owner if owner == CLMM => &CLMM_TICKS,
+            owner if owner == DLMM => &DLMM_BINS,
+            _ => continue,
+        };
+        if before.data.len() != steps.len || before.data[steps.pool.clone()] != pool.to_bytes() {
+            continue;
+        }
+        arrays += 1;
+        let after = machine.account(key)?;
+        changed += (0..steps.count)
+            .filter(|i| {
+                let slot = steps.first + i * steps.size..steps.first + (i + 1) * steps.size;
+                before.data[slot.clone()] != after.data[slot]
+            })
+            .count() as u64;
+    }
+    (arrays > 0).then_some(changed)
+}
+
 fn replay(
     machine: &mut Machine,
     clock: &Clock,

@@ -167,8 +167,17 @@ impl Clmm {
         Ok(())
     }
 
-    fn walked(&self, pool: &PoolState, to: i32) -> Walk {
+    // On the way up, a limit order's tick leaves the pool's tick one below it
+    // (swap.rs `state.tick`) and the price at it, so the walk ends at the price.
+    fn walked(&self, pool: &PoolState, result: &SwapInternalResult, zero_for_one: bool) -> Walk {
         let (from, spacing) = (pool.tick_current, pool.tick_spacing);
+        let at_price =
+            tick_math::get_tick_at_sqrt_price(result.sqrt_price_x64).unwrap_or(result.tick);
+        let to = if zero_for_one {
+            result.tick.min(at_price)
+        } else {
+            result.tick.max(at_price)
+        };
         let (low, high) = (from.min(to), from.max(to));
         let width = i32::from(spacing) * raydium_clmm::states::TICK_ARRAY_SIZE;
         let crossed = self
@@ -176,8 +185,8 @@ impl Clmm {
             .range(low.saturating_sub(width)..=high)
             .flat_map(|(_, array)| array.ticks.iter())
             .filter(|tick| {
-                let (index, gross) = (tick.tick, tick.liquidity_gross);
-                gross != 0 && (low..=high).contains(&index)
+                let index = tick.tick;
+                tick.is_initialized() && (low..=high).contains(&index)
             })
             .count();
         let span = pool.get_dynamic_fee_info().map_or(0, |info| {
@@ -365,7 +374,7 @@ impl Clmm {
             fee_in: if fee_on_input { venue_fee } else { 0 },
             fee_out: if fee_on_input { 0 } else { venue_fee },
             arrays_used,
-            walk: self.walked(pool, result.tick),
+            walk: self.walked(pool, &result, zero_for_one),
         })
     }
 
