@@ -73,6 +73,9 @@ CASES = [
          extra_env={"ROUTER_ORCA_CROSS_SNAPSHOT": str(FIXTURES / "orca_cross_dex.json")}),
     case("router_dlmm_two_array.json", "router_dlmm_two_array_plans", "ROUTER_DLMM_TWO_ARRAY_PLANS",
          "router-matrix", ROOT / "crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz"),
+    case("router_dlmm_grown_oracle.json", "router_dlmm_grown_oracle_plans",
+         "ROUTER_DLMM_GROWN_ORACLE_PLANS", "router-matrix",
+         FIXTURES / "dlmm_grown_oracle_pools.json.gz"),
 ]
 
 

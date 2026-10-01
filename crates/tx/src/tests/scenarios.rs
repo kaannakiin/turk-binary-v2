@@ -222,6 +222,33 @@ fn dlmm_bitmap_extension_matches_direct_program_in_both_directions() {
     }
 }
 
+// src: crates/tx/src/tests/fixtures/dlmm_grown_oracle_pools.json.gz, slot 452267679;
+// oracle router-matrix direct Meteora swap2 vs router through a 6,624-byte oracle. The router
+// before the change refused both as BadWindow (6007).
+#[test]
+fn dlmm_grown_oracle_matches_direct_program_in_both_directions() {
+    let matrix: Matrix =
+        serde_json::from_str(include_str!("fixtures/router_dlmm_grown_oracle.json")).unwrap();
+    for (swap, (name, output, payout)) in matrix.swaps.iter().zip([
+        ("dlmm_grown_oracle_input", USDC, 117_780_478),
+        ("dlmm_grown_oracle_output", SOL, 847_338_166),
+    ]) {
+        assert_eq!(swap.plan, name);
+        assert_eq!(swap.error, None, "{name}");
+        assert_eq!(swap.venue_out, [payout], "{name}");
+        assert_eq!(swap.tokens[output].after, Some(payout), "{name}");
+    }
+    assert_eq!(matrix.swaps.len(), 2);
+    assert_eq!(matrix.thresholds.len(), 4);
+    for [accepted, refused] in matrix.thresholds.as_chunks::<2>().0 {
+        assert_eq!(accepted.name, "at_payout");
+        assert_eq!(accepted.error, None);
+        assert_eq!(refused.name, "one_above_payout");
+        assert!(refused.error.is_some());
+        assert!(refused.venue_accounts_unchanged);
+    }
+}
+
 // src: crates/tx/src/tests/fixtures/dlmm_cross_dex.json, slot 451671159;
 // oracle router-matrix direct DLMM then CLMM vs the API's unsigned v1 route.
 #[test]

@@ -58,7 +58,7 @@ So our program is already stricter than both, and the mint check lives where the
 
 ## CI
 
-The `replay` job runs `just replay-check` ([router.md](router.md) → Replay check): seven router fixtures rebuilt from the tree and executed on mainnet's bytecode. The large single-venue corpora (`just router-replay`, `router-orca-replay`, `router-dlmm-replay` and the other per-venue recipes) still run by hand only. The workflow runs only on pushes to `main` and on pull requests, so a pushed branch alone is not checked.
+The `replay` job runs `just replay-check` ([router.md](router.md) → Replay check): eight router fixtures rebuilt from the tree and executed on mainnet's bytecode. The large single-venue corpora (`just router-replay`, `router-orca-replay`, `router-dlmm-replay` and the other per-venue recipes) still run by hand only. The workflow runs only on pushes to `main` and on pull requests, so a pushed branch alone is not checked.
 
 The replay job needs the release `just publish-oracle-programs` uploads for the current `programs.tsv`; after `just oracle` dumps changed bytecode, the fixtures are regenerated and a human publishes the new release, or the job fails at the download step.
 

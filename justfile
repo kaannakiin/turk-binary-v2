@@ -137,6 +137,12 @@ router-dlmm-extension-replay:
     ROUTER_DLMM_EXTENSION_PLANS={{justfile_directory()}}/target/router-dlmm-extension-plans.json cargo nextest run -p server --run-ignored only router_dlmm_extension_plans --no-capture
     cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/dlmm_extension_pools.json target/router-dlmm-extension-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_dlmm_extension.json
 
+# Live DLMM pool whose oracle was grown to 206 samples, both directions against direct swap2.
+router-dlmm-grown-oracle-replay:
+    NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
+    ROUTER_DLMM_GROWN_ORACLE_PLANS={{justfile_directory()}}/target/router-dlmm-grown-oracle-plans.json cargo nextest run -p server --run-ignored only router_dlmm_grown_oracle_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router-matrix crates/tx/src/tests/fixtures/dlmm_grown_oracle_pools.json.gz target/router-dlmm-grown-oracle-plans.json oracle/programs onchain/target/deploy/router.so crates/tx/src/tests/fixtures/router_dlmm_grown_oracle.json
+
 # Same-slot DLMM→CLMM route with direct payouts and per-hop thresholds.
 router-dlmm-cross-replay:
     NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml

@@ -14,7 +14,7 @@ use solana_sdk_2::clock::Clock;
 use solana_sdk_2::pubkey::Pubkey as SdkPubkey;
 
 use crate::account::AccountRef;
-use crate::error::{DecodeError, QuoteError, ROUTER_DLMM_ORACLE_LEN, WindowError};
+use crate::error::{DecodeError, QuoteError, WindowError};
 use crate::state::{QuoteInput, QuoteOut, tick_steps};
 use crate::token::any_token_account;
 use crate::token22::{Mint, check_transfer, decode_mint};
@@ -44,7 +44,6 @@ pub(crate) struct Dlmm {
     mints: [Option<Mint>; 2],
     vaults: [Option<Vault>; 2],
     oracle: Option<Pubkey>,
-    oracle_len: usize,
 }
 
 impl Clone for Dlmm {
@@ -57,7 +56,6 @@ impl Clone for Dlmm {
             mints: self.mints.clone(),
             vaults: self.vaults,
             oracle: self.oracle,
-            oracle_len: self.oracle_len,
         }
     }
 }
@@ -204,10 +202,7 @@ impl Dlmm {
                     None
                 };
             }
-            Role::Oracle => {
-                self.oracle = exists.then_some(account.key);
-                self.oracle_len = account.data.len();
-            }
+            Role::Oracle => self.oracle = exists.then_some(account.key),
             _ => {}
         }
         Ok(())
@@ -340,10 +335,6 @@ impl Dlmm {
             }
         }
         let oracle = self.oracle.ok_or(WindowError::Incomplete(Role::Oracle))?;
-        // An oracle grown to hold more samples swaps on chain, but not through the router.
-        if self.oracle_len != ROUTER_DLMM_ORACLE_LEN {
-            return Err(WindowError::OracleLength(self.oracle_len));
-        }
         if oracle != key(pair.oracle)
             || vault_x.key != key(pair.reserve_x)
             || vault_y.key != key(pair.reserve_y)
@@ -456,7 +447,8 @@ mod tests {
 
     // src: kaannakiin/dlmm-sdk@b4322cc2857a5f5955adb0a119164bbcda48a6d1
     // commons/tests/integration/test_swap_gapped_bin_array_tail.rs, slot 442439533.
-    fn gapped_pair() -> Dlmm {
+    #[test]
+    fn swap_window_carries_gapped_bin_arrays_in_the_programs_walk_order() {
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/dlmm_gapped_pair.json"))
                 .expect("fixture");
@@ -501,20 +493,12 @@ mod tests {
                 }),
             ],
             oracle: Some(key(pair.oracle)),
-            oracle_len: ROUTER_DLMM_ORACLE_LEN,
             ..Dlmm::default()
         };
         for index in [-38, -39, -40, -41, -42, -43, -49, -50] {
             state.arrays.insert(index, Arc::new(BinArray::zeroed()));
         }
-        state
-    }
-
-    #[test]
-    fn swap_window_carries_gapped_bin_arrays_in_the_programs_walk_order() {
-        let window = gapped_pair()
-            .swap_window(true, 8, 8)
-            .expect("gapped window");
+        let window = state.swap_window(true, 8, 8).expect("gapped window");
         assert_eq!(window.tail, 8);
         let actual: Vec<String> = window.accounts[16..]
             .iter()
@@ -536,18 +520,5 @@ mod tests {
                 "B8JmAYa2afbme5UR9XZpnyFyyc2bkb6zDrvaJZhyY1SZ",
             ]
         );
-    }
-
-    // Gate: the router's DLMM adapter refuses any oracle but its own length as BadWindow, so a
-    // window through a grown oracle would quote a swap no transaction can run. 6,624 bytes is
-    // the oracle of mainnet pool BGm1tav58oGcsQJehL9WXBFXF7D27vZsKefj4xJKD5Y at slot 452,267,679.
-    #[test]
-    fn a_window_through_an_oracle_the_router_refuses_is_refused() {
-        let mut state = gapped_pair();
-        state.oracle_len = 6_624;
-        assert!(matches!(
-            state.swap_window(true, 8, 8),
-            Err(WindowError::OracleLength(6_624))
-        ));
     }
 }

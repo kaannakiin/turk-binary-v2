@@ -55,6 +55,13 @@ const DLMM_EXTENSION: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../tx/src/tests/fixtures/dlmm_extension_pools.json"
 );
+const DLMM_GROWN_ORACLE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tx/src/tests/fixtures/dlmm_grown_oracle_pools.json.gz"
+);
+// src: crates/tx/src/tests/fixtures/dlmm_grown_oracle_pools.json.gz, slot 452267679; its
+// oracle ETc6tqgL… holds 206 observations, 6,624 bytes.
+const DLMM_GROWN_ORACLE_POOL: &str = "BGm1tav58oGcsQJehL9WXBFXF7D27vZsKefj4xJKD5Y";
 // src: crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz (LiteSVM payout).
 const DLMM_SOL_USDC: &str = "1jw5fDodwGEGBVqNXsx2eqiLgNmgMDEeXWSbrTreLCM";
 // src: crates/quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz (direct LiteSVM payout).
@@ -238,6 +245,44 @@ async fn router_dlmm_extension_plans() {
     let file = std::fs::File::create(&out).expect("creating DLMM extension plans");
     serde_json::to_writer(file, &json!({ "corpus": DLMM_EXTENSION, "plans": plans }))
         .expect("writing DLMM extension plans");
+}
+
+#[tokio::test]
+#[ignore = "writes plans through a DLMM pool with a grown oracle for LiteSVM replay"]
+async fn router_dlmm_grown_oracle_plans() {
+    let out = std::env::var("ROUTER_DLMM_GROWN_ORACLE_PLANS").expect("names grown oracle plans");
+    let captured = universe::load_selected_from(DLMM_GROWN_ORACLE, &[DLMM_GROWN_ORACLE_POOL]);
+    assert!(captured.skipped.is_empty(), "{:?}", captured.skipped);
+    let fixture = Fixture::from_universe(captured, 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let mut plans = Vec::new();
+    for (name, from, to, amount) in [
+        ("dlmm_grown_oracle_input", WSOL, USDC, "1000000000"),
+        ("dlmm_grown_oracle_output", USDC, WSOL, "100000000"),
+    ] {
+        let request = json!({
+            "fromTokenAddress": from,
+            "toTokenAddress": to,
+            "amount": amount,
+            "maxHops": 1,
+            "slippagePercent": "0",
+            "dexIds": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        });
+        let (status, _, quote) = call(fixture.router(), post(&request)).await;
+        assert_eq!(status, StatusCode::OK, "{name}: {quote}");
+        let plan = scenario_plan(&fixture, name, &quote, false, None).await;
+        assert_hop_minimums(&plan, &quote, name);
+        plans.push(plan);
+    }
+    let file = std::fs::File::create(&out).expect("creating grown oracle plans");
+    serde_json::to_writer(
+        file,
+        &json!({ "corpus": DLMM_GROWN_ORACLE, "plans": plans }),
+    )
+    .expect("writing grown oracle plans");
 }
 
 #[tokio::test]
