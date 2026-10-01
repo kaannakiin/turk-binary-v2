@@ -17,7 +17,7 @@ use crate::{
     SearchSession,
 };
 
-const POLISH: [u64; 2] = [100, 10];
+const POLISH: [u64; 3] = [100, 10, 1];
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Carried {

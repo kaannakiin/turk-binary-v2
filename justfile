@@ -79,6 +79,13 @@ router-replay corpus="crates/quoter/src/tests/fixtures/svm/raydium_cpmm.json.gz"
 
 # Four-step split/merge with an intermediate Token-2022 transfer-fee branch.
 # Direct venue swaps and both router forms replay on the same captured bank.
+# LiteSVM: the orders the server splits on a universe capture (`just snapshot-universe`), sent
+# through the router on its accounts and mainnet bytecode; each must pay what it quoted.
+router-split-replay capture="oracle/snapshots/universe.json.gz":
+    NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
+    ROUTE_UNIVERSE={{justfile_directory()}}/{{capture}} ROUTER_SPLIT_PLANS={{justfile_directory()}}/target/router-split-plans.json cargo nextest run -p server --run-ignored only router_split_plans --no-capture
+    cargo run --manifest-path oracle/Cargo.toml -- router {{capture}} target/router-split-plans.json oracle/programs onchain/target/deploy/router.so target/router-split-replay.json
+
 router-flow-replay:
     NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/router/Cargo.toml
     NO_DNA=1 cargo build-sbf --tools-version {{sbf_tools}} --manifest-path onchain/programs/short-venue/Cargo.toml

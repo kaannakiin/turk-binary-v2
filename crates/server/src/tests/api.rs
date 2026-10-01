@@ -1336,6 +1336,43 @@ async fn router_flow_plans() {
     .expect("write plans");
 }
 
+/// Split orders of a universe capture as `/swap-instructions` builds them;
+/// `just router-split-replay` runs them through the router in `LiteSVM`.
+#[tokio::test]
+#[ignore = "writes split plans of a universe capture for `just router-split-replay`"]
+async fn router_split_plans() {
+    let output = std::env::var("ROUTER_SPLIT_PLANS").expect("output path");
+    let fixture = Fixture::from_universe(universe::load(), 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [5; 32],
+        last_valid_block_height: 1,
+    });
+    let mut plans = Vec::new();
+    for (name, to, sol) in [
+        ("split_sol_usdc_10000", USDC, 10_000_u64),
+        ("split_sol_pump_10", universe::PUMP, 10),
+        ("split_sol_pump_10000", universe::PUMP, 10_000),
+    ] {
+        let request = json!({
+            "fromTokenAddress": WSOL,
+            "toTokenAddress": to,
+            "amount": (sol * 1_000_000_000).to_string(),
+            "maxHops": 2,
+        });
+        let (status, _, quote) = call(fixture.router(), post(&request)).await;
+        assert_eq!(status, StatusCode::OK, "{name}: {quote}");
+        assert!(
+            quote["operations"]
+                .as_array()
+                .is_some_and(|ops| ops.len() > 1),
+            "{name} splits: {quote}"
+        );
+        plans.push(scenario_plan(&fixture, name, &quote, false, None).await);
+    }
+    let file = std::fs::File::create(output).expect("plans file");
+    serde_json::to_writer(file, &json!({ "plans": plans })).expect("write plans");
+}
+
 async fn sequential_cpmm_plan(fixture: &Fixture, direct: &Value) -> Value {
     let captured = universe::load_from(SCENARIO_POOLS);
     let mut session = captured.reader.session().expect("captured quote session");
