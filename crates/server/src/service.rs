@@ -63,6 +63,7 @@ pub(crate) struct RouteRequest {
     pub direct_route: bool,
     pub single_route_only: bool,
     pub single_pool_per_hop: bool,
+    pub max_accounts: tx::AccountLimit,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -99,8 +100,22 @@ struct Swappable<'a> {
     wrap_sol: bool,
     max_arrays: u8,
     slippage_bps: u16,
+    max_accounts: tx::AccountLimit,
+    cycles: Cycles,
     refused_unprofitable_cycle: Cell<bool>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cycles {
+    MustProfit,
+    MayLose,
+}
+
+// Who swaps changes the keys of a route's accounts, not how many there are, so
+// `/quote` admits routes as a stand-in wallet would build them. It builds them
+// wrapping SOL: that names every account an unwrapped swap does and can add the
+// native mint, so a quote never undercounts what either swap needs.
+const QUOTE_USER: Pubkey = Pubkey::new_from_array([0x51; 32]);
 
 /// The quoted amount less slippage; `None` at zero, which the router could not tell
 /// from no output.
@@ -199,7 +214,12 @@ fn admissible_flow(
             denominator: op.allocation.denominator,
         })
         .collect();
-    let min_out = min_out(flow.amount_out, filter.slippage_bps)?;
+    let mut min_out = min_out(flow.amount_out, filter.slippage_bps)?;
+    if filter.cycles == Cycles::MayLose && flow.slots.first() == flow.slots.get(1) {
+        // Nothing the build checks depends on the threshold; a losing cycle
+        // `/quote` may answer is checked as if it paid one unit back.
+        min_out = min_out.max(flow.amount_in.checked_add(1)?);
+    }
     let minima = hop_min_outs(
         flow.operations
             .iter()
@@ -220,6 +240,7 @@ fn admissible_flow(
             min_out,
             hop_min_outs: &minima,
             wrap_sol: filter.wrap_sol,
+            max_accounts: filter.max_accounts,
         })
         .inspect_err(|error| filter.note(error))
         .ok()?
@@ -233,6 +254,7 @@ fn admissible_flow(
             amount_in: flow.amount_in,
             min_out,
             wrap_sol: filter.wrap_sol,
+            max_accounts: filter.max_accounts,
         })
         .inspect_err(|error| filter.note(error))
         .ok()?
@@ -280,6 +302,7 @@ pub(crate) struct RoutedLeg {
 pub(crate) struct QuotedRoute {
     pub routed: Routed,
     pub min_out: u64,
+    pub max_accounts: tx::AccountLimit,
 }
 
 #[derive(Debug)]
@@ -369,8 +392,13 @@ impl<F: PoolFeed> QuoteService<F> {
     }
     /// Runs on a search thread. The search's session opens here, not when
     /// the request arrived, so a queued request pins no state while it waits.
-    pub(crate) fn route(&self, request: &RouteRequest) -> Result<Routed, ServiceError> {
-        self.price(request, &request.dexes, false)
+    pub(crate) fn route(
+        &self,
+        request: &RouteRequest,
+        slippage_bps: u16,
+    ) -> Result<Routed, ServiceError> {
+        let filter = self.swappable(request, QUOTE_USER, true, slippage_bps, Cycles::MayLose);
+        self.admitted(request, &filter, false)
             .map(|priced| priced.routed)
     }
 
@@ -381,15 +409,37 @@ impl<F: PoolFeed> QuoteService<F> {
         wrap_sol: bool,
         slippage_bps: u16,
     ) -> Result<Priced, ServiceError> {
-        let filter = Swappable {
+        let filter = self.swappable(request, user, wrap_sol, slippage_bps, Cycles::MustProfit);
+        self.admitted(request, &filter, true)
+    }
+
+    fn swappable<'a>(
+        &self,
+        request: &'a RouteRequest,
+        user: Pubkey,
+        wrap_sol: bool,
+        slippage_bps: u16,
+        cycles: Cycles,
+    ) -> Swappable<'a> {
+        Swappable {
             dexes: &request.dexes,
             user,
             wrap_sol,
             max_arrays: self.settings.max_arrays,
             slippage_bps,
+            max_accounts: request.max_accounts,
+            cycles,
             refused_unprofitable_cycle: Cell::new(false),
-        };
-        self.price(request, &filter, true)
+        }
+    }
+
+    fn admitted(
+        &self,
+        request: &RouteRequest,
+        filter: &Swappable<'_>,
+        windows: bool,
+    ) -> Result<Priced, ServiceError> {
+        self.price(request, filter, windows)
             .map_err(|error| match error {
                 ServiceError::NoRoute(search) if filter.refused_unprofitable_cycle.get() => {
                     ServiceError::UnprofitableCycle(search)

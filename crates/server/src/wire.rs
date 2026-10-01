@@ -38,6 +38,7 @@ pub(crate) struct QuoteBody {
     #[serde(default = "yes")]
     enable_unique_dex: bool,
     slippage_percent: Option<String>,
+    max_accounts: Option<u8>,
 }
 
 impl QuoteBody {
@@ -83,6 +84,7 @@ impl QuoteBody {
                 direct_route: self.direct_route,
                 single_route_only: self.single_route_only,
                 single_pool_per_hop: self.single_pool_per_hop,
+                max_accounts: max_accounts(self.max_accounts)?,
             },
             slippage_bps: self
                 .slippage_percent
@@ -170,6 +172,7 @@ pub(crate) struct QuotedBody {
     context_slot: u64,
     cross_stream: Option<bool>,
     search: Option<SearchBody>,
+    max_accounts: Option<u8>,
     slots: Vec<String>,
     operations: Vec<QuotedLeg>,
 }
@@ -254,8 +257,20 @@ impl QuotedBody {
                 legs,
             },
             min_out: amount(&self.other_amount_threshold)?.get(),
+            max_accounts: max_accounts(self.max_accounts)?,
         })
     }
+}
+
+fn max_accounts(value: Option<u8>) -> Result<tx::AccountLimit, ApiError> {
+    value.map_or(Ok(tx::AccountLimit::MAX), |limit| {
+        tx::AccountLimit::new(limit).ok_or_else(|| {
+            ApiError::invalid(format!(
+                "maxAccounts must be between 1 and {}",
+                tx::MAX_ACCOUNTS
+            ))
+        })
+    })
 }
 
 fn address(field: &str, text: &str) -> Result<Pubkey, ApiError> {
@@ -392,6 +407,7 @@ pub(crate) struct QuoteResponse {
     cross_stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     search: Option<SearchBody>,
+    max_accounts: usize,
     slots: Vec<String>,
     operations: Vec<LegBody>,
 }
@@ -423,7 +439,12 @@ impl From<SearchQuality> for SearchBody {
 }
 
 impl QuoteResponse {
-    pub(crate) fn new(routed: &Routed, min_out: u64, slippage_bps: u16) -> Self {
+    pub(crate) fn new(
+        routed: &Routed,
+        min_out: u64,
+        slippage_bps: u16,
+        max_accounts: tx::AccountLimit,
+    ) -> Self {
         Self {
             from_token_address: routed.from.to_string(),
             to_token_address: routed.to.to_string(),
@@ -434,6 +455,7 @@ impl QuoteResponse {
             context_slot: routed.slot.0,
             cross_stream: routed.cross_stream,
             search: routed.search.map(Into::into),
+            max_accounts: max_accounts.get(),
             slots: routed.slots.iter().map(ToString::to_string).collect(),
             operations: routed
                 .legs

@@ -39,6 +39,10 @@ const CLMM_CROSS: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../tx/src/tests/fixtures/clmm_cross_dex.json"
 );
+const DAMM_V2: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../quoter/src/tests/fixtures/svm/meteora_damm_v2.json.gz"
+);
 const DLMM: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../quoter/src/tests/fixtures/svm/meteora_dlmm.json.gz"
@@ -287,6 +291,14 @@ async fn router_dlmm_two_array_plans() {
         .expect("writing two-array plans");
 }
 
+/// The quote as if it spent `amount_in`: a swap built from it requotes that
+/// input on the pools the quote names, whatever the outputs it states.
+fn spending(mut quote: Value, amount_in: &str) -> Value {
+    quote["fromTokenAmount"] = json!(amount_in);
+    quote["operations"][0]["fromTokenAmount"] = json!(amount_in);
+    quote
+}
+
 #[tokio::test]
 async fn dlmm_quote_refuses_an_unmeasured_swap_window() {
     let fixture = Fixture::over_selected(DLMM, &[DLMM_TWO_ARRAYS], 1, 4);
@@ -294,19 +306,24 @@ async fn dlmm_quote_refuses_an_unmeasured_swap_window() {
         hash: [5; 32],
         last_valid_block_height: 1,
     });
-    let request = json!({
-        "fromTokenAddress": USDC,
-        "toTokenAddress": WSOL,
-        "amount": "1000000000",
-        "maxHops": 1,
-        "dexIds": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
-    });
-    let (status, _, quote) = call(fixture.router(), post(&request)).await;
+    let request = |amount: &str| {
+        json!({
+            "fromTokenAddress": USDC,
+            "toTokenAddress": WSOL,
+            "amount": amount,
+            "maxHops": 1,
+            "dexIds": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+        })
+    };
+    let (status, _, refused) = call(fixture.router(), post(&request("1000000000"))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["error"]["code"], "NO_ROUTE");
+    let (status, _, quote) = call(fixture.router(), post(&request("1000000"))).await;
     assert_eq!(status, StatusCode::OK, "{quote}");
     let body = json!({
         "userWalletAddress": ORACLE_PAYER,
         "wrapAndUnwrapSol": false,
-        "quoteResponse": quote,
+        "quoteResponse": spending(quote, "1000000000"),
     });
     for path in ["/swap-instructions", "/swap"] {
         let (status, _, built) = call(fixture.router(), post_to(path, &body)).await;
@@ -581,6 +598,8 @@ async fn malformed_or_contradictory_requests_answer_invalid_request() {
         ("unknown field", with("slippageBps", json!(0))),
         ("zero hops", with("maxHops", json!(0))),
         ("hops past the limit", with("maxHops", json!(9))),
+        ("zero accounts", with("maxAccounts", json!(0))),
+        ("accounts past the v1 limit", with("maxAccounts", json!(65))),
         (
             "cycle between two mints",
             with("enableCyclicArbitrage", json!(true)),
@@ -610,6 +629,84 @@ async fn a_request_no_pool_admits_answers_no_route_with_the_search_outcome() {
     assert_eq!(body["error"]["code"], "NO_ROUTE");
     assert_eq!(body["error"]["search"]["pruned"], false);
     assert_eq!(body["error"]["search"]["exhausted"], false);
+}
+
+#[tokio::test]
+async fn a_quote_routes_only_through_venues_the_router_can_swap() {
+    let file = std::fs::File::open(DAMM_V2).expect("the corpus is in the repository");
+    let corpus: Value = serde_json::from_reader(flate2::read::GzDecoder::new(BufReader::new(file)))
+        .expect("the corpus parses");
+    let paid: Vec<&Value> = corpus["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .filter(|case| case.get("out").is_some())
+        .collect();
+    let (there, back) = paid
+        .iter()
+        .find_map(|there| {
+            paid.iter()
+                .find(|back| {
+                    back["pool"] == there["pool"] && back["input_mint"] != there["input_mint"]
+                })
+                .map(|back| (there, back))
+        })
+        .expect("the program paid through one pool both ways");
+    let pool = there["pool"].as_str().expect("pool");
+    let fixture = Fixture::over_selected(DAMM_V2, &[pool], 1, 4);
+    let request = json!({
+        "fromTokenAddress": there["input_mint"],
+        "toTokenAddress": back["input_mint"],
+        "amount": there["amount_in"],
+    });
+
+    let (status, _, body) = call(fixture.router(), post(&request)).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "NO_ROUTE");
+}
+
+// src: SIMD-0385 (a v1 transaction is the 0x81 prefix, a 3-byte header, a 4-byte config
+// mask, a 32-byte lifetime, the instruction count, then the address count).
+const V1_ADDRESS_COUNT: usize = 41;
+
+#[tokio::test]
+async fn a_quote_names_no_more_accounts_than_the_caller_allows() {
+    use base64::Engine as _;
+    let best = best_sol_to_usdc_pool();
+    let fixture = Fixture::over_selected(CPMM, &[&best.pool], 1, 4);
+    fixture.blockhashes.set(domain::chain::LatestBlockhash {
+        hash: [7; 32],
+        last_valid_block_height: 123,
+    });
+    let (status, _, swapped) = call(fixture.router(), post_to("/swap", &swap_one_sol())).await;
+    assert_eq!(status, StatusCode::OK, "{swapped}");
+    let transaction = base64::engine::general_purpose::STANDARD
+        .decode(swapped["transaction"].as_str().expect("base64"))
+        .expect("base64");
+    let addresses = transaction[V1_ADDRESS_COUNT];
+    let quote = |max_accounts: u8| {
+        let mut request = sol_to_usdc();
+        request["amount"] = json!(ONE_SOL);
+        request["maxAccounts"] = json!(max_accounts);
+        post(&request)
+    };
+
+    let (status, _, at) = call(fixture.router(), quote(addresses)).await;
+    assert_eq!(status, StatusCode::OK, "{at}");
+    assert_eq!(at["toTokenAmount"], best.out.as_str());
+    assert_eq!(at["maxAccounts"], addresses);
+
+    let (status, _, below) = call(fixture.router(), quote(addresses - 1)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{below}");
+    assert_eq!(below["error"]["code"], "NO_ROUTE");
+
+    let mut tightened = at;
+    tightened["maxAccounts"] = json!(addresses - 1);
+    let body = json!({ "userWalletAddress": USER, "quoteResponse": tightened });
+    let (status, _, built) = call(fixture.router(), post_to("/swap-instructions", &body)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{built}");
+    assert_eq!(built["error"]["code"], "TOO_MANY_ACCOUNTS");
 }
 
 #[tokio::test]
@@ -1715,11 +1812,27 @@ async fn recorded_orca_cross_dex_routes_build_and_quote_what_the_programs_paid_w
     for route in orca_cross_matrix() {
         let name = route.0;
         if ORCA_CROSS_OVER_BUDGET.contains(&name) {
-            let (fixture, quote) = orca_cross_quote(snapshot, route).await;
+            let (_, pools, _, from, to, amount) = route;
+            let fixture =
+                Fixture::from_universe(universe::load_selected_from(snapshot, &pools), 1, 4);
+            let request = json!({
+                "fromTokenAddress": from,
+                "toTokenAddress": to,
+                "amount": amount,
+                "maxHops": 2,
+            });
+            let (status, _, refused) = call(fixture.router(), post(&request)).await;
+            assert_eq!(
+                (status, &refused["error"]["code"]),
+                (StatusCode::UNPROCESSABLE_ENTITY, &json!("NO_ROUTE")),
+                "{name}"
+            );
+            let (fixture, quote) =
+                orca_cross_quote(snapshot, (name, pools, route.2, from, to, "1000")).await;
             let body = json!({
                 "userWalletAddress": ORACLE_PAYER,
                 "wrapAndUnwrapSol": false,
-                "quoteResponse": quote,
+                "quoteResponse": spending(quote, amount),
             });
             let (status, _, refused) =
                 call(fixture.router(), post_to("/swap-instructions", &body)).await;

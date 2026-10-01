@@ -30,7 +30,7 @@ pub enum TxError {
     InvalidFlowAllocation,
     #[error("a swap window has an invalid optional account tail")]
     InvalidOptionalTail,
-    #[error("the transaction needs {count} accounts, a v1 transaction holds {max}")]
+    #[error("the transaction needs {count} accounts, at most {max} are allowed")]
     TooManyAccounts { count: usize, max: usize },
     #[error("the transaction is {bytes} bytes, a v1 transaction holds {max}")]
     TooLarge { bytes: usize, max: usize },

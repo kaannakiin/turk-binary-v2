@@ -221,7 +221,7 @@ A search reads through a `route::SearchSession`, taken from `QuoteReader::sessio
 
 It prices operation plans (`/quote`) and builds router instructions and unsigned v1 transactions (`/swap-instructions`, `/swap`). It never signs or sends. A swap either searches from `quoteRequest` or validates a returned `quoteResponse`. Returned amounts must conserve credits across the entire graph; current pool state supplies the swap windows, while the router enforces the client's thresholds on chain.
 
-The router currently builds Raydium CPMM and AMM v4 hops. AMM v4 uses `SwapBaseInV2` and SPL Token accounts; its Token-2022 pools are refused. CPMM retains its Token-2022 transfer-fee handling. Both HTTP swap endpoints use the same route planner and v1 transaction budgets.
+The router builds Raydium AMM v4, CPMM and CLMM, Orca Whirlpool and Meteora DLMM hops (`tx::supports`), and every endpoint routes through those only: a quote is a route the swap endpoints can build. AMM v4 uses `SwapBaseInV2` and SPL Token accounts; its Token-2022 pools are refused. CPMM retains its Token-2022 transfer-fee handling. All three endpoints admit a candidate with the same route planner and v1 transaction budgets; `/quote` builds it for a stand-in wallet, since who signs changes the keys of the accounts, not their count, and answers a cycle that loses instead of refusing it.
 
 ```text
 HTTP (axum, `app` runtime)            search threads (`search-{i}`)
@@ -240,23 +240,24 @@ HTTP (axum, `app` runtime)            search threads (`search-{i}`)
 }
 ```
 
-| Field                   | Required | Meaning                                                                                                                  |
-| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `fromTokenAddress`      | yes      | Input mint, base58.                                                                                                      |
-| `toTokenAddress`        | yes      | Output mint. The same as the input only with `enableCyclicArbitrage`.                                                    |
-| `amount`                | yes      | Exact input in base units, as a string of digits: no sign, no decimals, below 2^64.                                      |
-| `userWalletAddress`     | no       | Wallet address when the request is embedded in a transaction request; a quote-only request may omit it.                  |
-| `slippagePercent`       | no       | Decimal percentage, defaulting to `swap.default_slippage_bps` converted to percent; at most two decimals and below 100.  |
-| `enableCyclicArbitrage` | no       | `true` searches a cycle back to the input mint (at least 2 hops). It may come back at a loss: that is the caller's call. |
-| `maxHops`               | no       | Pools a route may pass, `quote.default_max_hops` when absent, at most `quote.max_hops`.                                  |
-| `dexIds`                | no       | Comma-separated DEX program IDs. Empty: every loaded DEX.                                                                |
-| `excludedDexIds`        | no       | Comma-separated DEX program IDs that are never used; exclusion wins over `dexIds`.                                       |
-| `allowedPools`          | no       | Pool allowlist. Missing or `null` means no filter; `[]` admits no pool. Unknown or unloaded pools are ignored.           |
-| `directRoute`           | no       | Restricts the search to one pool and sets the route hop limit to one.                                                    |
-| `singleRouteOnly`       | no       | Forbids parallel route branches while allowing a multi-hop route.                                                        |
-| `singlePoolPerHop`      | no       | Allows at most one pool for each directed mint pair in a hop.                                                            |
-| `uniqueDexIds`          | no       | Comma-separated program IDs eligible for the cycle-wide unique-DEX rule.                                                 |
-| `enableUniqueDex`       | no       | Defaults to `true`; when false, uniqueness is disabled after IDs are still validated.                                    |
+| Field                   | Required | Meaning                                                                                                                                                                                |
+| ----------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fromTokenAddress`      | yes      | Input mint, base58.                                                                                                                                                                    |
+| `toTokenAddress`        | yes      | Output mint. The same as the input only with `enableCyclicArbitrage`.                                                                                                                  |
+| `amount`                | yes      | Exact input in base units, as a string of digits: no sign, no decimals, below 2^64.                                                                                                    |
+| `userWalletAddress`     | no       | Wallet address when the request is embedded in a transaction request; a quote-only request may omit it.                                                                                |
+| `slippagePercent`       | no       | Decimal percentage, defaulting to `swap.default_slippage_bps` converted to percent; at most two decimals and below 100.                                                                |
+| `enableCyclicArbitrage` | no       | `true` searches a cycle back to the input mint (at least 2 hops). It may come back at a loss: that is the caller's call.                                                               |
+| `maxHops`               | no       | Pools a route may pass, `quote.default_max_hops` when absent, at most `quote.max_hops`.                                                                                                |
+| `dexIds`                | no       | Comma-separated DEX program IDs. Empty: every loaded DEX.                                                                                                                              |
+| `excludedDexIds`        | no       | Comma-separated DEX program IDs that are never used; exclusion wins over `dexIds`.                                                                                                     |
+| `allowedPools`          | no       | Pool allowlist. Missing or `null` means no filter; `[]` admits no pool. Unknown or unloaded pools are ignored.                                                                         |
+| `directRoute`           | no       | Restricts the search to one pool and sets the route hop limit to one.                                                                                                                  |
+| `singleRouteOnly`       | no       | Forbids parallel route branches while allowing a multi-hop route.                                                                                                                      |
+| `singlePoolPerHop`      | no       | Allows at most one pool for each directed mint pair in a hop.                                                                                                                          |
+| `uniqueDexIds`          | no       | Comma-separated program IDs eligible for the cycle-wide unique-DEX rule.                                                                                                               |
+| `enableUniqueDex`       | no       | Defaults to `true`; when false, uniqueness is disabled after IDs are still validated.                                                                                                  |
+| `maxAccounts`           | no       | Most distinct addresses the returned instructions may name, the wallet included: 1 to 64, default 64 (a v1 transaction holds 64). Lower it to leave room for instructions of your own. |
 
 Unknown fields are refused, so legacy names such as `dexes`, `excludeDexes` and `slippageBps` are rejected. The answer:
 
@@ -271,6 +272,7 @@ Unknown fields are refused, so legacy names such as `dexes`, `excludeDexes` and 
   "contextSlot": 450370213,
   "crossStream": false,
   "search": { "pruned": false, "exhausted": false, "quotes": 7 },
+  "maxAccounts": 64,
   "slots": ["So111…", "EPjF…"],
   "operations": [
     {
@@ -295,21 +297,22 @@ Unknown fields are refused, so legacy names such as `dexes`, `excludeDexes` and 
 - **`contextSlot`** is the slot of the Clock that requote used. It says when the price held, not that it will hold when a transaction lands.
 - **`search`** reports exploration quality separately from freshness. `pruned` covers per-pair and heuristic split candidate/allocation limits; no global optimum is promised. A split search that finds no single path at the full amount or at a half, quarter or eighth of it answers `pruned: true`: splits into smaller parts were never tried. `exhausted` marks incomplete exploration from the quote budget or cancellation/deadline. Optional `timedOut: true` distinguishes deadline/cancellation termination. A valid incumbent is retained when exploration stops.
 - **`crossStream`** means some account a swap writes rides the shared stream, so the state priced may hold part of a transaction.
+- **`maxAccounts`** is the limit the route was admitted under. A swap built from this quote is held to it: when the current state needs more tick or bin arrays than were priced and the instructions outgrow it, the answer is `TOO_MANY_ACCOUNTS`.
 - Pools and mints are addresses; the graph's `PoolId`/`EdgeId` never leave the process.
 
 Errors are `{"error":{"code","message"}}`, `code` being the stable part:
 
-| Status | `code`            | When                                                                                                                                    |
-| ------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| 400    | `INVALID_REQUEST` | The body does not parse, a field is malformed or unknown, `maxHops` is out of range, or the mints contradict `enableCyclicArbitrage`.   |
-| 422    | `UNKNOWN_MINT`    | A mint no watched pool trades.                                                                                                          |
-| 422    | `NO_ROUTE`        | No path; `error.search` says whether pruning or the budget may have hidden one.                                                         |
-| 503    | `NOT_READY`       | The engine has not started yet, or has no Clock.                                                                                        |
-| 503    | `STALE_DATA`      | The Clock has not moved for `ready.max_clock_stall_ms`: the feed stalled, however ready its pools still look.                           |
-| 503    | `OVERLOADED`      | Every search thread is busy and `quote.max_queued` searches wait. Answered at once, with `Retry-After: 1`.                              |
-| 503    | `ROUTE_CHANGED`   | A pool of the winning path failed its requote, or `verify` after it found one unusable or published again. Asking again searches again. |
-| 504    | `TIMEOUT`         | The search did not finish within `quote.timeout_ms`, queue time included.                                                               |
-| 500    | `INTERNAL`        | The search panicked. The thread survives.                                                                                               |
+| Status | `code`            | When                                                                                                                                                   |
+| ------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 400    | `INVALID_REQUEST` | The body does not parse, a field is malformed or unknown, `maxHops` or `maxAccounts` is out of range, or the mints contradict `enableCyclicArbitrage`. |
+| 422    | `UNKNOWN_MINT`    | A mint no watched pool trades.                                                                                                                         |
+| 422    | `NO_ROUTE`        | No path; `error.search` says whether pruning or the budget may have hidden one.                                                                        |
+| 503    | `NOT_READY`       | The engine has not started yet, or has no Clock.                                                                                                       |
+| 503    | `STALE_DATA`      | The Clock has not moved for `ready.max_clock_stall_ms`: the feed stalled, however ready its pools still look.                                          |
+| 503    | `OVERLOADED`      | Every search thread is busy and `quote.max_queued` searches wait. Answered at once, with `Retry-After: 1`.                                             |
+| 503    | `ROUTE_CHANGED`   | A pool of the winning path failed its requote, or `verify` after it found one unusable or published again. Asking again searches again.                |
+| 504    | `TIMEOUT`         | The search did not finish within `quote.timeout_ms`, queue time included.                                                                              |
+| 500    | `INTERNAL`        | The search panicked. The thread survives.                                                                                                              |
 
 ### `POST /swap-instructions` and `POST /swap`
 

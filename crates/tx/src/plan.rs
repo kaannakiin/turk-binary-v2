@@ -14,8 +14,26 @@ use crate::token::{
     associated_token_address, close_account, create_idempotent, sync_native, transfer_lamports,
 };
 
-// src: SIMD-0385 (a v1 transaction carries at most 64 inline addresses); AGENTS.md → Transaction format
-pub const MAX_ACCOUNTS: usize = 64;
+pub const MAX_ACCOUNTS: usize = AccountLimit::MAX.get();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountLimit(usize);
+
+impl AccountLimit {
+    // src: SIMD-0385 (a v1 transaction carries at most 64 inline addresses); AGENTS.md → Transaction format
+    pub const MAX: Self = Self(64);
+
+    #[must_use]
+    pub fn new(limit: u8) -> Option<Self> {
+        let limit = usize::from(limit);
+        (1..=Self::MAX.0).contains(&limit).then_some(Self(limit))
+    }
+
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct SwapRequest<'a> {
@@ -25,6 +43,7 @@ pub struct SwapRequest<'a> {
     pub min_out: u64,
     pub hop_min_outs: &'a [u64],
     pub wrap_sol: bool,
+    pub max_accounts: AccountLimit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +64,7 @@ pub struct FlowSwapRequest<'a> {
     pub amount_in: u64,
     pub min_out: u64,
     pub wrap_sol: bool,
+    pub max_accounts: AccountLimit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +90,18 @@ impl SwapInstructions {
             keys.extend(instruction.accounts.iter().map(|meta| &meta.pubkey));
         }
         keys.len()
+    }
+
+    fn within(self, user: &Pubkey, limit: AccountLimit) -> Result<Self, TxError> {
+        let count = self.account_count(user);
+        if count > limit.get() {
+            return Err(TxError::TooManyAccounts {
+                count,
+                max: limit.get(),
+            });
+        }
+        crate::unsigned_v1(&self, user, [0; 32], u64::MAX)?;
+        Ok(self)
     }
 }
 
@@ -231,21 +263,13 @@ fn build_flow_once(
         setup.iter().chain(std::iter::once(&swap)).chain(&cleanup),
         user,
     )?;
-    let instructions = SwapInstructions {
+    SwapInstructions {
         setup,
         swap,
         cleanup,
         limits,
-    };
-    let count = instructions.account_count(user);
-    if count > MAX_ACCOUNTS {
-        return Err(TxError::TooManyAccounts {
-            count,
-            max: MAX_ACCOUNTS,
-        });
     }
-    crate::unsigned_v1(&instructions, user, [0; 32], u64::MAX)?;
-    Ok(instructions)
+    .within(user, request.max_accounts)
 }
 
 fn build_once(request: &SwapRequest, hops: &[SwapWindow]) -> Result<SwapInstructions, TxError> {
@@ -281,21 +305,13 @@ fn build_once(request: &SwapRequest, hops: &[SwapWindow]) -> Result<SwapInstruct
         setup.iter().chain(std::iter::once(&swap)).chain(&cleanup),
         user,
     )?;
-    let instructions = SwapInstructions {
+    SwapInstructions {
         setup,
         swap,
         cleanup,
         limits,
-    };
-    let count = instructions.account_count(user);
-    if count > MAX_ACCOUNTS {
-        return Err(TxError::TooManyAccounts {
-            count,
-            max: MAX_ACCOUNTS,
-        });
     }
-    crate::unsigned_v1(&instructions, user, [0; 32], u64::MAX)?;
-    Ok(instructions)
+    .within(user, request.max_accounts)
 }
 
 fn endpoints(hops: &[SwapWindow]) -> Result<(&SwapWindow, &SwapWindow), TxError> {
