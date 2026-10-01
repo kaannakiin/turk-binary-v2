@@ -9,7 +9,8 @@ mod transaction;
 pub use budget::Limits;
 pub use error::TxError;
 pub use plan::{
-    FlowAllocation, FlowSwapRequest, MAX_ACCOUNTS, SwapInstructions, SwapRequest, build, build_flow,
+    AccountLimit, FlowAllocation, FlowSwapRequest, MAX_ACCOUNTS, SwapInstructions, SwapRequest,
+    build, build_flow,
 };
 pub use router::{ROUTER_PROGRAM, router_config, supports};
 pub use slippage::{MAX_SLIPPAGE_BPS, min_out};

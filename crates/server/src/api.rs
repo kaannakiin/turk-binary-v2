@@ -106,9 +106,14 @@ async fn quote<F: PoolFeed>(
     let service = api.service()?;
     let response = api
         .on_search_thread(service.cancellation(), move || {
-            let routed = service.route(&quoting.request)?;
+            let routed = service.route(&quoting.request, quoting.slippage_bps)?;
             let min_out = threshold(routed.amount_out, quoting.slippage_bps)?;
-            Ok(QuoteResponse::new(&routed, min_out, quoting.slippage_bps))
+            Ok(QuoteResponse::new(
+                &routed,
+                min_out,
+                quoting.slippage_bps,
+                quoting.request.max_accounts,
+            ))
         })
         .await?;
     Ok(Json(response))
@@ -171,8 +176,20 @@ async fn plan<F: PoolFeed>(
     .await
 }
 
+struct Chosen {
+    priced: service::Priced,
+    min_out: u64,
+    slippage_bps: u16,
+    max_accounts: tx::AccountLimit,
+}
+
 fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Result<Plan, ApiError> {
-    let (priced, min_out, slippage_bps) = match swapping.source {
+    let Chosen {
+        priced,
+        min_out,
+        slippage_bps,
+        max_accounts,
+    } = match swapping.source {
         SwapSource::Search(quoting) => {
             let priced = service.route_to_swap(
                 &quoting.request,
@@ -180,13 +197,19 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
                 swapping.wrap_sol,
                 quoting.slippage_bps,
             )?;
-            let min_out = threshold(priced.routed.amount_out, quoting.slippage_bps)?;
-            (priced, min_out, quoting.slippage_bps)
+            Chosen {
+                min_out: threshold(priced.routed.amount_out, quoting.slippage_bps)?,
+                priced,
+                slippage_bps: quoting.slippage_bps,
+                max_accounts: quoting.request.max_accounts,
+            }
         }
-        SwapSource::Quoted(quoted, slippage_bps) => {
-            let priced = service.quoted(&quoted)?;
-            (priced, quoted.min_out, slippage_bps)
-        }
+        SwapSource::Quoted(quoted, slippage_bps) => Chosen {
+            priced: service.quoted(&quoted)?,
+            min_out: quoted.min_out,
+            slippage_bps,
+            max_accounts: quoted.max_accounts,
+        },
     };
     let hop_min_outs = service::hop_min_outs(
         priced
@@ -217,6 +240,7 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
             min_out,
             hop_min_outs: &hop_min_outs,
             wrap_sol: swapping.wrap_sol,
+            max_accounts,
         })?
     } else {
         let slots = flow_slots(&priced)?;
@@ -240,11 +264,12 @@ fn swap_plan<F: PoolFeed>(service: &QuoteService<F>, swapping: Swapping) -> Resu
             amount_in: priced.routed.amount_in,
             min_out,
             wrap_sol: swapping.wrap_sol,
+            max_accounts,
         })?
     };
     Ok(Plan {
         user: swapping.user,
-        quote: QuoteResponse::new(&priced.routed, min_out, slippage_bps),
+        quote: QuoteResponse::new(&priced.routed, min_out, slippage_bps, max_accounts),
         instructions,
         priority_fee_lamports: swapping.priority_fee_lamports,
     })

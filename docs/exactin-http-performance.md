@@ -83,28 +83,71 @@ with uncommitted ExactIn changes, Rust 1.98.1, Darwin arm64, capture slot
 451259947 and corpus hash `f7ac688338d1e8a1b29468479bc98399def97bfb`.
 `Cargo.lock` SHA-1 was `ae71b4ebc0bff71684ed3c31bf4cd83ae328402b`.
 
-| Endpoint | Mode | C | p50 / p95 / p99 (µs) | req/s | Allocations | Allocated bytes | Peak RSS (KiB) |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `/quote` | single | 1 | 473 / 594 / 844 | 1948.57 | 265,989 | 201,393,088 | 83,184 |
-| `/quote` | single | 2 | 563 / 646 / 711 | 3338.27 | 265,925 | 201,388,480 | 94,944 |
-| `/quote` | single | 4 | 923 / 1230 / 1471 | 3400.76 | 265,893 | 201,386,176 | 90,704 |
-| `/swap-instructions` | single | 1 | 433 / 498 / 617 | 2182.35 | 224,645 | 192,431,168 | 97,616 |
-| `/swap-instructions` | single | 2 | 502 / 548 / 593 | 3779.23 | 224,581 | 192,426,560 | 101,488 |
-| `/swap-instructions` | single | 4 | 869 / 1025 / 1144 | 3893.88 | 224,549 | 192,424,256 | 109,584 |
-| `/swap` | single | 1 | 433 / 521 / 861 | 2128.16 | 203,269 | 189,963,200 | 102,896 |
-| `/swap` | single | 2 | 526 / 1109 / 1482 | 3063.40 | 203,205 | 189,958,592 | 109,664 |
-| `/swap` | single | 4 | 879 / 1393 / 1500 | 3506.53 | 203,173 | 189,956,288 | 100,448 |
-| `/quote` | split allowed | 1 | 3166 / 3447 / 3495 | 310.73 | 1,591,429 | 1,491,189,184 | 118,528 |
-| `/quote` | split allowed | 2 | 3686 / 3870 / 3984 | 531.95 | 1,591,365 | 1,491,184,576 | 116,128 |
-| `/quote` | split allowed | 4 | 4009 / 7552 / 7704 | 538.12 | 1,591,333 | 1,491,182,272 | 112,624 |
-| `/swap-instructions` | split allowed | 1 | 2704 / 3236 / 3493 | 347.13 | 1,283,333 | 1,897,903,808 | 118,240 |
-| `/swap-instructions` | split allowed | 2 | 3191 / 3449 / 3552 | 608.49 | 1,283,269 | 1,897,899,200 | 100,320 |
-| `/swap-instructions` | split allowed | 4 | 3397 / 5877 / 6081 | 701.15 | 1,283,237 | 1,897,896,896 | 97,968 |
-| `/swap` | split allowed | 1 | 2937 / 3100 / 3141 | 353.85 | 1,232,517 | 1,890,855,872 | 91,472 |
-| `/swap` | split allowed | 2 | 3200 / 3289 / 3353 | 616.55 | 1,232,453 | 1,890,851,264 | 109,424 |
-| `/swap` | split allowed | 4 | 3402 / 6604 / 6677 | 626.26 | 1,232,421 | 1,890,848,960 | 97,504 |
+| Endpoint             | Mode          |   C | p50 / p95 / p99 (µs) |   req/s | Allocations | Allocated bytes | Peak RSS (KiB) |
+| -------------------- | ------------- | --: | -------------------: | ------: | ----------: | --------------: | -------------: |
+| `/quote`             | single        |   1 |      473 / 594 / 844 | 1948.57 |     265,989 |     201,393,088 |         83,184 |
+| `/quote`             | single        |   2 |      563 / 646 / 711 | 3338.27 |     265,925 |     201,388,480 |         94,944 |
+| `/quote`             | single        |   4 |    923 / 1230 / 1471 | 3400.76 |     265,893 |     201,386,176 |         90,704 |
+| `/swap-instructions` | single        |   1 |      433 / 498 / 617 | 2182.35 |     224,645 |     192,431,168 |         97,616 |
+| `/swap-instructions` | single        |   2 |      502 / 548 / 593 | 3779.23 |     224,581 |     192,426,560 |        101,488 |
+| `/swap-instructions` | single        |   4 |    869 / 1025 / 1144 | 3893.88 |     224,549 |     192,424,256 |        109,584 |
+| `/swap`              | single        |   1 |      433 / 521 / 861 | 2128.16 |     203,269 |     189,963,200 |        102,896 |
+| `/swap`              | single        |   2 |    526 / 1109 / 1482 | 3063.40 |     203,205 |     189,958,592 |        109,664 |
+| `/swap`              | single        |   4 |    879 / 1393 / 1500 | 3506.53 |     203,173 |     189,956,288 |        100,448 |
+| `/quote`             | split allowed |   1 |   3166 / 3447 / 3495 |  310.73 |   1,591,429 |   1,491,189,184 |        118,528 |
+| `/quote`             | split allowed |   2 |   3686 / 3870 / 3984 |  531.95 |   1,591,365 |   1,491,184,576 |        116,128 |
+| `/quote`             | split allowed |   4 |   4009 / 7552 / 7704 |  538.12 |   1,591,333 |   1,491,182,272 |        112,624 |
+| `/swap-instructions` | split allowed |   1 |   2704 / 3236 / 3493 |  347.13 |   1,283,333 |   1,897,903,808 |        118,240 |
+| `/swap-instructions` | split allowed |   2 |   3191 / 3449 / 3552 |  608.49 |   1,283,269 |   1,897,899,200 |        100,320 |
+| `/swap-instructions` | split allowed |   4 |   3397 / 5877 / 6081 |  701.15 |   1,283,237 |   1,897,896,896 |         97,968 |
+| `/swap`              | split allowed |   1 |   2937 / 3100 / 3141 |  353.85 |   1,232,517 |   1,890,855,872 |         91,472 |
+| `/swap`              | split allowed |   2 |   3200 / 3289 / 3353 |  616.55 |   1,232,453 |   1,890,851,264 |        109,424 |
+| `/swap`              | split allowed |   4 |   3402 / 6604 / 6677 |  626.26 |   1,232,421 |   1,890,848,960 |         97,504 |
 
 The four-request diagnostic run above is too small to establish a speedup or
 regression. The split-allowed mode has materially higher measured cost than
 single-route mode in this corpus. This run is an implementation baseline, not
 evidence of an optimization gain.
+
+## `/quote` admission (2026-10-01)
+
+`/quote` now admits a candidate the way the swap endpoints do: router venues
+only, and the transaction built for a stand-in wallet within `maxAccounts` and
+the v1 budgets. The same release run (2 workers, 128 measured requests, 8
+warmups, corpus hash `f7ac688338d1e8a1b29468479bc98399def97bfb`) was taken on
+`main` at `645059a` and on the change, one after the other on one machine.
+Every request returned HTTP 200 on both. p50 / p95 / p99 in µs, allocations per
+request:
+
+| `/quote`      |   C |             `main` | alloc |             change | alloc |
+| ------------- | --: | -----------------: | ----: | -----------------: | ----: |
+| single route  |   1 |    287 / 332 / 356 | 1,319 |    296 / 332 / 420 | 1,332 |
+| single route  |   4 |    383 / 621 / 669 | 1,318 |   644 / 820 / 1041 | 1,331 |
+| split allowed |   1 |   927 / 993 / 1089 | 3,888 | 1838 / 3088 / 6852 | 5,858 |
+| split allowed |   4 | 2061 / 2572 / 3509 | 3,887 | 3116 / 4844 / 5776 | 5,857 |
+
+`/swap-instructions` and `/swap` stayed within run-to-run noise (split allowed,
+C 1: 1552 → 1578 and 1508 → 1473 µs p50). A split `/quote` now costs about twice
+what it did, and more than `/swap-instructions` (1578 µs): the stand-in wraps
+SOL, and the perf requests swap unwrapped. Admitting unwrapped measured 1441 µs
+and 5,013 allocations, but an unwrapped build can leave the native mint out and
+undercount a wrapped swap, so the quote stays wrapped. The cost is the
+candidate builds a `/quote` skipped before, when it could answer a route no
+swap endpoint would build.
+
+The candidate check then stopped compiling each admitted transaction a second
+time, and the finalist, priced again on the newest state, is admitted again
+there. Two more runs of the same matrix (allocations per request are exact; the
+latencies moved between the two runs by up to 1.6× in one cell, so only the
+allocations are a firm result):
+
+| `/quote`      |   C | first change, alloc | then, alloc | p50, two runs (µs) |
+| ------------- | --: | ------------------: | ----------: | -----------------: |
+| single route  |   1 |               1,332 |       1,339 |          349 / 359 |
+| split allowed |   1 |               5,858 |       5,270 |        1977 / 1977 |
+| split allowed |   4 |               5,857 |       5,269 |        3601 / 2275 |
+
+`/swap-instructions` split allowed went from 5,537 to 5,176 allocations and
+`/swap` from 5,140 to 4,779, below `main`. A single-route `/quote` is about
+55 µs slower in both runs: the finalist's own admission, one more build per
+request.

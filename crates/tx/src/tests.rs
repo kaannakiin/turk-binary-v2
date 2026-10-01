@@ -6,8 +6,8 @@ use router_wire::RouterInstruction;
 use solana_instruction::AccountMeta;
 
 use crate::{
-    FlowAllocation, FlowSwapRequest, MAX_ACCOUNTS, MAX_TRANSACTION_BYTES, ROUTER_PROGRAM,
-    SwapRequest, TxError, build, build_flow, router_config, unsigned_v1,
+    AccountLimit, FlowAllocation, FlowSwapRequest, MAX_ACCOUNTS, MAX_TRANSACTION_BYTES,
+    ROUTER_PROGRAM, SwapRequest, TxError, build, build_flow, router_config, unsigned_v1,
 };
 
 const CPMM: Pubkey = Pubkey::from_str_const("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
@@ -162,6 +162,7 @@ fn request(hops: &[SwapWindow]) -> SwapRequest<'_> {
         min_out: 1_917_139_225,
         hop_min_outs: &HOP_MIN_OUTS[..hops.len().min(HOP_MIN_OUTS.len())],
         wrap_sol: true,
+        max_accounts: AccountLimit::MAX,
     }
 }
 
@@ -239,6 +240,7 @@ fn a_flow_builds_slot_accounts_and_flow_wire_steps() {
         amount_in: 76_890_690_099,
         min_out: 1_917_139_225,
         wrap_sol: false,
+        max_accounts: AccountLimit::MAX,
     };
     let built = build_flow(&request).unwrap();
     let RouterInstruction::Flow(route) = RouterInstruction::decode(&built.swap.data).unwrap()
@@ -251,8 +253,13 @@ fn a_flow_builds_slot_accounts_and_flow_wire_steps() {
     assert_eq!(built.swap.accounts[2].pubkey, USER_OUTPUT_ATA);
 }
 
-#[test]
-fn a_flow_encodes_split_and_merge_dependencies() {
+struct SplitMerge {
+    slots: [TokenSide; 3],
+    windows: [SwapWindow; 4],
+    allocations: [FlowAllocation; 4],
+}
+
+fn split_merge() -> SplitMerge {
     let input = TokenSide {
         mint: INPUT_MINT,
         token_program: TOKEN_2022_PROGRAM,
@@ -265,50 +272,50 @@ fn a_flow_encodes_split_and_merge_dependencies() {
         mint: Pubkey::new_from_array([44; 32]),
         token_program: TOKEN_PROGRAM,
     };
-    let windows = [
-        cpmm_window(input, middle),
-        cpmm_window(input, middle),
-        cpmm_window(middle, output),
-        cpmm_window(middle, output),
-    ];
-    let slots = [input, output, middle];
-    let allocations = [
-        FlowAllocation {
-            source: 0,
-            destination: 2,
-            numerator: 1,
-            denominator: 2,
-        },
-        FlowAllocation {
-            source: 0,
-            destination: 2,
-            numerator: 1,
-            denominator: 1,
-        },
-        FlowAllocation {
-            source: 2,
-            destination: 1,
-            numerator: 1,
-            denominator: 2,
-        },
-        FlowAllocation {
-            source: 2,
-            destination: 1,
-            numerator: 1,
-            denominator: 1,
-        },
-    ];
-    let request = FlowSwapRequest {
-        user: USER,
-        slots: &slots,
-        windows: &windows,
-        allocations: &allocations,
-        step_min_outs: &[1, 1, 1, 1],
-        amount_in: 76_890_690_099,
-        min_out: 1,
-        wrap_sol: false,
+    let share = |source, destination, numerator, denominator| FlowAllocation {
+        source,
+        destination,
+        numerator,
+        denominator,
     };
-    let built = build_flow(&request).unwrap();
+    SplitMerge {
+        slots: [input, output, middle],
+        windows: [
+            cpmm_window(input, middle),
+            cpmm_window(input, middle),
+            cpmm_window(middle, output),
+            cpmm_window(middle, output),
+        ],
+        allocations: [
+            share(0, 2, 1, 2),
+            share(0, 2, 1, 1),
+            share(2, 1, 1, 2),
+            share(2, 1, 1, 1),
+        ],
+    }
+}
+
+impl SplitMerge {
+    fn request(&self) -> FlowSwapRequest<'_> {
+        FlowSwapRequest {
+            user: USER,
+            slots: &self.slots,
+            windows: &self.windows,
+            allocations: &self.allocations,
+            step_min_outs: &[1, 1, 1, 1],
+            amount_in: 76_890_690_099,
+            min_out: 1,
+            wrap_sol: false,
+            max_accounts: AccountLimit::MAX,
+        }
+    }
+}
+
+#[test]
+fn a_flow_encodes_split_and_merge_dependencies() {
+    let plan = split_merge();
+    let [input, output, middle] = plan.slots;
+    let built = build_flow(&plan.request()).unwrap();
     let RouterInstruction::Flow(route) = RouterInstruction::decode(&built.swap.data).unwrap()
     else {
         panic!("split/merge request encoded as linear route");
@@ -393,6 +400,7 @@ fn a_non_dlmm_flow_over_compute_limit_is_refused() {
         amount_in: 1_000,
         min_out: 1,
         wrap_sol: false,
+        max_accounts: AccountLimit::MAX,
     };
     assert_eq!(
         build_flow(&request),
@@ -505,6 +513,105 @@ fn a_route_past_the_v1_account_limit_is_refused() {
         build(&request(&hops)),
         Err(TxError::TooManyAccounts { count, max: MAX_ACCOUNTS }) if count > MAX_ACCOUNTS
     ));
+}
+
+fn compiled_addresses(built: &crate::SwapInstructions) -> usize {
+    let all: Vec<_> = built.all().cloned().collect();
+    solana_message::v1::Message::try_compile_with_config(
+        &USER,
+        &all,
+        solana_hash::Hash::default(),
+        solana_message::v1::TransactionConfig::empty(),
+    )
+    .expect("the built instructions compile")
+    .account_keys
+    .len()
+}
+
+fn limit(addresses: usize) -> AccountLimit {
+    AccountLimit::new(u8::try_from(addresses).unwrap()).unwrap()
+}
+
+#[test]
+fn a_route_is_built_at_the_callers_account_limit_and_refused_one_below_it() {
+    let hops = [mainnet_hop()];
+    let built = build(&request(&hops)).unwrap();
+    let addresses = compiled_addresses(&built);
+
+    let at = SwapRequest {
+        max_accounts: limit(addresses),
+        ..request(&hops)
+    };
+    assert_eq!(build(&at), Ok(built));
+    let below = SwapRequest {
+        max_accounts: limit(addresses - 1),
+        ..request(&hops)
+    };
+    assert_eq!(
+        build(&below),
+        Err(TxError::TooManyAccounts {
+            count: addresses,
+            max: addresses - 1
+        })
+    );
+}
+
+#[test]
+fn a_split_and_merge_is_built_at_its_merged_account_count_and_refused_one_below_it() {
+    let plan = split_merge();
+    let built = build_flow(&plan.request()).unwrap();
+    let addresses = compiled_addresses(&built);
+    let listed: usize = plan
+        .windows
+        .iter()
+        .map(|window| window.accounts.len())
+        .sum();
+    assert!(addresses < listed, "the windows share accounts");
+
+    let at = FlowSwapRequest {
+        max_accounts: limit(addresses),
+        ..plan.request()
+    };
+    assert_eq!(build_flow(&at), Ok(built));
+    let below = FlowSwapRequest {
+        max_accounts: limit(addresses - 1),
+        ..plan.request()
+    };
+    assert_eq!(
+        build_flow(&below),
+        Err(TxError::TooManyAccounts {
+            count: addresses,
+            max: addresses - 1
+        })
+    );
+}
+
+#[test]
+fn a_lower_account_limit_drops_the_optional_tail_before_refusing_the_route() {
+    let side = |seed| TokenSide {
+        mint: Pubkey::new_from_array([seed; 32]),
+        token_program: TOKEN_PROGRAM,
+    };
+    let hops = [clmm_budget_window(81, side(101), side(102), 1, true)];
+    let full = build(&request(&hops)).unwrap();
+    let addresses = compiled_addresses(&full);
+
+    let trimmed = build(&SwapRequest {
+        max_accounts: limit(addresses - 1),
+        ..request(&hops)
+    })
+    .unwrap();
+    assert_eq!(compiled_addresses(&trimmed), addresses - 1);
+    assert_eq!(
+        build(&SwapRequest {
+            max_accounts: limit(addresses - 2),
+            ..request(&hops)
+        }),
+        Err(TxError::TooManyAccounts {
+            count: addresses - 1,
+            max: addresses - 2
+        })
+    );
 }
 
 #[test]
