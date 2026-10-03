@@ -32,12 +32,13 @@ struct Engine {
     max_quotes: u32,
     deadline: Option<Duration>,
     search: SearchEngine,
+    per_pair: Option<NonZeroU8>,
 }
 
 impl Engine {
     const SINGLE_ROUTE: Self = Self::split(BENCH_MAX_QUOTES).single();
 
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 13] = [
         Self::SINGLE_ROUTE,
         Self::split(BENCH_MAX_QUOTES),
         Self::split(10 * BENCH_MAX_QUOTES),
@@ -46,6 +47,8 @@ impl Engine {
         Self::chunks(32),
         Self::chunks(8).relaxed(4),
         Self::chunks(8).relaxed(8),
+        Self::chunks(8).pairs(2),
+        Self::chunks(8).pairs(2).relaxed(4),
         Self::split(u32::MAX).within(DEADLINE),
         Self::chunks(8).unbounded().within(DEADLINE),
         Self::chunks(16).unbounded().within(DEADLINE),
@@ -58,6 +61,7 @@ impl Engine {
             max_quotes,
             deadline: None,
             search: SearchEngine::Dfs,
+            per_pair: None,
         }
     }
 
@@ -78,6 +82,13 @@ impl Engine {
     const fn unbounded(self) -> Self {
         Self {
             max_quotes: u32::MAX,
+            ..self
+        }
+    }
+
+    const fn pairs(self, kept: u8) -> Self {
+        Self {
+            per_pair: NonZeroU8::new(kept),
             ..self
         }
     }
@@ -107,6 +118,9 @@ impl Engine {
         } else if self.max_quotes != BENCH_MAX_QUOTES {
             label = format!("{label}-{}k", self.max_quotes / 1_000);
         }
+        if let Some(kept) = self.per_pair {
+            label = format!("{label}-k{kept}");
+        }
         if let SearchEngine::Relaxed(Some(labels)) = self.search {
             label = format!("{label}-relaxed-{labels}");
         }
@@ -132,6 +146,7 @@ fn run(universe: &universe::Universe, query: &Query, engine: Engine) -> FlowSear
     session.search_flow(
         &Query {
             max_quotes: engine.max_quotes,
+            per_pair: engine.per_pair,
             ..*query
         },
         &Everything,
