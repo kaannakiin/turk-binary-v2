@@ -21,6 +21,15 @@ pub enum Goal {
     Cycle,
 }
 
+/// The order a search tries paths in; every engine prices and admits a leg alike.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Engine {
+    #[default]
+    Dfs,
+    /// [`SearchSession::search_relaxed`], keeping this many states per mint.
+    Relaxed(Option<NonZeroU8>),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Query {
     pub from: MintId,
@@ -177,7 +186,7 @@ impl SearchSession {
     /// A path found pruned is kept: widening cannot tell whether a better
     /// one was dropped.
     pub fn search_widening(&mut self, query: &Query, filter: &impl Filter) -> Search {
-        self.widening_on(query, filter, &[])
+        self.widening_on(query, filter, &[], Engine::Dfs)
     }
 
     pub(crate) fn widening_on(
@@ -185,12 +194,16 @@ impl SearchSession {
         query: &Query,
         filter: &impl Filter,
         used: &[Carried],
+        engine: Engine,
     ) -> Search {
         let mut attempt = *query;
         let mut quotes = 0;
         loop {
             attempt.max_quotes = query.max_quotes - quotes;
-            let mut found = self.search_on(&attempt, filter, used);
+            let mut found = match engine {
+                Engine::Dfs => self.search_on(&attempt, filter, used),
+                Engine::Relaxed(labels) => self.relaxed_on(&attempt, filter, used, labels),
+            };
             quotes += found.quotes;
             let dropped_the_way = found.best.is_none() && found.pruned && !found.exhausted;
             if !dropped_the_way || attempt.per_pair.is_none() {

@@ -14,7 +14,7 @@ use std::num::NonZeroU8;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use route::{Everything, FlowOptions, FlowSearch, Goal, Query};
+use route::{Engine as SearchEngine, Everything, FlowOptions, FlowSearch, Goal, Query};
 
 #[path = "../tests/support/universe.rs"]
 mod universe;
@@ -31,18 +31,21 @@ struct Engine {
     chunks: Option<u8>,
     max_quotes: u32,
     deadline: Option<Duration>,
+    search: SearchEngine,
 }
 
 impl Engine {
     const SINGLE_ROUTE: Self = Self::split(BENCH_MAX_QUOTES).single();
 
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 11] = [
         Self::SINGLE_ROUTE,
         Self::split(BENCH_MAX_QUOTES),
         Self::split(10 * BENCH_MAX_QUOTES),
         Self::chunks(8),
         Self::chunks(16),
         Self::chunks(32),
+        Self::chunks(8).relaxed(4),
+        Self::chunks(8).relaxed(8),
         Self::split(u32::MAX).within(DEADLINE),
         Self::chunks(8).unbounded().within(DEADLINE),
         Self::chunks(16).unbounded().within(DEADLINE),
@@ -54,6 +57,7 @@ impl Engine {
             chunks: None,
             max_quotes,
             deadline: None,
+            search: SearchEngine::Dfs,
         }
     }
 
@@ -78,6 +82,13 @@ impl Engine {
         }
     }
 
+    const fn relaxed(self, labels: u8) -> Self {
+        Self {
+            search: SearchEngine::Relaxed(NonZeroU8::new(labels)),
+            ..self
+        }
+    }
+
     const fn within(self, deadline: Duration) -> Self {
         Self {
             deadline: Some(deadline),
@@ -96,6 +107,9 @@ impl Engine {
         } else if self.max_quotes != BENCH_MAX_QUOTES {
             label = format!("{label}-{}k", self.max_quotes / 1_000);
         }
+        if let SearchEngine::Relaxed(Some(labels)) = self.search {
+            label = format!("{label}-relaxed-{labels}");
+        }
         if let Some(deadline) = self.deadline {
             label = format!("{label}-{}ms", deadline.as_millis());
         }
@@ -107,6 +121,7 @@ impl Engine {
             single_route_only: self.single_route,
             chunks: self.chunks.and_then(NonZeroU8::new),
             deadline: self.deadline.map(|deadline| Instant::now() + deadline),
+            engine: self.search,
             ..FlowOptions::default()
         }
     }

@@ -1017,23 +1017,30 @@ fn a_chunked_split_stays_within_its_budget_and_returns_only_whole_orders() {
     let rig = universe(&[placed(&shallow, y, x), placed(&deep, y, x)]);
     let from = rig.topology.mint_id(&x).expect("placed mint");
     let to = rig.topology.mint_id(&y).expect("placed mint");
-    for budget in 1..=12 {
+    for (engine, budget) in [
+        crate::Engine::Dfs,
+        crate::Engine::Relaxed(NonZeroU8::new(2)),
+    ]
+    .into_iter()
+    .flat_map(|engine| (1..=12).map(move |budget| (engine, budget)))
+    {
         let mut session = rig.reader.session().unwrap();
         let found = session.search_flow(
             &query(from, Goal::To(to), 1, budget),
             &Everything,
             crate::FlowOptions {
                 chunks: NonZeroU8::new(4),
+                engine,
                 ..Default::default()
             },
         );
         assert!(
             session.quotes_computed() <= u64::from(budget),
-            "budget {budget}: computed {}",
+            "{engine:?}, budget {budget}: computed {}",
             session.quotes_computed()
         );
         if let Some(flow) = found.best {
-            assert_eq!(flow.amount_in, AMOUNT, "budget {budget}");
+            assert_eq!(flow.amount_in, AMOUNT, "{engine:?}, budget {budget}");
             assert_eq!(
                 rig.reader
                     .session()
@@ -1041,7 +1048,7 @@ fn a_chunked_split_stays_within_its_budget_and_returns_only_whole_orders() {
                     .requote_flow(&flow, 0)
                     .unwrap(),
                 flow,
-                "budget {budget}"
+                "{engine:?}, budget {budget}"
             );
         }
     }

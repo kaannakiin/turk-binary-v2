@@ -5,7 +5,7 @@
 use std::num::NonZeroU8;
 
 use domain::Pubkey;
-use route::{Everything, FlowOptions, Goal, Query, Search};
+use route::{Engine, Everything, FlowOptions, Goal, Query, Search};
 
 #[path = "support/universe.rs"]
 mod universe;
@@ -167,13 +167,18 @@ fn split_plans_pay_exactly_what_a_fresh_session_requotes() {
                 max_arrays: 8,
                 ..base
             };
-            for chunks in [None, NonZeroU8::new(8)] {
-                let at = format!("{name} at {sol} SOL, {chunks:?} chunks");
+            for (chunks, engine) in [
+                (None, Engine::Dfs),
+                (NonZeroU8::new(8), Engine::Dfs),
+                (NonZeroU8::new(8), Engine::Relaxed(NonZeroU8::new(8))),
+            ] {
+                let at = format!("{name} at {sol} SOL, {chunks:?} chunks, {engine:?}");
                 let found = universe.reader.session().expect("clock").search_flow(
                     &query,
                     &Everything,
                     FlowOptions {
                         chunks,
+                        engine,
                         ..FlowOptions::default()
                     },
                 );

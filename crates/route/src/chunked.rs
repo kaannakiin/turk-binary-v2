@@ -13,7 +13,7 @@ use graph::{EdgeId, MintId, PoolNode};
 
 use crate::flow::{SCALE, same_path};
 use crate::{
-    Allocation, Filter, Flow, FlowOptions, FlowSearch, Goal, Leg, Operation, Path, Query,
+    Allocation, Engine, Filter, Flow, FlowOptions, FlowSearch, Goal, Leg, Operation, Path, Query,
     SearchSession,
 };
 
@@ -272,7 +272,14 @@ impl SearchSession {
             max_quotes: u32::MAX,
             ..*query
         };
-        let routed = self.route_chunks(&unbounded, restricted, &shape, chunks, result);
+        let routed = self.route_chunks(
+            &unbounded,
+            restricted,
+            &shape,
+            chunks,
+            options.engine,
+            result,
+        );
         if routed.amount == 0 {
             return;
         }
@@ -309,6 +316,7 @@ impl SearchSession {
         restricted: &impl Filter,
         shape: &Shape,
         chunks: NonZeroU8,
+        engine: Engine,
         result: &mut FlowSearch,
     ) -> Routed {
         let mut routed = Routed {
@@ -342,6 +350,7 @@ impl SearchSession {
                     shape,
                 },
                 &routed.used,
+                engine,
             );
             result.quotes = result.quotes.saturating_add(found.quotes);
             result.refused = result.refused.saturating_add(found.refused);

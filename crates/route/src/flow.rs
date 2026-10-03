@@ -10,7 +10,7 @@ use std::time::Instant;
 use domain::DexKind;
 use graph::{EdgeId, MintId, PoolNode};
 
-use crate::{Filter, Goal, Leg, Path, Query, RouteError, SearchSession};
+use crate::{Engine, Filter, Goal, Leg, Path, Query, RouteError, SearchSession};
 
 pub(crate) const SCALE: u64 = 10_000;
 const QUANTA: [u64; 5] = [2_500, 1_000, 100, 10, 1];
@@ -94,6 +94,8 @@ pub struct FlowOptions {
     /// Route the order in this many equal chunks, each priced on top of the
     /// earlier ones, in place of candidate discovery at fixed sizes.
     pub chunks: Option<NonZeroU8>,
+    /// Finds every path the flow is built from.
+    pub engine: Engine,
 }
 
 impl Default for FlowOptions {
@@ -104,6 +106,7 @@ impl Default for FlowOptions {
             max_operations: 16,
             deadline: None,
             chunks: None,
+            engine: Engine::Dfs,
         }
     }
 }
@@ -221,7 +224,7 @@ impl SearchSession {
         if !options.single_route_only && query.goal != Goal::Cycle {
             self.memoize();
         }
-        let found = self.search_widening(&bounded, &restricted);
+        let found = self.widening_on(&bounded, &restricted, &[], options.engine);
         let target = match query.goal {
             Goal::To(mint) => mint,
             Goal::Cycle => query.from,
@@ -257,13 +260,15 @@ impl SearchSession {
                 if amount_in == 0 {
                     break;
                 }
-                let partial = self.search_widening(
+                let partial = self.widening_on(
                     &Query {
                         amount_in,
                         max_quotes: query.max_quotes - result.quotes,
                         ..bounded
                     },
                     &restricted,
+                    &[],
+                    options.engine,
                 );
                 result.quotes += partial.quotes;
                 result.refused += partial.refused;
@@ -283,7 +288,7 @@ impl SearchSession {
             result.exhausted |= result.timed_out || result.quotes >= query.max_quotes;
             return result;
         };
-        let candidates = self.flow_candidates(query, filter, options.deadline, first, &mut result);
+        let candidates = self.flow_candidates(query, filter, options, first, &mut result);
         result.pruned = true;
         let mut weights = vec![0; candidates.len()];
         weights[0] = SCALE;
@@ -316,10 +321,11 @@ impl SearchSession {
         &mut self,
         query: &Query,
         filter: &impl Filter,
-        deadline: Option<Instant>,
+        options: FlowOptions,
         first: Path,
         result: &mut FlowSearch,
     ) -> Vec<Path> {
+        let deadline = options.deadline;
         let restricted = Restricted { filter, deadline };
         let mut candidates = vec![first];
         // Different sizes expose paths which lose at the full order size.
@@ -345,7 +351,7 @@ impl SearchSession {
                     inner: Restricted { filter, deadline },
                     pool: excluded,
                 };
-                let next = self.search_widening(&attempt, &filtered);
+                let next = self.widening_on(&attempt, &filtered, &[], options.engine);
                 result.quotes += next.quotes;
                 result.refused += next.refused;
                 result.exhausted |= next.exhausted;
