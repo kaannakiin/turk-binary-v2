@@ -77,8 +77,9 @@ limits; no new network activation claim is made.
   and distinct pools sharing writable state remain explicitly unsupported until
   independently verified. This is an outstanding scope item, not a completed
   shared-state implementation.
-- Layered search remains experimental. [Search measurements](exactin-performance.md)
-  do not justify replacing DFS; split quality gains cost additional CPU.
+- The relaxed search (`search_relaxed`, which replaced the layered one) remains
+  experimental. [Search measurements](exactin-performance.md) do not justify
+  replacing DFS; split quality gains cost additional CPU.
 - [HTTP measurements](exactin-http-performance.md) report allocation counts and
   sampled resident memory. No SDK fork change or unmeasured speedup claimed.
 - Reproducible three-case real-program replay and one partial-input refusal are

@@ -1,11 +1,11 @@
-//! The pruned search against the exhaustive one on a captured mainnet
-//! universe, at random amounts. The capture is not in the repository;
+//! The pruned search, and the relaxation, against the exhaustive search on a
+//! captured mainnet universe, at random amounts. The capture is not in the repository;
 //! `just test-universe` runs this after `just snapshot-universe`.
 
 use std::num::NonZeroU8;
 
 use domain::Pubkey;
-use route::{Everything, FlowOptions, Goal, Query, Search};
+use route::{Engine, Everything, FlowOptions, Goal, Query, Search};
 
 #[path = "support/universe.rs"]
 mod universe;
@@ -44,7 +44,7 @@ fn bps_below(best: u64, out: u64) -> u128 {
 
 #[test]
 #[ignore = "needs oracle/snapshots/universe.json.gz: just snapshot-universe"]
-fn pruning_by_max_hops_matches_the_exhaustive_search() {
+fn pruning_and_relaxation_at_their_widest_match_the_exhaustive_search() {
     let seed = std::env::var("ROUTE_SEED").map_or(0x9e37_79b9_7f4a_7c15, |s| {
         s.parse().expect("ROUTE_SEED is a u64")
     });
@@ -101,8 +101,42 @@ fn pruning_by_max_hops_matches_the_exhaustive_search() {
                 "{name} k={k}: {differ}/{AMOUNTS} differ, worst {worst} bps below, {quotes} quotes vs {full_quotes}",
             );
         }
+        let full_quotes: u32 = exhaustive.iter().map(|s| s.quotes).sum();
+        for labels in [
+            NonZeroU8::new(4),
+            NonZeroU8::new(8),
+            NonZeroU8::new(16),
+            None,
+        ] {
+            let (mut differ, mut worst, mut quotes) = (0, 0, 0);
+            for (&amount_in, full) in amounts.iter().zip(&exhaustive) {
+                let relaxed = universe.reader.session().expect("clock").search_relaxed(
+                    &Query { amount_in, ..query },
+                    &Everything,
+                    labels,
+                );
+                assert!(!relaxed.exhausted, "{name} at {amount_in}");
+                quotes += relaxed.quotes;
+                let best = full.best.as_ref().map_or(0, route::Path::amount_out);
+                let out = relaxed.best.as_ref().map_or(0, route::Path::amount_out);
+                if out != best {
+                    differ += 1;
+                    worst = worst.max(bps_below(best, out));
+                    if labels.is_none() {
+                        mismatches.push(format!("{name} at {amount_in}, every label"));
+                    }
+                }
+            }
+            eprintln!(
+                "{name} labels={}: {differ}/{AMOUNTS} differ, worst {worst} bps below, {quotes} quotes vs {full_quotes}",
+                labels.map_or_else(|| "all".to_owned(), |n| n.to_string()),
+            );
+        }
     }
-    assert!(mismatches.is_empty(), "k = max_hops missed: {mismatches:?}");
+    assert!(
+        mismatches.is_empty(),
+        "k = max_hops or relaxation keeping every label missed: {mismatches:?}"
+    );
 }
 
 #[test]
@@ -133,13 +167,18 @@ fn split_plans_pay_exactly_what_a_fresh_session_requotes() {
                 max_arrays: 8,
                 ..base
             };
-            for chunks in [None, NonZeroU8::new(8)] {
-                let at = format!("{name} at {sol} SOL, {chunks:?} chunks");
+            for (chunks, engine) in [
+                (None, Engine::Dfs),
+                (NonZeroU8::new(8), Engine::Dfs),
+                (NonZeroU8::new(8), Engine::Relaxed(NonZeroU8::new(8))),
+            ] {
+                let at = format!("{name} at {sol} SOL, {chunks:?} chunks, {engine:?}");
                 let found = universe.reader.session().expect("clock").search_flow(
                     &query,
                     &Everything,
                     FlowOptions {
                         chunks,
+                        engine,
                         ..FlowOptions::default()
                     },
                 );

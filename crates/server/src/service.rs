@@ -470,6 +470,7 @@ impl<F: PoolFeed> QuoteService<F> {
                 max_operations: self.settings.max_operations,
                 deadline: self.deadline,
                 chunks: Some(route::SPLIT_CHUNKS),
+                engine: route::Engine::Dfs,
             },
         );
         let search = SearchQuality {

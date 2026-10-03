@@ -3,6 +3,9 @@
 This report compares the existing DFS search with the layered and flow
 candidate searches on one fixed captured state. It is a representative
 measurement, not a production SLA and not a proof of global route optimality.
+The layered search has since been replaced by the relaxed search, measured in
+[its own section](#relaxed-search); the layered rows below are kept as they
+were measured.
 
 ## Reproduction
 
@@ -227,6 +230,90 @@ The replay also swaps each plan's pools one by one outside the router; for
 DLMM pools other than `5rCf1D…` that direct swap fails with `InvalidBinArray`,
 a limit of the direct swap the oracle builds, not of the router.
 
+## Relaxed search
+
+`search_relaxed` (see [architecture.md](architecture.md#algorithm)) against
+DFS, measured at commit `443240e24769577776e1817f9f4f6cdc3da6fd4d` on two
+captures:
+
+| Capture | Slot          | Pools | SHA-256                                                            |
+| ------- | ------------- | ----: | ------------------------------------------------------------------ |
+| A       | `451,259,947` |   736 | `13971c60a4fd1ac9361ab9041b226980156834bf86c56f1ba0adc1b8e5fe534c` |
+| B       | `452,267,679` |   859 | `7786f05c4669d4622505ccc2df5642d5c7d67d1e829b389adf65ce199ed86b08` |
+
+```sh
+ROUTE_UNIVERSE=$PWD/oracle/snapshots/universe.json.gz cargo bench -p route --bench search -- --noplot
+ROUTE_UNIVERSE=$PWD/oracle/snapshots/universe.json.gz cargo bench -p route --bench split -- --noplot
+```
+
+Outputs and quote counts are deterministic. Times are Criterion medians of one
+run on a laptop that was not idle; `sol_to_usdc_h3` repeats the computation of
+`sol_to_usdc_h2` exactly, and the two differ by up to 2x in a few rows, which
+is the noise to read the times with.
+
+**Exactness.** With every label kept the relaxation tries the paths DFS tries:
+on both captures `just test-universe` finds it paying exactly the exhaustive
+DFS's output, in exactly as many quotes, at 16 random amounts of each query.
+With 4, 8 and 16 labels and no pruning per pair it also paid the exhaustive
+output at every amount.
+
+**Single path, 25,000-quote cap, 1 SOL or 1,000 pump tokens.** `R4` keeps four
+labels per mint, `R8` eight. `Δ` is `R4`'s output over DFS's. An output marked
+`*` exhausted the cap.
+
+| Capture | Query            | Pairs | DFS output    | DFS quotes |           Δ | R4 quotes | R8 quotes |     DFS |     R4 |
+| ------- | ---------------- | ----- | ------------- | ---------: | ----------: | --------: | --------: | ------: | -----: |
+| A       | `sol_cycle_h2`   | all   | 999,396,469\* |     25,000 |    +184,700 |     3,533 |     6,345 |  8.7 ms | 2.2 ms |
+| A       | `sol_cycle_h2`   | 3     | 999,581,169   |      2,830 |           0 |     2,830 |     2,830 |  1.8 ms | 1.8 ms |
+| A       | `sol_cycle_h3`   | all   | 988,200,673\* |     25,000 | +11,380,496 |     6,512 |    12,300 | 12.0 ms | 4.0 ms |
+| A       | `sol_cycle_h3`   | 3     | 999,581,169   |      9,295 |           0 |     5,770 |     8,590 |  6.4 ms | 3.9 ms |
+| A       | `sol_to_usdc_h2` | all   | 118,348,564   |      1,060 |           0 |       790 |       862 |  458 µs | 351 µs |
+| A       | `sol_to_usdc_h2` | 3     | 118,348,564   |        772 |           0 |       772 |       772 |  337 µs | 372 µs |
+| A       | `pump_cycle_h3`  | all   | 992,322,859\* |     25,000 |  +4,609,076 |     5,898 |     9,707 |  7.1 ms | 2.6 ms |
+| A       | `pump_cycle_h3`  | 3     | 996,931,935   |      4,861 |           0 |     4,511 |     4,791 |  2.3 ms | 2.0 ms |
+| B       | `sol_cycle_h2`   | all   | 999,299,235\* |     25,000 |    +388,162 |     4,148 |     7,452 |  7.7 ms | 2.3 ms |
+| B       | `sol_cycle_h2`   | 3     | 999,687,397   |      3,322 |           0 |     3,322 |     3,322 |  1.9 ms | 1.9 ms |
+| B       | `sol_cycle_h3`   | all   | 988,048,311\* |     25,000 | +11,639,086 |     7,619 |    14,391 | 11.8 ms | 4.7 ms |
+| B       | `sol_cycle_h3`   | 3     | 999,687,397   |     10,894 |           0 |     6,754 |    10,066 |  6.7 ms | 4.1 ms |
+| B       | `sol_to_usdc_h2` | all   | 117,891,743   |      1,183 |           0 |       913 |       985 |  497 µs | 368 µs |
+| B       | `sol_to_usdc_h2` | 3     | 117,891,743   |        895 |           0 |       895 |       895 |  324 µs | 393 µs |
+| B       | `pump_cycle_h3`  | all   | 993,040,189\* |     25,000 |  +3,025,635 |     6,882 |    11,306 |  7.3 ms | 2.9 ms |
+| B       | `pump_cycle_h3`  | 3     | 996,065,824   |      5,599 |           0 |     5,249 |     5,529 |  2.3 ms | 2.1 ms |
+
+Without pruning per pair DFS spends the cap on a cycle and returns a worse one
+(SOL over three hops: 11.4M–11.6M lamports, 1.2%, under the best); four labels find
+the best in at most a third of the quotes. With three pools per pair both find the
+same path, and the relaxation needs up to 38% fewer quotes on three-hop
+cycles and as many on two hops, where a mint is reached by too few states for
+the labels to drop one.
+
+**Chunked split, eight chunks, 1 to 10,000 SOL.** Every engine found the same
+gain in every row and every plan requoted exactly. Quotes computed, lowest to
+highest over the five sizes:
+
+| Capture | Query            | Pairs | DFS          | R4          | R8          |
+| ------- | ---------------- | ----- | ------------ | ----------- | ----------- |
+| A       | `sol_to_usdc_h2` | all   | 1,794–2,072  | 1,607–1,680 | 1,722–1,766 |
+| A       | `sol_to_pump_h2` | all   | 8,881–12,038 | 1,580–1,609 | 1,724–1,753 |
+| A       | `sol_to_usdc_h2` | 2     | 1,535–1,608  | 1,535–1,608 | —           |
+| A       | `sol_to_pump_h2` | 2     | 1,508–1,537  | 1,508–1,537 | —           |
+| B       | `sol_to_usdc_h2` | all   | 2,014–2,280  | 1,866–1,891 | 1,942–2,026 |
+| B       | `sol_to_pump_h2` | all   | 9,543–12,716 | 1,826–1,857 | 1,970–2,001 |
+| B       | `sol_to_usdc_h2` | 2     | 1,794–1,837  | 1,794–1,837 | —           |
+| B       | `sol_to_pump_h2` | 2     | 1,754–1,785  | 1,754–1,785 | —           |
+
+Without pruning per pair, four labels cut the pump-token split from 6.6–7.0 ms
+to 0.9–2.0 ms on capture A. At the server's two pools per pair the relaxation
+computes exactly what DFS computes, and the times differ within the noise.
+
+**Reading.** The relaxation never paid less than DFS and never needed more
+quotes at the same pruning per pair. Its gain is where DFS runs without that
+pruning, and on three-hop cycles. For two-hop swaps at the server's two pools
+per pair it changes nothing. The server searches three hops by default and up
+to four; a three-hop swap whose best path has more than one leg (the pump token)
+and any four-hop query are not measured yet, so these figures do not decide the
+server's search. The server keeps DFS.
+
 ## Correctness and interpretation limits
 
 - All methods used the same snapshot, amount, goal, hop limit, pair cap, and
@@ -235,9 +322,10 @@ a limit of the direct swap the oracle builds, not of the router.
   path, so its positive delta is not a regression test against DFS.
 - Cycle runs with `exhausted=true` are incomplete searches. Their output is
   only the best route found before the quote cap.
-- Layered currently needs the same path/flow admission hook forwarding as DFS
-  before resource-budget comparisons are considered final. Rerun this report
-  after that integration change.
+- The layered search lacked the path and flow admission, the quote ceiling and
+  a chunk's marginal price. The relaxed search that replaced it prices and
+  admits every leg through the same code as DFS, so its rows compare like
+  with like.
 - No global optimum claim is made for flow candidate pruning or allocation
   refinement.
 

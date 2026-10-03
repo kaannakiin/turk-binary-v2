@@ -24,29 +24,47 @@ const BENCH_MAX_ARRAYS: u8 = 8;
 #[derive(Clone, Copy, Debug)]
 enum Engine {
     Dfs,
-    Layered,
+    Relaxed(Option<NonZeroU8>),
     FlowSingleRoute,
     FlowSplit,
     FlowSinglePoolPerHop,
 }
 
 impl Engine {
-    const CYCLE: [Self; 2] = [Self::Dfs, Self::Layered];
-    const SWAP: [Self; 5] = [
+    const RELAXED: [Self; 4] = [
+        Self::Relaxed(NonZeroU8::new(4)),
+        Self::Relaxed(NonZeroU8::new(8)),
+        Self::Relaxed(NonZeroU8::new(16)),
+        Self::Relaxed(None),
+    ];
+    const CYCLE: [Self; 5] = [
         Self::Dfs,
-        Self::Layered,
+        Self::RELAXED[0],
+        Self::RELAXED[1],
+        Self::RELAXED[2],
+        Self::RELAXED[3],
+    ];
+    const SWAP: [Self; 8] = [
+        Self::Dfs,
+        Self::RELAXED[0],
+        Self::RELAXED[1],
+        Self::RELAXED[2],
+        Self::RELAXED[3],
         Self::FlowSingleRoute,
         Self::FlowSplit,
         Self::FlowSinglePoolPerHop,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Dfs => "dfs",
-            Self::Layered => "layered",
-            Self::FlowSingleRoute => "flow-single-route",
-            Self::FlowSplit => "flow-split",
-            Self::FlowSinglePoolPerHop => "flow-single-pool-per-hop",
+            Self::Dfs => "dfs".to_owned(),
+            Self::Relaxed(labels) => format!(
+                "relaxed-{}",
+                labels.map_or_else(|| "all".to_owned(), |n| n.to_string())
+            ),
+            Self::FlowSingleRoute => "flow-single-route".to_owned(),
+            Self::FlowSplit => "flow-split".to_owned(),
+            Self::FlowSinglePoolPerHop => "flow-single-pool-per-hop".to_owned(),
         }
     }
 }
@@ -86,8 +104,8 @@ fn run(universe: &universe::Universe, query: &Query, engine: Engine) -> Outcome 
                 ..Outcome::default()
             }
         }
-        Engine::Layered => {
-            let found = session.search_layered(query, &Everything);
+        Engine::Relaxed(labels) => {
+            let found = session.search_relaxed(query, &Everything, labels);
             Outcome {
                 amount_out: found.best.as_ref().map_or(0, route::Path::amount_out),
                 quotes: found.quotes,
