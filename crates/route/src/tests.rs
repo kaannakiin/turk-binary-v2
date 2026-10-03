@@ -638,57 +638,77 @@ fn search_matches_the_exhaustive_reference() {
     scale_vault(&mut p4, BASE_VAULT, 1, 3);
     let mut p5 = recorded();
     scale_vault(&mut p5, BASE_VAULT, 5, 1);
-    let pools = [
-        placed(&p1, y, x),
-        placed(&p2, y, x),
-        placed(&p3, z, y),
-        placed(&p4, x, z),
-        placed(&p5, z, x),
-    ];
-    let rig = universe(&pools);
-    let id = |mint: &Pubkey| rig.topology.mint_id(mint).expect("placed mint");
+    let placed_all = || {
+        [
+            placed(&p1, y, x),
+            placed(&p2, y, x),
+            placed(&p3, z, y),
+            placed(&p4, x, z),
+            placed(&p5, z, x),
+        ]
+    };
+    let apart = placed_all();
+    // p1 and p4 writing one vault forbids the cycle's best path, which runs
+    // them as its first and last of three legs: only the legs before the one
+    // last taken can rule it out.
+    let mut shared = placed_all();
+    shared[3].view.accounts[BASE_VAULT].0.pubkey = shared[0].view.accounts[BASE_VAULT].0.pubkey;
 
     let mut multi_hop = false;
-    for (goal, target, avoid) in [
-        (Goal::To(id(&z)), z, None),
-        (Goal::Cycle, x, None),
-        (Goal::To(id(&z)), z, Some(y)),
-    ] {
-        let expected = reference(&pools, &rig.feed, (x, target), 3, |mint| {
-            Some(*mint) != avoid
-        });
-        assert!(expected.is_some(), "{goal:?} avoiding {avoid:?} has a path");
-        let layered = rig.reader.session().unwrap().search_layered(
-            &query(id(&x), goal, 3, 10_000),
-            &Avoid(avoid.map(|mint| id(&mint))),
-        );
-        assert!(!layered.exhausted);
-        assert_eq!(
-            layered.best.as_ref().map(crate::Path::amount_out),
-            expected.as_ref().map(|(_, out)| *out),
-            "layered search must match the independently enumerated paths"
-        );
-        for per_pair in [None, NonZeroU8::new(3)] {
-            let mut session = rig.reader.session().unwrap();
-            let found = session.search(
-                &Query {
-                    per_pair,
-                    ..query(id(&x), goal, 3, 10_000)
-                },
-                &Avoid(avoid.map(|mint| id(&mint))),
-            );
-            assert!(!found.exhausted);
-            let found = found.best.map(|path| {
-                let pools = path.legs.iter().map(|leg| leg.pool).collect::<Vec<_>>();
-                (pools, path.amount_out())
+    let mut best_cycles = Vec::new();
+    for pools in [&apart, &shared] {
+        let rig = universe(pools);
+        let id = |mint: &Pubkey| rig.topology.mint_id(mint).expect("placed mint");
+        for (goal, target, avoid) in [
+            (Goal::To(id(&z)), z, None),
+            (Goal::Cycle, x, None),
+            (Goal::To(id(&z)), z, Some(y)),
+        ] {
+            let expected = reference(pools, &rig.feed, (x, target), 3, |mint| {
+                Some(*mint) != avoid
             });
-            assert_eq!(
-                found, expected,
-                "{goal:?} avoiding {avoid:?}, {per_pair:?} per pair"
+            assert!(expected.is_some(), "{goal:?} avoiding {avoid:?} has a path");
+            if goal == Goal::Cycle {
+                best_cycles.push(expected.clone());
+            }
+            let relaxed = rig.reader.session().unwrap().search_relaxed(
+                &query(id(&x), goal, 3, 10_000),
+                &Avoid(avoid.map(|mint| id(&mint))),
+                None,
             );
+            assert!(!relaxed.exhausted && !relaxed.pruned);
+            assert_eq!(
+                relaxed.best.as_ref().map(crate::Path::amount_out),
+                expected.as_ref().map(|(_, out)| *out),
+                "{goal:?} avoiding {avoid:?}: relaxation keeping every label must match \
+                 the independently enumerated paths"
+            );
+            for per_pair in [None, NonZeroU8::new(3)] {
+                let mut session = rig.reader.session().unwrap();
+                let found = session.search(
+                    &Query {
+                        per_pair,
+                        ..query(id(&x), goal, 3, 10_000)
+                    },
+                    &Avoid(avoid.map(|mint| id(&mint))),
+                );
+                assert!(!found.exhausted);
+                let found = found.best.map(|path| {
+                    let pools = path.legs.iter().map(|leg| leg.pool).collect::<Vec<_>>();
+                    (pools, path.amount_out())
+                });
+                assert_eq!(
+                    found, expected,
+                    "{goal:?} avoiding {avoid:?}, {per_pair:?} per pair"
+                );
+            }
+            multi_hop |= expected.is_some_and(|(pools, _)| pools.len() > 1);
         }
-        multi_hop |= expected.is_some_and(|(pools, _)| pools.len() > 1);
     }
+    assert_ne!(
+        best_cycles[0], best_cycles[1],
+        "the shared vault changes the best cycle"
+    );
     assert!(multi_hop);
 }
 
