@@ -308,8 +308,11 @@ computes exactly what DFS computes, and the times differ within the noise.
 
 **Reading.** The relaxation never paid less than DFS and never needed more
 quotes at the same pruning per pair. Its gain is where DFS runs without that
-pruning, and on three-hop cycles; at the server's setting for swaps
-(`per_pair = 2`, two hops) it changes nothing. The server keeps DFS.
+pruning, and on three-hop cycles. For two-hop swaps at the server's two pools
+per pair it changes nothing. The server searches three hops by default and up
+to four; a three-hop swap whose best path has more than one leg (the pump token)
+and any four-hop query are not measured yet, so these figures do not decide the
+server's search. The server keeps DFS.
 
 ## Correctness and interpretation limits
 
